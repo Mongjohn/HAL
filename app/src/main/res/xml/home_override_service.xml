@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home override: told when a stock launcher's window opens, reading only which app it is, and about
+     the Home button if the user chose that (the service then requests key events itself) -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRequestFilterKeyEvents="true"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/home_override_description"
+    android:notificationTimeout="0"
+    android:packageNames="com.google.android.tvlauncher,com.google.android.apps.tv.launcherx,com.google.android.leanbacklauncher" />

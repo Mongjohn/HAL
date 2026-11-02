@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home Assistant usually runs on plain http:// on the home network. Its address is only known once
+     typed in, so unencrypted connections are allowed to any host. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

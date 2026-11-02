@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HomeBoard</string>
+    <string name="home_override_label">HomeBoard Helper</string>
+    <string name="home_override_description">Makes the Home button open HomeBoard, and opens HomeBoard when the TV\'s own home screen appears. It only reacts to the Home button and checks which app opened; it reads nothing else on screen and no other keys. It does nothing unless \"Open with the Home button\" is switched on in HomeBoard\'s Launcher settings.</string>
+</resources>

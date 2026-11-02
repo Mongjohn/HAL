@@ -1,0 +1,200 @@
+package com.evofactory.homeboard
+
+import android.content.Context
+import android.content.SharedPreferences
+import androidx.core.content.edit
+
+/**
+ * Remembers the order chosen with "Move" and which apps are hidden, across restarts.
+ * Stored in shared_prefs/launcher.xml in the app's private data on the TV.
+ */
+class LauncherPrefs(context: Context) {
+    private val prefs = context.getSharedPreferences("launcher", Context.MODE_PRIVATE)
+
+    /** Package names of visible apps, in row order */
+    var order: List<String>
+        get() = readList("order")
+        set(value) = writeList("order", value)
+
+    /** Package names of hidden apps, in the order they were hidden */
+    var hidden: List<String>
+        get() = readList("hidden_list").ifEmpty {
+            // Earlier versions stored an unordered set
+            prefs.getStringSet("hidden", null)?.sorted() ?: emptyList()
+        }
+        set(value) = prefs.edit {
+            putString("hidden_list", value.joinToString("\n"))
+            remove("hidden")
+        }
+
+    /** Shows hidden from Continue watching, see [WatchItem.hideKey] */
+    var hiddenWatching: List<String>
+        get() = readList("hidden_watching")
+        set(value) = writeList("hidden_watching", value)
+
+    /** Last address entered in the Ping utility */
+    var pingHost: String
+        get() = prefs.getString("ping_host", null) ?: ""
+        set(value) = prefs.edit { putString("ping_host", value) }
+
+    /** The [NetworkKind] last connected, for which icon to cross out without a network */
+    var lastNetworkKind: String
+        get() = prefs.getString("last_network_kind", null) ?: ""
+        set(value) = prefs.edit { putString("last_network_kind", value) }
+
+    /** Cameras, in the order chosen; their addresses may include the camera's login */
+    var cameras: List<Camera>
+        get() = prefs.getString("cameras", null)?.let(::camerasFromJson)
+            // Earlier versions had a single camera
+            ?: prefs.getString("camera_url", null)?.takeIf { it.isNotEmpty() }?.let { url ->
+                listOf(Camera(id = "camera1", name = "Camera", url = url, useTcp = prefs.getBoolean("camera_tcp", true)))
+            }
+            ?: emptyList()
+        set(value) = prefs.edit {
+            putString("cameras", camerasToJson(value))
+            remove("camera_url")
+            remove("camera_tcp")
+        }
+
+    /** Id of the camera shown on the home screen */
+    var selectedCamera: String
+        get() = prefs.getString("camera_selected", null) ?: ""
+        set(value) = prefs.edit { putString("camera_selected", value) }
+
+    /** Home Assistant address, e.g. http://192.168.1.20:8123; empty = not set up */
+    var haUrl: String
+        get() = prefs.getString("ha_url", null) ?: ""
+        set(value) = prefs.edit { putString("ha_url", value) }
+
+    /** Home Assistant long-lived access token, when logging in with one */
+    var haToken: String
+        get() = prefs.getString("ha_token", null) ?: ""
+        set(value) = prefs.edit { putString("ha_token", value) }
+
+    /** Home Assistant refresh token, when logging in with a username and password (never stored) */
+    var haRefreshToken: String
+        get() = prefs.getString("ha_refresh_token", null) ?: ""
+        set(value) = prefs.edit { putString("ha_refresh_token", value) }
+
+    /** Username of that login, to show it again in the settings */
+    var haUsername: String
+        get() = prefs.getString("ha_username", null) ?: ""
+        set(value) = prefs.edit { putString("ha_username", value) }
+
+    /** Home Assistant sensors and weather shown next to the camera, in the order chosen */
+    var haEntities: List<String>
+        // Earlier versions kept the actions in this list too
+        get() = readList("ha_entities").filterNot(::isHaAction)
+        set(value) = writeList("ha_entities", value)
+
+    /** Home Assistant scenes and scripts shown as buttons in the top bar, in the order chosen */
+    var haActions: List<String>
+        get() = if (prefs.contains("ha_actions")) readList("ha_actions") else readList("ha_entities").filter(::isHaAction)
+        set(value) = writeList("ha_actions", value)
+
+    /** Frigate's address and login; the password is kept, see [FrigateServer] */
+    var frigate: FrigateServer
+        get() = FrigateServer(
+            prefs.getString("frigate_url", null) ?: "",
+            prefs.getString("frigate_username", null) ?: "",
+            prefs.getString("frigate_password", null) ?: "",
+            prefs.getString("frigate_cert_pin", null) ?: "",
+        )
+        set(value) = prefs.edit {
+            putString("frigate_url", value.url)
+            putString("frigate_username", value.username)
+            putString("frigate_password", value.password)
+            putString("frigate_cert_pin", value.certPin)
+        }
+
+    // Earlier versions had one switch, which did what both of these do. Both off by default.
+    private val replaceHomeBefore get() = prefs.getBoolean("replace_home", false)
+
+    /** Catch the Home button so the TV's home screen never opens. May stop a held volume button from repeating. */
+    var catchHomeKey: Boolean
+        get() = prefs.getBoolean("catch_home_key", replaceHomeBefore)
+        set(value) = prefs.edit { putBoolean("catch_home_key", value) }
+
+    /** Reopen this launcher whenever the TV's own home screen opens */
+    var reopenAfterHome: Boolean
+        get() = prefs.getBoolean("reopen_after_home", replaceHomeBefore)
+        set(value) = prefs.edit { putBoolean("reopen_after_home", value) }
+
+    /** Either way of taking over from the TV's home screen is on (see HomeOverrideService) */
+    val replaceHome: Boolean get() = catchHomeKey || reopenAfterHome
+
+    fun stopReplacingHome() {
+        catchHomeKey = false
+        reopenAfterHome = false
+    }
+
+    /** The Cameras tab plays substreams live; otherwise it shows still pictures */
+    var cameraGridLive: Boolean
+        get() = prefs.getBoolean("camera_grid_live", true)
+        set(value) = prefs.edit { putBoolean("camera_grid_live", value) }
+
+    /**
+     * For older TVs: the home camera stops while a clip plays, and decoders open one at a time.
+     * Otherwise videos play side by side, and open together.
+     */
+    var minimizeVideoStreams: Boolean
+        get() = prefs.getBoolean("minimize_video_streams", false)
+        set(value) = prefs.edit { putBoolean("minimize_video_streams", value) }
+
+    /** How many hours of the app's log to keep, see [AppLog] */
+    var logHoursKept: Int
+        get() = prefs.getInt("log_hours_kept", LOG_HOURS_DEFAULT).coerceIn(LOG_HOURS_MIN, LOG_HOURS_MAX)
+        set(value) = prefs.edit { putInt("log_hours_kept", value) }
+
+    /** Show the memory left on the TV in the top bar */
+    var showFreeMemory: Boolean
+        get() = prefs.getBoolean("show_free_memory", false)
+        set(value) = prefs.edit { putBoolean("show_free_memory", value) }
+
+    /** The user accepted what the home override does, asked the first time they turn on either option */
+    var homeOverrideAccepted: Boolean
+        get() = prefs.getBoolean("home_override_accepted", false)
+        set(value) = prefs.edit { putBoolean("home_override_accepted", value) }
+
+    /** Set when the crash guard turned replaceHome off, so HomeBoard settings can say why */
+    var replaceHomeAutoOff: Boolean
+        get() = prefs.getBoolean("replace_home_auto_off", false)
+        set(value) = prefs.edit { putBoolean("replace_home_auto_off", value) }
+
+    /**
+     * Crash guard: launches by the home override since the launcher last started properly, counted
+     * from [overrideLaunchesSince]. Written to disk at once, since a crash follows a failed launch.
+     */
+    var overrideLaunches: Int
+        get() = prefs.getInt("override_launches", 0)
+        set(value) = prefs.edit(commit = true) { putInt("override_launches", value) }
+
+    var overrideLaunchesSince: Long
+        get() = prefs.getLong("override_launches_since", 0)
+        set(value) = prefs.edit(commit = true) { putLong("override_launches_since", value) }
+
+    /** The listener is only weakly held: keep a reference to it */
+    fun addChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) =
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+
+    fun removeChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) =
+        prefs.unregisterOnSharedPreferenceChangeListener(listener)
+
+    /** The apps found last time */
+    var installedApps: List<InstalledApp>
+        get() = runCatching { installedAppsFromJson(prefs.getString("installed_apps", null).orEmpty()) }.getOrDefault(emptyList())
+        set(value) = prefs.edit { putString("installed_apps", installedAppsToJson(value)) }
+
+    private fun readList(key: String): List<String> =
+        prefs.getString(key, null)?.split('\n')?.filter { it.isNotEmpty() } ?: emptyList()
+
+    private fun writeList(key: String, value: List<String>) = prefs.edit { putString(key, value.joinToString("\n")) }
+}
+
+/** Applies the saved order and drops hidden apps; apps not ordered yet (e.g. newly installed) go last. */
+fun arrange(apps: List<InstalledApp>, order: List<String>, hidden: List<String>): List<InstalledApp> {
+    val rank = order.withIndex().associate { (index, key) -> key to index }
+    val hiddenKeys = hidden.toSet()
+    // sortedBy is stable, so unranked apps keep their alphabetical order
+    return apps.filter { it.key !in hiddenKeys }.sortedBy { rank[it.key] ?: Int.MAX_VALUE }
+}
