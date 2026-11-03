@@ -319,8 +319,9 @@ fun HomeAssistantDialog(
             // What was chosen before comes first, so it can be seen in a long list. Not what's
             // chosen now: items would jump around while choosing
             val listed = shown.sortedBy { it.id !in initialEntities }
-            // Scenes, scripts, weather, then sensors by room (alphabetical), then sensors without a room
-            val sensorsByRoom = listed.filter { it.domain == "sensor" }.groupBy { it.area }
+            // Scenes, scripts, weather, then sensors (binary ones too) by room (alphabetical), then
+            // sensors without a room
+            val sensorsByRoom = listed.filter { it.domain in setOf("sensor", "binary_sensor") }.groupBy { it.area }
             val sections = buildList {
                 add("Scenes" to listed.filter { it.domain == "scene" })
                 add("Scripts" to listed.filter { it.domain == "script" })

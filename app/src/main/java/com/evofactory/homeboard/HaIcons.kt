@@ -57,7 +57,7 @@ fun MdiIcon(name: String, modifier: Modifier = Modifier, size: Dp = 20.dp, color
     }
 }
 
-/** Home Assistant's icon for an entity that has none set: by its domain, and for sensors by type */
+/** Home Assistant's icon for an entity that has none set: by its domain, and for sensors by type and state */
 fun defaultHaIcon(domain: String, deviceClass: String?, state: String): String = when (domain) {
     "scene" -> "mdi:palette"
     "script" -> "mdi:script-text"
@@ -67,8 +67,56 @@ fun defaultHaIcon(domain: String, deviceClass: String?, state: String): String =
         null -> "mdi:eye"
         else -> SensorIcons[deviceClass] ?: "mdi:eye"
     }
+    "binary_sensor" -> binarySensorType(deviceClass).let { if (state == "on") it.onIcon else it.offIcon }
     else -> "mdi:bookmark"
 }
+
+/** A binary sensor's state in words, by what it detects, e.g. "Open" for a door; null if neither on nor off */
+fun binarySensorLabel(deviceClass: String?, state: String): String? = when (state) {
+    "on" -> binarySensorType(deviceClass).on
+    "off" -> binarySensorType(deviceClass).off
+    else -> null
+}
+
+private class BinarySensorType(val offIcon: String, val onIcon: String, val off: String, val on: String)
+
+private fun binarySensorType(deviceClass: String?) = BinarySensorTypes[deviceClass] ?: DefaultBinarySensor
+
+private val DefaultBinarySensor = BinarySensorType("mdi:radiobox-blank", "mdi:checkbox-marked-circle", "Off", "On")
+
+// From Home Assistant's binary sensor icons and states (homeassistant/components/binary_sensor/
+// icons.json and strings.json): icon when off, then on, and the state in words when off, then on
+private val BinarySensorTypes = mapOf(
+    "battery" to BinarySensorType("mdi:battery", "mdi:battery-outline", "Normal", "Low"),
+    "battery_charging" to BinarySensorType("mdi:battery", "mdi:battery-charging", "Not charging", "Charging"),
+    "carbon_monoxide" to BinarySensorType("mdi:smoke-detector", "mdi:smoke-detector-alert", "Clear", "Detected"),
+    "cold" to BinarySensorType("mdi:thermometer", "mdi:snowflake", "Normal", "Cold"),
+    "connectivity" to BinarySensorType("mdi:close-network-outline", "mdi:check-network-outline", "Disconnected", "Connected"),
+    "door" to BinarySensorType("mdi:door-closed", "mdi:door-open", "Closed", "Open"),
+    "garage_door" to BinarySensorType("mdi:garage", "mdi:garage-open", "Closed", "Open"),
+    "gas" to BinarySensorType("mdi:check-circle", "mdi:alert-circle", "Clear", "Detected"),
+    "glass_break" to BinarySensorType("mdi:glass-fragile", "mdi:glass-fragile", "Clear", "Glass break detected"),
+    "heat" to BinarySensorType("mdi:thermometer", "mdi:fire", "Normal", "Hot"),
+    "light" to BinarySensorType("mdi:brightness-5", "mdi:brightness-7", "No light", "Light detected"),
+    "lock" to BinarySensorType("mdi:lock", "mdi:lock-open", "Locked", "Unlocked"),
+    "moisture" to BinarySensorType("mdi:water-off", "mdi:water", "Dry", "Wet"),
+    "motion" to BinarySensorType("mdi:motion-sensor-off", "mdi:motion-sensor", "Clear", "Detected"),
+    "moving" to BinarySensorType("mdi:octagon", "mdi:arrow-right", "Not moving", "Moving"),
+    "occupancy" to BinarySensorType("mdi:home-outline", "mdi:home", "Clear", "Detected"),
+    "opening" to BinarySensorType("mdi:square", "mdi:square-outline", "Closed", "Open"),
+    "plug" to BinarySensorType("mdi:power-plug-off", "mdi:power-plug", "Unplugged", "Plugged in"),
+    "power" to BinarySensorType("mdi:power-plug-off", "mdi:power-plug", "Off", "On"),
+    "presence" to BinarySensorType("mdi:home-outline", "mdi:home", "Away", "Home"),
+    "problem" to BinarySensorType("mdi:check-circle", "mdi:alert-circle", "OK", "Problem"),
+    "running" to BinarySensorType("mdi:stop", "mdi:play", "Not running", "Running"),
+    "safety" to BinarySensorType("mdi:check-circle", "mdi:alert-circle", "Safe", "Unsafe"),
+    "smoke" to BinarySensorType("mdi:smoke-detector-variant", "mdi:smoke-detector-variant-alert", "Clear", "Detected"),
+    "sound" to BinarySensorType("mdi:music-note-off", "mdi:music-note", "Clear", "Detected"),
+    "tamper" to BinarySensorType("mdi:check-circle", "mdi:alert-circle", "Clear", "Tampering detected"),
+    "update" to BinarySensorType("mdi:package", "mdi:package-up", "Up-to-date", "Update available"),
+    "vibration" to BinarySensorType("mdi:crop-portrait", "mdi:vibrate", "Clear", "Detected"),
+    "window" to BinarySensorType("mdi:window-closed", "mdi:window-open", "Closed", "Open"),
+)
 
 /** Icon of a weather condition, e.g. "partlycloudy", as Home Assistant shows it */
 fun weatherIcon(condition: String?): String = WeatherConditions[condition]?.first ?: "mdi:weather-cloudy-alert"

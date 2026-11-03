@@ -4,9 +4,11 @@ import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
@@ -197,29 +199,46 @@ class HaEntity(
     val name: String get() = entityName ?: fullName
     val unit: String? get() = attributes.string("unit_of_measurement")
 
+    /** What it measures or detects, e.g. "temperature" or "door"; null if not set */
+    val deviceClass: String? get() = attributes.string("device_class")
+
     /** Material Design Icons name, as on the Home Assistant dashboard: the one set for it, or its type's */
-    val icon: String get() = attributes.string("icon") ?: defaultHaIcon(domain, attributes.string("device_class"), state)
+    val icon: String get() = attributes.string("icon") ?: defaultHaIcon(domain, deviceClass, state)
 
     /** Scenes and scripts: shown as buttons that run them */
     val isAction get() = domain in ActionDomains
 
-    /** What can be shown above the app row: actions, weather, and sensors with a measurement */
-    val isPickable get() = isAction || domain == "weather" ||
-        (domain == "sensor" && (unit != null || attributes.has("state_class")))
+    /** What can be shown above the app row: actions, weather, sensors and binary sensors (doors, motion…) */
+    val isPickable get() = isAction || domain in setOf("weather", "sensor", "binary_sensor")
 
     /** Weather: the current temperature, in [temperatureUnit] */
     val temperature: Double? get() = attributes.optDouble("temperature").takeUnless { it.isNaN() }
     val temperatureUnit: String? get() = attributes.string("temperature_unit")
 
-    /** The reading as shown, e.g. "12.4 °C"; a dash while the sensor has no value */
+    /** The reading as shown, e.g. "12.4 °C" or "Open"; a dash while the sensor has no value */
     val reading: String
         get() = when {
             state in setOf("unavailable", "unknown", "") -> "—"
             domain == "weather" ->
                 listOfNotNull(weatherLabel(state), temperature?.let { "${it.roundToInt()} ${temperatureUnit.orEmpty()}".trim() })
                     .joinToString(" · ")
+            domain == "binary_sensor" -> binarySensorLabel(deviceClass, state) ?: state
+            deviceClass == "timestamp" -> formatTimestamp(state) ?: state
+            // Fixed states, e.g. "running_rinse": shown "Running rinse"
+            deviceClass == "enum" -> state.replace('_', ' ').replaceFirstChar { it.uppercase() }
             else -> listOfNotNull(state, unit).joinToString(" ")
         }
+}
+
+/** A sensor's time, e.g. "2026-11-03T05:12:00+00:00", in local time: 06:12 today, otherwise with the date */
+private fun formatTimestamp(state: String): String? {
+    val time = try {
+        OffsetDateTime.parse(state).atZoneSameInstant(ZoneId.systemDefault())
+    } catch (_: DateTimeParseException) {
+        return null
+    }
+    val pattern = if (time.toLocalDate() == LocalDate.now()) "HH:mm" else "d MMM HH:mm"
+    return time.format(DateTimeFormatter.ofPattern(pattern))
 }
 
 /** One step of a weather forecast: an hour or a day */
