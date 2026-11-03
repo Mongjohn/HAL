@@ -85,8 +85,8 @@ interface TopDialogScope {
     val close: FocusRequester
 
     /**
-     * On a row of a list or a text field: Left goes to the first tab (or button) and Right to the X,
-     * the two ends of the top row, from where the same key comes back. For items side by side,
+     * On a row of a list or a text field: Left goes to the X and Right to the first tab (or button),
+     * the two ends of the top row, from where the same key, carrying on round, comes back. For items side by side,
      * [left] goes on the first one and [right] on the last.
      */
     fun Modifier.ringToTop(left: Boolean = true, right: Boolean = true): Modifier
@@ -103,8 +103,8 @@ private class TopDialogScopeImpl(override val close: FocusRequester) : TopDialog
     override fun Modifier.downToContent(): Modifier = focusProperties { contentFocus()?.let { down = it } }
 
     override fun Modifier.ringToTop(left: Boolean, right: Boolean): Modifier = focusProperties {
-        if (left) this.left = firstTop
-        if (right) this.right = close
+        if (left) this.left = close
+        if (right) this.right = firstTop
     }
 }
 
@@ -113,8 +113,8 @@ private class TopDialogScopeImpl(override val close: FocusRequester) : TopDialog
  * the bottom of the screen. Darkens everything behind it; Back or Esc [onDismiss]es it.
  *
  * The top row holds the [title] (or the [tabs] in its place), [info] dimmed, the [buttons], then
- * an X that [onClose]s it. From the content, Left goes to the first tab (or button) and Right to
- * the X (see [TopDialogScope.ringToTop]); Left from the first tab and Right from the X go back to
+ * an X that [onClose]s it. From the content, Left goes to the X and Right to the first tab (or
+ * button) (see [TopDialogScope.ringToTop]); Left from the first tab and Right from the X go back to
  * the content, to [contentFocus], the item last selected there, as does Down from the top row, unless the content has a search field at
  * its top ([searchFocus]): Down goes to the search, and from there to the item last selected (see
  * [TopDialogScope.downToContent]). [hint] says what OK does, at the bottom, faint. [fullWidth] is for long content, e.g.
