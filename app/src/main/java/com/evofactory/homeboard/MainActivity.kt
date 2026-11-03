@@ -381,7 +381,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(Modifier.height(EdgePadding - TileGrowRoom))
                     }
-                    frigateFeed?.let { FrigateClipPlayer(it) }
+                    frigateFeed?.let { FrigateClipPlayer(it, minimizeVideoStreams) }
                     if (camerasOpen) {
                         CamerasDialog(
                             cameras = cameras,

@@ -245,9 +245,9 @@ fun FrigateAlertsGrid(feed: FrigateFeed?, onSetUp: () -> Unit, modifier: Modifie
     }
 }
 
-/** The clip picked in the grid or the row, full screen */
+/** The clip picked in the grid or the row, full screen. With [minimizeStreams], it waits for the cameras' players to release first. */
 @Composable
-fun FrigateClipPlayer(feed: FrigateFeed) {
+fun FrigateClipPlayer(feed: FrigateFeed, minimizeStreams: Boolean) {
     feed.playing?.let { alert ->
         val alerts = feed.alerts.orEmpty()
         val index = alerts.indexOfFirst { it.id == alert.id }
@@ -257,6 +257,7 @@ fun FrigateClipPlayer(feed: FrigateFeed) {
             // Newest first, as in the row and the grid
             newer = alerts.getOrNull(index - 1).takeIf { index >= 0 },
             older = alerts.getOrNull(index + 1).takeIf { index >= 0 },
+            minimizeStreams = minimizeStreams,
             onOpen = { feed.playing = it },
             onDismiss = {
                 feed.returnTo = alert.id
@@ -477,6 +478,7 @@ private fun ClipPlayer(
     alert: FrigateAlert,
     newer: FrigateAlert?,
     older: FrigateAlert?,
+    minimizeStreams: Boolean,
     onOpen: (FrigateAlert) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -508,9 +510,17 @@ private fun ClipPlayer(
     val playerWatch = remember(player) { PlayerWatch(player, "Clip player") }
 
     LaunchedEffect(player, alert.id) {
-        status = "Loading clip…"
+        AppLog.i("FrigateClip", "${alert.camera} ${alert.id}: opening, minimize streams ${if (minimizeStreams) "on" else "off"}")
         ended = false
         showingVideo = false
+        // The cameras stop for the clip, but on older TVs their decoders are only free once their
+        // players have finished releasing, which can take longer than Media3 waits. The message only
+        // reaches the screen if it has to wait: returning at once doesn't let a frame through.
+        if (minimizeStreams) {
+            status = "Waiting for other decoders to release…"
+            playerWatch.awaitOthersGone()
+        }
+        status = "Loading clip…"
         player.setMediaItem(MediaItem.fromUri(client.clipUrl(alert)))
         player.playWhenReady = true
         player.prepare()

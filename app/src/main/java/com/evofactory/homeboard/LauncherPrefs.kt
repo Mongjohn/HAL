@@ -134,7 +134,8 @@ class LauncherPrefs(context: Context) {
         set(value) = prefs.edit { putBoolean("camera_grid_live", value) }
 
     /**
-     * For older TVs: the home camera stops while a clip plays, and decoders open one at a time.
+     * For older TVs: the cameras stop while a clip plays, and the clip waits until their players have
+     * released. Decoders open one at a time.
      * Otherwise videos play side by side, and open together.
      */
     var minimizeVideoStreams: Boolean

@@ -34,9 +34,13 @@ private const val RELEASE_STUCK_AFTER_MS = 5_000L
 private const val OPEN_STUCK_AFTER_MS = 10_000L
 private const val CHECK_INTERVAL_MS = 2_000L
 private const val DIALOG_REFRESH_MS = 1_000L
+private const val GONE_CHECK_INTERVAL_MS = 50L
 
 /** When each stuck player stopped responding */
 private val stuckSince = mutableStateListOf<Long>()
+
+/** Every player watched, until its playback thread has ended. Main thread only. */
+private val watched = mutableListOf<PlayerWatch>()
 
 val anyPlayerStuck: Boolean get() = stuckSince.isNotEmpty()
 
@@ -60,6 +64,7 @@ class PlayerWatch(private val player: ExoPlayer, private val label: String) {
     private var stuckAt = 0L
 
     init {
+        watched += this
         check()
     }
 
@@ -68,10 +73,34 @@ class PlayerWatch(private val player: ExoPlayer, private val label: String) {
         player.release()
     }
 
+    /**
+     * Waits until every other player has released and its playback thread has ended, which frees its
+     * decoder, for TVs that refuse a new one before. Media3's own wait in release() can end first.
+     * Gives up after [RELEASE_STUCK_AFTER_MS], when the top bar warns about the stuck player.
+     */
+    suspend fun awaitOthersGone() {
+        val start = SystemClock.elapsedRealtime()
+        while (true) {
+            watched.removeAll { !it.thread.isAlive }
+            val others = watched.count { it !== this }
+            val waited = SystemClock.elapsedRealtime() - start
+            if (others == 0) {
+                if (waited > 0) AppLog.i(TAG, "$label waited $waited ms for the other players to release")
+                return
+            }
+            if (waited >= RELEASE_STUCK_AFTER_MS) {
+                AppLog.w(TAG, "$label stopped waiting for $others other players to release after $waited ms")
+                return
+            }
+            delay(GONE_CHECK_INTERVAL_MS)
+        }
+    }
+
     private fun check() {
         val now = SystemClock.elapsedRealtime()
         when {
             releasedAt != 0L && !thread.isAlive -> {
+                watched -= this
                 recovered("finished releasing after ${now - releasedAt} ms")
                 return
             }
