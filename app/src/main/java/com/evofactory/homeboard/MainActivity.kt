@@ -138,14 +138,8 @@ class MainActivity : ComponentActivity() {
                     val actions = remember(haEntities, haTopBar) { haEntities.filter { it in haTopBar }.take(MAX_HA_ACTIONS) }
                     val haConnection = rememberHaConnection(haServer, haEntities)
                     val sideContent = haServer.isSet
-                    // Set when a camera's picked in the grid: it's selected once it's on screen
-                    var selectMainCamera by remember { mutableStateOf(false) }
-                    LaunchedEffect(tab, selectMainCamera) {
-                        if (!selectMainCamera || tab != HomeTab.Home) return@LaunchedEffect
-                        withFrameNanos { }
-                        runCatching { mainCameraFocus.requestFocus() }
-                        selectMainCamera = false
-                    }
+                    // Picked in the Cameras tab, showing full screen
+                    var fullScreenCamera by remember { mutableStateOf<Camera?>(null) }
                     val continueItems = remember(watchNext, watchNextReadAt, hiddenWatching, visible) {
                         watchRow(watchNext, watchNextReadAt, visible.orEmpty().map { it.key }, hiddenWatching)
                     }
@@ -241,14 +235,13 @@ class MainActivity : ComponentActivity() {
                         if (tab == HomeTab.Cameras) {
                             CameraGrid(
                                 cameras = cameras,
-                                // Like the main camera: a clip opened from the alerts row may need its decoder
-                                playSubstreams = cameraGridLive && !(minimizeVideoStreams && frigateFeed?.playing != null),
+                                // Like the main camera: a clip opened from the alerts row may need its decoder,
+                                // and so may a camera shown full screen
+                                playSubstreams = cameraGridLive &&
+                                    !(minimizeVideoStreams && (frigateFeed?.playing != null || fullScreenCamera != null)),
                                 minimizeStreams = minimizeVideoStreams,
-                                onSelect = {
-                                    selectCamera(it)
-                                    tab = HomeTab.Home
-                                    selectMainCamera = true
-                                },
+                                spareDecoder = fullScreenCamera != null,
+                                onSelect = { fullScreenCamera = it },
                                 onSetUp = { camerasOpen = true },
                                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
                             )
@@ -397,6 +390,7 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.height(EdgePadding - TileGrowRoom))
                     }
                     frigateFeed?.let { FrigateClipPlayer(it, minimizeVideoStreams) }
+                    fullScreenCamera?.let { FullScreenCamera(it, minimizeVideoStreams, onClose = { fullScreenCamera = null }) }
                     if (camerasOpen) {
                         CamerasDialog(
                             cameras = cameras,

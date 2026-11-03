@@ -514,12 +514,8 @@ private fun ClipPlayer(
         ended = false
         showingVideo = false
         // The cameras stop for the clip, but on older TVs their decoders are only free once their
-        // players have finished releasing, which can take longer than Media3 waits. The message only
-        // reaches the screen if it has to wait: returning at once doesn't let a frame through.
-        if (minimizeStreams) {
-            status = "Waiting for other decoders to release…"
-            playerWatch.awaitOthersGone()
-        }
+        // players have finished releasing, which can take longer than Media3 waits
+        if (minimizeStreams) playerWatch.awaitOthersGone { status = "Waiting for other decoders to release…" }
         status = "Loading clip…"
         player.setMediaItem(MediaItem.fromUri(client.clipUrl(alert)))
         player.playWhenReady = true

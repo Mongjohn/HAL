@@ -17,6 +17,7 @@ import androidx.annotation.OptIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +35,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -41,12 +44,19 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -181,6 +191,9 @@ private class ConnectionStatus(val cameraHost: String) {
 
     var lastError by mutableStateOf<String?>(null)
 
+    /** Before connecting: other players are still releasing their decoders */
+    var waitingForDecoders by mutableStateOf(false)
+
     val live get() = phase == Phase.Live
 
     fun reset(phase: Phase) {
@@ -213,6 +226,10 @@ fun NotLiveMark(modifier: Modifier = Modifier, size: Dp = 24.dp) {
  * [compact] is for small views: shorter status. [fallbackPictureUrl]: whose last picture to show when
  * this stream has none of its own, e.g. the main stream of the camera this is a substream of.
  * Not live, it shows a [NotLiveMark], or if [compact] leaves that to its owner through [onLiveChange].
+ *
+ * [fullScreen] moves the picture to a window over everything, with the same player and stream; OK
+ * or Back calls [onCloseFullScreen]. With [waitForOtherPlayers], it only connects once every other
+ * player has released, for TVs that refuse a decoder until then.
  */
 @Composable
 fun CameraView(
@@ -222,6 +239,9 @@ fun CameraView(
     compact: Boolean = false,
     fallbackPictureUrl: String? = null,
     minimizeStreams: Boolean = false,
+    fullScreen: Boolean = false,
+    onCloseFullScreen: () -> Unit = {},
+    waitForOtherPlayers: Boolean = false,
     onLiveChange: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -243,15 +263,31 @@ fun CameraView(
 
     LaunchedEffect(snapshots) { snapshots.load() }
 
-    LifecycleStartEffect(url, useTcp, minimizeStreams) {
-        val snapshotInterval = if (compact) COMPACT_SNAPSHOT_INTERVAL_MS else SNAPSHOT_INTERVAL_MS
-        val connection = CameraConnection(context, url, useTcp, video, frame, status, snapshots, snapshotInterval, minimizeStreams)
-        onStopOrDispose { connection.release() }
+    var mayConnect by remember(url) { mutableStateOf(!waitForOtherPlayers) }
+    if (mayConnect) {
+        LifecycleStartEffect(url, useTcp, minimizeStreams) {
+            val snapshotInterval = if (compact) COMPACT_SNAPSHOT_INTERVAL_MS else SNAPSHOT_INTERVAL_MS
+            val connection = CameraConnection(context, url, useTcp, video, frame, status, snapshots, snapshotInterval, minimizeStreams)
+            onStopOrDispose { connection.release() }
+        }
+    } else {
+        LaunchedEffect(url) {
+            awaitPlayersGone("Player ${Integer.toHexString(url.hashCode()).takeLast(4)}") { status.waitingForDecoders = true }
+            status.waitingForDecoders = false
+            mayConnect = true
+        }
     }
 
-    Box(modifier = modifier.clip(shape).background(Color.Black), contentAlignment = Alignment.Center) {
+    // Here or full screen: the player draws into the same view, which moves between the two
+    @Composable
+    fun Picture(modifier: Modifier, rounded: Boolean) = Box(
+        modifier = (if (rounded) modifier.clip(shape) else modifier).background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
         AndroidView(
             factory = {
+                // Still in the other place's view, which may not be gone yet
+                (frame.parent as? ViewGroup)?.removeView(frame)
                 frame.apply {
                     // Display only: the remote should never land on it
                     isFocusable = false
@@ -284,14 +320,47 @@ fun CameraView(
             }
         }
         // The hardware video layer ignores clipping: its corners are painted over in the background colour
-        Canvas(Modifier.matchParentSize()) {
-            val corners = Path().apply {
-                fillType = PathFillType.EvenOdd
-                addRect(size.toRect())
-                addOutline(shape.createOutline(size, layoutDirection, this@Canvas))
+        if (rounded) {
+            Canvas(Modifier.matchParentSize()) {
+                val corners = Path().apply {
+                    fillType = PathFillType.EvenOdd
+                    addRect(size.toRect())
+                    addOutline(shape.createOutline(size, layoutDirection, this@Canvas))
+                }
+                drawPath(corners, background)
             }
-            drawPath(corners, background)
         }
+    }
+
+    if (fullScreen) {
+        FullScreenWindow(onClose = onCloseFullScreen) { Picture(Modifier.fillMaxSize(), rounded = false) }
+    } else {
+        Picture(modifier, rounded = true)
+    }
+}
+
+/** Over everything, on black. OK or Back closes it, on release, so it can't be the press that opened it. */
+@Composable
+private fun FullScreenWindow(onClose: () -> Unit, content: @Composable () -> Unit) {
+    val focus = remember { FocusRequester() }
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        LaunchedEffect(Unit) { focus.requestFocus() }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .focusRequester(focus)
+                .onPreviewKeyEvent { event ->
+                    when (event.key) {
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Escape -> {
+                            if (event.type == KeyEventType.KeyUp) onClose()
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                .focusable(),
+        ) { content() }
     }
 }
 
@@ -509,7 +578,12 @@ private class CameraConnection(
         status.lostAt?.let { lostAt ->
             AppLog.i(TAG, "Player $logId picture back after ${status.retries} retries, ${(System.currentTimeMillis() - lostAt) / 1000} s")
         }
-        AppLog.i(TAG, "Player $logId live after ${SystemClock.elapsedRealtime() - attemptStartedAt} ms")
+        // Already live: the picture moved to or from full screen
+        if (status.live) {
+            AppLog.i(TAG, "Player $logId picture on a new surface")
+        } else {
+            AppLog.i(TAG, "Player $logId live after ${SystemClock.elapsedRealtime() - attemptStartedAt} ms")
+        }
         quietRetries = 0
         status.reset(Phase.Live)
         lastFrames = renderedFrames()
@@ -880,11 +954,12 @@ private fun CameraStatus(status: ConnectionStatus, snapshotTakenAt: Long?) {
         else -> "${status.retries} retries so far"
     }
     val title = when {
+        status.waitingForDecoders -> "Waiting for other decoders to release…"
         status.phase == Phase.WaitingForNetwork -> "Network down"
         lostAt != null -> "Camera offline since ${formatTime(lostAt)}"
         else -> "Connecting to camera…"
     }
-    val step = when (status.phase) {
+    val step = if (status.waitingForDecoders) "" else when (status.phase) {
         Phase.WaitingForNetwork -> "${status.networkProblem} · checking every ${NETWORK_CHECK_INTERVAL_MS} ms"
         Phase.Connecting -> {
             val answered = status.cameraAnswered
@@ -911,7 +986,7 @@ private fun CameraStatus(status: ConnectionStatus, snapshotTakenAt: Long?) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-        Text(step, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+        if (step.isNotEmpty()) Text(step, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
         // The last error stays up through the retries, until the picture is back
         status.lastError?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = ErrorColor)

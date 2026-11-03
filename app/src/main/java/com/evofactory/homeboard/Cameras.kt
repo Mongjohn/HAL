@@ -106,7 +106,8 @@ private const val NAME_SHOWN_MS = 2_000L
 
 /**
  * The camera shown on the home screen. Once selected, left and right switch to the previous or
- * next camera, and the new camera's name shows briefly over the picture.
+ * next camera, and the new camera's name shows briefly over the picture. OK shows it full screen,
+ * with the same player and stream.
  */
 @Composable
 fun MainCamera(
@@ -119,6 +120,7 @@ fun MainCamera(
     var focused by remember { mutableStateOf(false) }
     var nameShown by remember { mutableStateOf(false) }
     var firstCamera by remember { mutableStateOf(true) }
+    var fullScreen by remember { mutableStateOf(false) }
 
     LaunchedEffect(camera.id) {
         // Only when switching, not when the home screen opens
@@ -135,6 +137,11 @@ fun MainCamera(
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
             .onPreviewKeyEvent { event ->
+                // On release: opened on the press, the full screen window would get the release and close
+                if (event.key in OkKeys) {
+                    if (event.type == KeyEventType.KeyUp) fullScreen = true
+                    return@onPreviewKeyEvent true
+                }
                 if (cameras.size < 2) return@onPreviewKeyEvent false
                 val step = when (event.key) {
                     Key.DirectionLeft -> -1
@@ -149,7 +156,14 @@ fun MainCamera(
             }
             .focusable(),
     ) {
-        CameraView(url = camera.url, useTcp = camera.useTcp, modifier = Modifier.fillMaxSize(), minimizeStreams = minimizeStreams)
+        CameraView(
+            url = camera.url,
+            useTcp = camera.useTcp,
+            modifier = Modifier.fillMaxSize(),
+            minimizeStreams = minimizeStreams,
+            fullScreen = fullScreen,
+            onCloseFullScreen = { fullScreen = false },
+        )
         AnimatedVisibility(
             visible = nameShown,
             enter = fadeIn(),
@@ -176,6 +190,24 @@ fun MainCamera(
     }
 }
 
+private val OkKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+
+/**
+ * A camera's main stream full screen, opened from the Cameras tab; OK or Back closes it. On older
+ * TVs the tab's substreams stop for it, and it waits for them to let go of their decoders.
+ */
+@Composable
+fun FullScreenCamera(camera: Camera, minimizeStreams: Boolean, onClose: () -> Unit) {
+    CameraView(
+        url = camera.url,
+        useTcp = camera.useTcp,
+        minimizeStreams = minimizeStreams,
+        fullScreen = true,
+        onCloseFullScreen = onClose,
+        waitForOtherPlayers = minimizeStreams,
+    )
+}
+
 /** Only shows that left and right switch to another camera or alert; the remote never lands on it. A dark copy behind keeps it readable over any picture. */
 @Composable
 fun SwitchChevron(icon: String, modifier: Modifier) {
@@ -189,13 +221,15 @@ fun SwitchChevron(icon: String, modifier: Modifier) {
  * All the cameras on two rows that scroll sideways: the first two cameras in the first column, the
  * next two in the second, and so on. With [playSubstreams], cameras with a substream play it live, as
  * many as the TV can decode at once; the others show the last picture seen when they were on the home
- * screen, with a red X. OK picks a camera.
+ * screen, with a red X. OK picks a camera, to show full screen. [spareDecoder] plays one fewer,
+ * leaving a decoder for the camera shown full screen.
  */
 @Composable
 fun CameraGrid(
     cameras: List<Camera>,
     playSubstreams: Boolean,
     minimizeStreams: Boolean,
+    spareDecoder: Boolean,
     onSelect: (Camera) -> Unit,
     onSetUp: () -> Unit,
     modifier: Modifier = Modifier,
@@ -215,7 +249,7 @@ fun CameraGrid(
             }
         }
         Box(Modifier.fillMaxSize().background(Color.Black)) {
-            val streaming = live && liveSlots.has(camera.id)
+            val streaming = live && liveSlots.has(camera.id, spare = if (spareDecoder) 1 else 0)
             if (streaming) {
                 CameraView(
                     url = camera.substreamUrl,
@@ -259,7 +293,7 @@ fun CameraGrid(
     }
 }
 
-/** Who gets to play live: the first to want it, up to [max]. Leaving lets the next one in. */
+/** Who gets to play live: the first to want it, up to [max] less any kept [spare]. Leaving lets the next one in. */
 private class LiveSlots(private val max: Int) {
     private val wanting = mutableStateListOf<String>()
 
@@ -271,7 +305,7 @@ private class LiveSlots(private val max: Int) {
         wanting -= id
     }
 
-    fun has(id: String) = wanting.indexOf(id) in 0 until max
+    fun has(id: String, spare: Int = 0) = wanting.indexOf(id) in 0 until max - spare
 }
 
 /**
