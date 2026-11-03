@@ -41,15 +41,16 @@ val anyPlayerStuck: Boolean get() = stuckSince.isNotEmpty()
 /**
  * Waits until every player but [except] has released and its playback thread has ended, which frees
  * its decoder, for TVs that refuse a new one before. Media3's own wait in release() can end first.
- * [onWait] runs once if it has to wait. Gives up after [RELEASE_STUCK_AFTER_MS], when the top bar
- * warns about the stuck player.
+ * With [releasedOnly], only those already released count: the others are left playing. [onWait] runs
+ * once if it has to wait. Gives up after [RELEASE_STUCK_AFTER_MS], when the top bar warns about the
+ * stuck player.
  */
-suspend fun awaitPlayersGone(label: String, except: PlayerWatch? = null, onWait: () -> Unit = {}) {
+suspend fun awaitPlayersGone(label: String, except: PlayerWatch? = null, releasedOnly: Boolean = false, onWait: () -> Unit = {}) {
     val start = SystemClock.elapsedRealtime()
     var waiting = false
     while (true) {
         watched.removeAll { it.ended }
-        val others = watched.count { it !== except }
+        val others = watched.count { it !== except && (!releasedOnly || it.released) }
         val waited = SystemClock.elapsedRealtime() - start
         if (others == 0) {
             if (waiting) AppLog.i(TAG, "$label waited $waited ms for the other players to release")
@@ -95,6 +96,8 @@ class PlayerWatch(private val player: ExoPlayer, private val label: String) {
         releasedAt = SystemClock.elapsedRealtime()
         player.release()
     }
+
+    val released: Boolean get() = releasedAt != 0L
 
     /** The playback thread has ended: whatever it held is free */
     val ended: Boolean get() = !thread.isAlive

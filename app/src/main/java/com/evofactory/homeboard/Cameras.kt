@@ -224,8 +224,9 @@ fun SwitchChevron(icon: String, modifier: Modifier) {
  * All the cameras on two rows that scroll sideways: the first two cameras in the first column, the
  * next two in the second, and so on. With [playSubstreams], cameras with a substream play it live, as
  * many as the TV can decode at once; the others show the last picture seen when they were on the home
- * screen, with a red X. OK picks a camera, to show full screen. [spareDecoder] plays one fewer,
- * leaving a decoder for the camera shown full screen.
+ * screen, with a red X. Selecting one of those takes the decoder of the playing camera selected
+ * longest ago. OK picks a camera, to show full screen. [spareDecoder] plays one fewer, leaving a
+ * decoder for the camera shown full screen.
  */
 @Composable
 fun CameraGrid(
@@ -245,6 +246,13 @@ fun CameraGrid(
         return
     }
     val liveSlots = remember { LiveSlots(maxLiveVideos()) }
+    // Only once the selection stays: passing over cameras shouldn't start and stop their streams
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(selectedId) {
+        val id = selectedId ?: return@LaunchedEffect
+        delay(SELECTED_LIVE_DELAY_MS)
+        liveSlots.select(id)
+    }
     TwoRowGrid(
         cameras,
         key = { it.id },
@@ -252,6 +260,7 @@ fun CameraGrid(
         modifier = modifier,
         selectKey = selectCamera,
         onSelected = onCameraSelected,
+        onFocus = { selectedId = it.id },
     ) { camera ->
         val live = playSubstreams && camera.substreamUrl.isNotEmpty()
         var playing by remember(camera.id) { mutableStateOf(false) }
@@ -306,19 +315,48 @@ fun CameraGrid(
     }
 }
 
-/** Who gets to play live: the first to want it, up to [max] less any kept [spare]. Leaving lets the next one in. */
-private class LiveSlots(private val max: Int) {
+private const val SELECTED_LIVE_DELAY_MS = 500L
+
+/**
+ * Who gets to play live, at most [max] less any kept spare. Free decoders go to the first to want
+ * one. A camera selected without one takes it from the playing camera selected longest ago, those
+ * never selected first. Leaving lets the next one in.
+ */
+internal class LiveSlots(private val max: Int) {
+    // In the order they asked
     private val wanting = mutableStateListOf<String>()
+
+    // The camera selected longest ago first
+    private val playing = mutableStateListOf<String>()
 
     fun want(id: String) {
         wanting += id
+        fill()
     }
 
     fun leave(id: String) {
         wanting -= id
+        playing -= id
+        fill()
     }
 
-    fun has(id: String, spare: Int = 0) = wanting.indexOf(id) in 0 until max - spare
+    fun select(id: String) {
+        if (id !in wanting) return
+        playing -= id
+        playing += id
+        while (playing.size > max) playing.removeAt(0)
+    }
+
+    // Never selected: they go before any selected one
+    private fun fill() {
+        for (id in wanting) {
+            if (playing.size >= max) return
+            if (id !in playing) playing.add(0, id)
+        }
+    }
+
+    // A spare decoder comes from the camera selected longest ago
+    fun has(id: String, spare: Int = 0) = playing.indexOf(id).let { it >= 0 && it >= playing.size - (max - spare) }
 }
 
 /**
@@ -344,6 +382,8 @@ fun <T> TwoRowGrid(
     // Moves the selection to the item with this key, then calls [onSelected]
     selectKey: String? = null,
     onSelected: () -> Unit = {},
+    // The selection moved to this item
+    onFocus: (T) -> Unit = {},
     tile: @Composable (T) -> Unit,
 ) {
     val gridState = rememberLazyGridState()
@@ -387,7 +427,8 @@ fun <T> TwoRowGrid(
                         modifier = Modifier
                             .width(cellWidth)
                             .height(cellHeight)
-                            .focusRequester(requesters.getOrPut(key(item)) { FocusRequester() }),
+                            .focusRequester(requesters.getOrPut(key(item)) { FocusRequester() })
+                            .onFocusChanged { if (it.hasFocus) onFocus(item) },
                         shape = CardDefaults.shape(CameraShape),
                         // A border shows the selection instead of growing into the neighbours
                         scale = CardDefaults.scale(focusedScale = 1f),

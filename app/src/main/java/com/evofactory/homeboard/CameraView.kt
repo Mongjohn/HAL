@@ -230,7 +230,7 @@ fun NotLiveMark(modifier: Modifier = Modifier, size: Dp = 24.dp) {
  * [fullScreen] moves the picture to a window over everything, with the same player and stream; OK
  * or Back calls [onCloseFullScreen], and a number button calls [onCameraButton] with the camera's
  * 0-based index. With [waitForOtherPlayers], it only connects once every other player has released,
- * for TVs that refuse a decoder until then.
+ * for TVs that refuse a decoder until then; with [minimizeStreams], once those already stopping have.
  */
 @Composable
 fun CameraView(
@@ -265,7 +265,7 @@ fun CameraView(
 
     LaunchedEffect(snapshots) { snapshots.load() }
 
-    var mayConnect by remember(url) { mutableStateOf(!waitForOtherPlayers) }
+    var mayConnect by remember(url) { mutableStateOf(!waitForOtherPlayers && !minimizeStreams) }
     if (mayConnect) {
         LifecycleStartEffect(url, useTcp, minimizeStreams) {
             val snapshotInterval = if (compact) COMPACT_SNAPSHOT_INTERVAL_MS else SNAPSHOT_INTERVAL_MS
@@ -274,7 +274,8 @@ fun CameraView(
         }
     } else {
         LaunchedEffect(url) {
-            awaitPlayersGone("Player ${Integer.toHexString(url.hashCode()).takeLast(4)}") { status.waitingForDecoders = true }
+            val label = "Player ${Integer.toHexString(url.hashCode()).takeLast(4)}"
+            awaitPlayersGone(label, releasedOnly = !waitForOtherPlayers) { status.waitingForDecoders = true }
             status.waitingForDecoders = false
             mayConnect = true
         }
@@ -934,6 +935,7 @@ private fun CompactCameraStatus(status: ConnectionStatus) {
     ) {
         Text(
             when {
+                status.waitingForDecoders -> "Waiting for a decoder…"
                 status.phase == Phase.WaitingForNetwork -> "Network down"
                 status.lostAt != null -> "Substream offline"
                 else -> "Connecting…"
