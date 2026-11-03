@@ -58,7 +58,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -76,6 +76,13 @@ class HaConnection {
     // Last known states stay on screen while reconnecting
     val entities = mutableStateMapOf<String, HaEntity>()
 
+    // The dashboard the Assistant tab shows, once read; null while it isn't, or when Home Assistant
+    // builds it itself (then [dashboardMissing])
+    var dashboard by mutableStateOf<HaDashboard?>(null)
+        internal set
+    var dashboardMissing by mutableStateOf(false)
+        internal set
+
     // Weather forecasts by entity id
     val hourly = mutableStateMapOf<String, List<HaForecast>>()
     val daily = mutableStateMapOf<String, List<HaForecast>>()
@@ -85,6 +92,18 @@ class HaConnection {
     // The scene, script or button running: one at a time, from the top bar or the Assistant tab
     var runningAction by mutableStateOf<String?>(null)
         private set
+
+    /** Switches [id] on or off, if Home Assistant is connected; a failure shows as a toast. Its new state comes back with its updates. */
+    fun toggle(id: String, scope: CoroutineScope, context: Context) {
+        val session = session ?: return
+        scope.launch {
+            try {
+                session.toggle(id)
+            } catch (e: HaException) {
+                Toast.makeText(context, e.message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     /** Runs a scene or script or presses a button, unless one is running or Home Assistant isn't connected; a failure shows as a toast */
     fun runAction(id: String, scope: CoroutineScope, context: Context) {
@@ -116,22 +135,39 @@ class HaConnection {
 /**
  * Follows [entityIds] on [server]. Connected only while the launcher is on screen; reconnects on
  * its own, except when the token is rejected: then it waits for a new login or an app restart, so
- * a wrong login doesn't hammer Home Assistant.
+ * a wrong login doesn't hammer Home Assistant. With a [dashboard] (its key, see
+ * [HaDashboardInfo.key]), it also reads that dashboard and follows its entities, and reconnects at
+ * once when the dashboard is saved in Home Assistant, to show the new one.
  */
 @Composable
-fun rememberHaConnection(server: HaServer, entityIds: List<String>): HaConnection {
+fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboard: String?): HaConnection {
     val connection = remember(server) { HaConnection() }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
 
-    LaunchedEffect(server, entityIds) {
-        if (!server.isSet || entityIds.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(server, entityIds, dashboard) {
+        if (dashboard == null) {
+            connection.dashboard = null
+            connection.dashboardMissing = false
+        }
+        if (!server.isSet || (entityIds.isEmpty() && dashboard == null)) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             if (connection.status == HaStatus.TokenRejected) return@repeatOnLifecycle
             while (true) {
+                // Set when the dashboard was saved: reconnect at once rather than after a wait
+                var reload = false
                 try {
                     haSession(server) {
-                        followEntities(entityIds, connection.entities)
-                        for (id in entityIds.filter(::isHaWeather)) {
+                        val saved = CompletableDeferred<Unit>()
+                        val board = dashboard?.let { key ->
+                            val urlPath = dashboardUrlPath(key)
+                            followDashboardEdits(urlPath) { saved.complete(Unit) }
+                            parseDashboard(dashboardConfig(urlPath))
+                        }
+                        connection.dashboard = board
+                        connection.dashboardMissing = dashboard != null && board == null
+                        val followed = (entityIds + board?.entityIds.orEmpty()).distinct()
+                        followEntities(followed, connection.entities)
+                        for (id in followed.filter(::isHaWeather)) {
                             followForecast(id, "hourly") { connection.hourly[id] = it }
                             followForecast(id, "daily") { connection.daily[id] = it }
                         }
@@ -141,7 +177,8 @@ fun rememberHaConnection(server: HaServer, entityIds: List<String>): HaConnectio
                         connection.problem = null
                         connection.failedConnections = 0
                         try {
-                            awaitCancellation()
+                            saved.await()
+                            reload = true
                         } finally {
                             connection.session = null
                             connection.connectedAt = null
@@ -156,7 +193,7 @@ fun rememberHaConnection(server: HaServer, entityIds: List<String>): HaConnectio
                     }
                     connection.status = HaStatus.Offline
                 }
-                delay(RETRY_DELAY_MS)
+                if (!reload) delay(RETRY_DELAY_MS)
             }
         }
     }
@@ -333,13 +370,13 @@ fun HaActionButtons(connection: HaConnection, actionIds: List<String>) {
     }
 }
 
-/** A sensor's icon, name and reading, on one line */
+/** A sensor's icon, name (or the [name] given to it) and reading, on one line */
 @Composable
-fun SensorReading(id: String, entity: HaEntity?) {
+fun SensorReading(id: String, entity: HaEntity?, name: String? = null) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         MdiIcon(entity?.icon ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
-            entity?.name ?: id,
+            name ?: entity?.name ?: id,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,

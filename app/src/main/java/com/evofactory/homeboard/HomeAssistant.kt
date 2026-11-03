@@ -225,10 +225,29 @@ class HaEntity(
             domain == "binary_sensor" -> binarySensorLabel(deviceClass, state) ?: state
             deviceClass == "timestamp" -> formatTimestamp(state) ?: state
             // Fixed states, e.g. "running_rinse": shown "Running rinse"
-            deviceClass == "enum" -> state.replace('_', ' ').replaceFirstChar { it.uppercase() }
+            deviceClass == "enum" -> state.words()
+            // From dashboards: lights, switches, covers… show their state in words
+            domain == "climate" -> listOfNotNull(
+                state.words(),
+                attributes.optDouble("current_temperature").takeUnless { it.isNaN() }?.let { "${it.roundToInt()}°" },
+            ).joinToString(" · ")
+            domain in PersonDomains -> when (state) {
+                "home" -> "Home"
+                "not_home" -> "Away"
+                else -> state.words()
+            }
+            domain !in ValueDomains && unit == null -> state.words()
             else -> listOfNotNull(state, unit).joinToString(" ")
         }
 }
+
+/** A state as words: "not_home" → "Not home" */
+private fun String.words() = replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+// Whose state is a value to show as it is, e.g. "21.5" or "Partly cloudy"
+private val ValueDomains = setOf("sensor", "input_number", "number", "input_text", "text", "counter")
+
+private val PersonDomains = setOf("person", "device_tracker")
 
 /** A sensor's time, e.g. "2026-11-03T05:12:00+00:00", in local time: 06:12 today, otherwise with the date */
 private fun formatTimestamp(state: String): String? {
@@ -277,6 +296,12 @@ private fun JSONArray?.objects(): List<JSONObject> =
 fun isHaAction(entityId: String) = entityId.substringBefore('.') in ActionDomains
 
 fun isHaWeather(entityId: String) = entityId.substringBefore('.') == "weather"
+
+// That OK can switch on and off on the Assistant tab. Not covers or locks: a slip of the remote
+// shouldn't open the garage or the front door.
+private val ToggleDomains = setOf("light", "switch", "input_boolean", "fan")
+
+fun isHaToggle(entityId: String) = entityId.substringBefore('.') in ToggleDomains
 
 /** The type an entity is listed under when it has no room: its domain, with helper buttons among the buttons */
 fun haEntityType(entityId: String) = entityId.substringBefore('.').let { if (it == "input_button") "button" else it }
@@ -481,6 +506,44 @@ class HaSession internal constructor(private val socket: WebSocket) {
         true
     } catch (_: HaException) {
         false
+    }
+
+    /** The dashboards: Home Assistant's default one, Overview, then the ones added to it */
+    suspend fun dashboards(): List<HaDashboardInfo> =
+        listOf(HaDashboardInfo(null, "Overview")) +
+            (optionalCommand("lovelace/dashboards/list") as? JSONArray).objects().mapNotNull { board ->
+                val path = board.string("url_path") ?: return@mapNotNull null
+                HaDashboardInfo(path, board.string("title") ?: path)
+            }
+
+    /**
+     * A dashboard's layout, by its [urlPath] (null for the default one), as Home Assistant stores
+     * it; null if it has none, e.g. when Home Assistant builds it itself
+     */
+    suspend fun dashboardConfig(urlPath: String?): JSONObject? = try {
+        command("lovelace/config") { if (urlPath != null) put("url_path", urlPath) } as? JSONObject
+    } catch (_: HaException) {
+        null
+    }
+
+    /** Calls [onSaved] when the dashboard at [urlPath] is saved in Home Assistant; false if Home Assistant won't tell */
+    suspend fun followDashboardEdits(urlPath: String?, onSaved: () -> Unit): Boolean = try {
+        subscribe("subscribe_events", { put("event_type", "lovelace_updated") }) { event ->
+            val data = event.optJSONObject("data")
+            if (data?.string("url_path") == urlPath) onSaved()
+        }
+        true
+    } catch (_: HaException) {
+        false
+    }
+
+    /** Switches a light, switch, fan or input boolean on if it's off, and off if it's on */
+    suspend fun toggle(entityId: String) {
+        command("call_service") {
+            put("domain", entityId.substringBefore('.'))
+            put("service", "toggle")
+            put("target", JSONObject().put("entity_id", entityId))
+        }
     }
 
     /** Runs a scene or script, or presses a button */

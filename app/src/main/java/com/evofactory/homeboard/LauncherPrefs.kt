@@ -92,6 +92,11 @@ class LauncherPrefs(context: Context) {
     val haTopBar: List<String>
         get() = if (prefs.contains("ha_top_bar")) readList("ha_top_bar") else oldHaActions().take(MAX_HA_ACTIONS)
 
+    /** The Home Assistant dashboard the Assistant tab shows (see [HaDashboardInfo.key]); null: the choice above */
+    var haDashboard: String?
+        get() = prefs.getString("ha_dashboard", null)
+        set(value) = prefs.edit { if (value == null) remove("ha_dashboard") else putString("ha_dashboard", value) }
+
     // Together: before the top bar was a choice of its own, the actions were in another list
     fun saveHaChoice(entities: List<String>, topBar: List<String>) {
         writeList("ha_entities", entities)

@@ -30,6 +30,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -107,10 +108,18 @@ fun HomeTopBar(
 
 /**
  * A tab: the arrows only move the selection, OK opens it. The open tab is underlined, in [underline]
- * if given, else the text's colour; the one the remote is on gets a light background.
+ * if given, else the text's colour; the one the remote is on gets a light background. A [secondary]
+ * tab, in a row under others, is lighter and dimmer.
  */
 @Composable
-fun TabButton(label: String, selected: Boolean, onSelect: () -> Unit, modifier: Modifier = Modifier, underline: Color = Color.Unspecified) {
+fun TabButton(
+    label: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+    underline: Color = Color.Unspecified,
+    secondary: Boolean = false,
+) {
     val colors = MaterialTheme.colorScheme
     Surface(
         onClick = onSelect,
@@ -120,7 +129,11 @@ fun TabButton(label: String, selected: Boolean, onSelect: () -> Unit, modifier: 
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
-            contentColor = if (selected) colors.onSurface else colors.onSurfaceVariant,
+            contentColor = when {
+                secondary -> if (selected) colors.onSurfaceVariant else FaintText
+                selected -> colors.onSurface
+                else -> colors.onSurfaceVariant
+            },
             focusedContainerColor = colors.onSurface,
             focusedContentColor = colors.inverseOnSurface,
         ),
@@ -136,7 +149,7 @@ fun TabButton(label: String, selected: Boolean, onSelect: () -> Unit, modifier: 
         Box(Modifier.fillMaxHeight().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
             Text(
                 label,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.let { if (secondary) it.copy(fontWeight = FontWeight.Normal) else it },
                 modifier = Modifier.drawBehind {
                     val thickness = TabUnderline.toPx()
                     drawRoundRect(

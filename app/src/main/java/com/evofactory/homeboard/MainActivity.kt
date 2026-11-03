@@ -71,6 +71,8 @@ class MainActivity : ComponentActivity() {
     // Everything on the Assistant tab in its order, and the actions also in the top bar
     private var haEntities by mutableStateOf(emptyList<String>())
     private var haTopBar by mutableStateOf(emptyList<String>())
+    // The Home Assistant dashboard the Assistant tab shows instead, if any
+    private var haDashboard by mutableStateOf<String?>(null)
     private var frigate by mutableStateOf(FrigateServer())
     private var frigateOpen by mutableStateOf(false)
     private var launcherSettingsOpen by mutableStateOf(false)
@@ -104,6 +106,7 @@ class MainActivity : ComponentActivity() {
         haServer = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
         haEntities = prefs.haEntities
         haTopBar = prefs.haTopBar
+        haDashboard = prefs.haDashboard
         frigate = prefs.frigate
         hiddenWatching = prefs.hiddenWatching
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
@@ -140,7 +143,7 @@ class MainActivity : ComponentActivity() {
                     }
                     // The top bar's, in their order on the Assistant tab, which has them all
                     val actions = remember(haEntities, haTopBar) { haEntities.filter { it in haTopBar }.take(MAX_HA_ACTIONS) }
-                    val haConnection = rememberHaConnection(haServer, haEntities)
+                    val haConnection = rememberHaConnection(haServer, haEntities, haDashboard)
                     val sideContent = haServer.isSet
                     // Picked in the Cameras tab, showing full screen
                     var fullScreenCamera by remember { mutableStateOf<Camera?>(null) }
@@ -313,6 +316,7 @@ class MainActivity : ComponentActivity() {
                                 connection = haConnection,
                                 homeAssistantSet = haServer.isSet,
                                 entityIds = haEntities,
+                                dashboard = haDashboard,
                                 tabFocus = assistantTabFocus,
                                 onSetUp = { haDialogOpen = true },
                                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
@@ -478,8 +482,9 @@ class MainActivity : ComponentActivity() {
                             initialUsername = remember { prefs.haUsername },
                             initialEntities = haEntities,
                             initialTopBar = haTopBar,
+                            initialDashboard = haDashboard,
                             loginRejected = haConnection.status == HaStatus.TokenRejected,
-                            onSave = { server, username, entities, topBar ->
+                            onSave = { server, username, entities, topBar, dashboard ->
                                 // A replaced username-and-password login is ended in Home Assistant
                                 if (haServer.refreshToken != server.refreshToken) revokeHaLogin(haServer)
                                 haServer = server
@@ -488,6 +493,8 @@ class MainActivity : ComponentActivity() {
                                 prefs.haRefreshToken = server.refreshToken
                                 prefs.haUsername = username
                                 saveHaChoice(entities, topBar)
+                                haDashboard = dashboard
+                                prefs.haDashboard = dashboard
                             },
                             onLogOut = ::logOutOfHa,
                             onDiscardLogin = ::revokeHaLogin,

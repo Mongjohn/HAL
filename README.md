@@ -7,7 +7,7 @@ Website: https://www.evofactory.com/homeboard/
 ## Features
 
 - **Cameras:** RTSP cameras in H.264 or H.265, with an optional substream for the grid. It plays as many live as your TV can decode, and shows the rest as their last picture.
-- **Home Assistant:** pick sensors, scenes and scripts and put them in your order, with the weather and its forecast. The Assistant tab shows them all, in a card per room, and up to three scenes or scripts of your choice are also buttons in the top bar.
+- **Home Assistant:** pick sensors, scenes and scripts and put them in your order, with the weather and its forecast. The Assistant tab shows them all, in a card per room, or one of your Home Assistant dashboards, and up to three scenes or scripts of your choice are also buttons in the top bar.
 - **Frigate alerts:** the last seven days of alerts, with clips that play full screen.
 - **Continue Watching:** what you started in the last two weeks comes first. Apps decide what they share with the TV, so this varies from one app, and one TV, to the next.
 - **App row:** move tiles, hide them, see app info or uninstall.

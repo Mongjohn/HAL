@@ -69,8 +69,55 @@ fun defaultHaIcon(domain: String, deviceClass: String?, state: String): String =
         else -> SensorIcons[deviceClass] ?: "mdi:eye"
     }
     "binary_sensor" -> binarySensorType(deviceClass).let { if (state == "on") it.onIcon else it.offIcon }
-    else -> "mdi:bookmark"
+    in OnOffIcons -> OnOffIcons.getValue(domain).let { (on, off) -> if (state == "on") on else off }
+    "cover" -> if (state == "open" || state == "opening") "mdi:window-shutter-open" else "mdi:window-shutter"
+    "lock" -> if (state == "unlocked") "mdi:lock-open" else "mdi:lock"
+    else -> DomainIcons[domain] ?: "mdi:bookmark"
 }
+
+// Entities from dashboards, by domain: when on, then off
+private val OnOffIcons = mapOf(
+    "light" to ("mdi:lightbulb" to "mdi:lightbulb-outline"),
+    "switch" to ("mdi:toggle-switch" to "mdi:toggle-switch-off"),
+    "input_boolean" to ("mdi:toggle-switch" to "mdi:toggle-switch-off"),
+    "fan" to ("mdi:fan" to "mdi:fan-off"),
+)
+
+// From Home Assistant's icons for each domain
+private val DomainIcons = mapOf(
+    "alarm_control_panel" to "mdi:shield-home",
+    "automation" to "mdi:robot",
+    "button" to "mdi:gesture-tap-button",
+    "calendar" to "mdi:calendar",
+    "camera" to "mdi:video",
+    "climate" to "mdi:thermostat",
+    "counter" to "mdi:counter",
+    "date" to "mdi:calendar-clock",
+    "datetime" to "mdi:calendar-clock",
+    "device_tracker" to "mdi:account",
+    "event" to "mdi:eye-check",
+    "humidifier" to "mdi:air-humidifier",
+    "input_button" to "mdi:gesture-tap-button",
+    "input_number" to "mdi:ray-vertex",
+    "input_select" to "mdi:format-list-bulleted",
+    "input_text" to "mdi:form-textbox",
+    "lawn_mower" to "mdi:robot-mower",
+    "media_player" to "mdi:cast",
+    "number" to "mdi:ray-vertex",
+    "person" to "mdi:account",
+    "remote" to "mdi:remote",
+    "select" to "mdi:format-list-bulleted",
+    "siren" to "mdi:bullhorn",
+    "sun" to "mdi:white-balance-sunny",
+    "text" to "mdi:form-textbox",
+    "timer" to "mdi:timer-outline",
+    "todo" to "mdi:clipboard-list",
+    "update" to "mdi:package-up",
+    "vacuum" to "mdi:robot-vacuum",
+    "valve" to "mdi:valve",
+    "water_heater" to "mdi:thermometer",
+    "zone" to "mdi:map-marker",
+)
 
 /** A binary sensor's state in words, by what it detects, e.g. "Open" for a door; null if neither on nor off */
 fun binarySensorLabel(deviceClass: String?, state: String): String? = when (state) {

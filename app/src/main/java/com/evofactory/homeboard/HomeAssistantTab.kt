@@ -5,9 +5,11 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,10 +17,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -71,7 +75,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** A card of sensors and actions: a room's, or those of one type that have no room. [key] tells cards apart. */
-class SensorCard(val key: String, val title: String, val ids: List<String>)
+class SensorCard(val key: String, val title: String, val ids: List<String>) {
+    /** A weather alone: shown with its forecast */
+    val isWeather get() = ids.size == 1 && isHaWeather(ids.first())
+}
 
 /**
  * Everything chosen as cards, grouped like Home Assistant's default dashboard: one per room, and
@@ -149,6 +156,12 @@ private val CardFadeBottom = CardPeek * 2
  */
 private class CardWindow(val scroll: ScrollState, val height: Int, val fadeTop: Int, val fadeBottom: Int, val top: Int)
 
+// The views' names sit this much higher than the tab's content: right under the top bar's tabs
+private val ViewRowLift = EdgePadding
+
+// Shorter than the top bar's tabs, so the two rows sit close
+private val ViewRowHeight = 32.dp
+
 // Narrower and the names get cut: about 3 columns on a TV
 private val MinCardWidth = 280.dp
 
@@ -161,36 +174,97 @@ private val MinCardWidth = 280.dp
  * [tabFocus]. The remote moves from card to card: OK on one with buttons goes in, to move between
  * them, and Back comes out. [onSetUp] opens the Home Assistant settings: to set it up, log in
  * again or choose sensors.
+ *
+ * With a [dashboard] chosen (its key), the cards are that dashboard's instead, as the connection
+ * read it, with a row of its views above them if it has several. A dashboard Home Assistant
+ * builds itself has nothing to read: the chosen entities show instead.
  */
 @Composable
 fun HaAssistantTab(
     connection: HaConnection,
     homeAssistantSet: Boolean,
     entityIds: List<String>,
+    dashboard: String?,
     tabFocus: FocusRequester,
     onSetUp: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val board = connection.dashboard.takeIf { dashboard != null }
+    val reading = dashboard != null && board == null && !connection.dashboardMissing
     val prompt = when {
         !homeAssistantSet -> null to "Set up Home Assistant"
         connection.status == HaStatus.TokenRejected -> "Home Assistant rejected the login" to "Log in again"
-        entityIds.isEmpty() -> null to "Choose sensors"
+        board == null && !reading && entityIds.isEmpty() ->
+            (if (connection.dashboardMissing) "This dashboard is built by Home Assistant itself, with nothing to read" else null) to "Choose sensors"
         else -> null
     }
     if (prompt != null) {
         SettingsPrompt(prompt.first, prompt.second, onSetUp, modifier)
         return
     }
+    if (reading) {
+        Text(
+            haStatusMessage(connection) ?: "Reading the dashboard…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = modifier.padding(horizontal = EdgePadding),
+        )
+        return
+    }
     val entities = connection.entities
-    val cards = sensorCards(entityIds, entities)
+    var viewIndex by remember(board) { mutableIntStateOf(0) }
+    val views = board?.views.orEmpty()
+    val viewTabs = remember(views.size) { List(views.size) { FocusRequester() } }
+    val cards = if (board != null) views.getOrNull(viewIndex)?.cards.orEmpty() else sensorCards(entityIds, entities)
+    val names = board?.names.orEmpty()
+    // Up from the top cards: to the views, if there are several, else to the tab
+    val cardsUp = viewTabs.getOrNull(viewIndex)?.takeIf { views.size > 1 } ?: tabFocus
     // Roughly in rows of sensors: the weather takes about 5, with its next hours
-    val heights = cards.map { if (isHaWeather(it.ids.first())) 5 else it.ids.size + 1 }
+    val heights = cards.map { if (it.isWeather) 5 else it.ids.size + 1 }
     val scroll = rememberScrollState()
+    LaunchedEffect(viewIndex) { scroll.scrollTo(0) }
     // The card whose buttons the remote moves between, after OK on it; Back leaves it
     var entered by remember { mutableStateOf<String?>(null) }
     val message = haStatusMessage(connection)
+        ?: "This dashboard is built by Home Assistant itself: your selection shows instead".takeIf { dashboard != null && connection.dashboardMissing }
+        ?: "Nothing on this dashboard can be shown here".takeIf { board != null && views.isEmpty() }
     val density = LocalDensity.current
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = modifier
+            // Down from the top bar lands on the views, which are to one side, rather than on a card
+            .focusProperties {
+                onEnter = {
+                    if (views.size > 1 && requestedFocusDirection == FocusDirection.Down) {
+                        viewTabs.getOrNull(viewIndex)?.requestFocus()
+                    }
+                }
+            }
+            .focusGroup(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (views.size > 1) {
+            Row(
+                Modifier
+                    // Just under the top bar's tabs, rather than the whole margin below
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        val lift = ViewRowLift.roundToPx()
+                        layout(placeable.width, placeable.height - lift) { placeable.place(0, -lift) }
+                    }
+                    .padding(start = EdgePadding, end = EdgePadding, bottom = 4.dp)
+                    .height(ViewRowHeight),
+            ) {
+                views.forEachIndexed { index, view ->
+                    TabButton(
+                        view.title,
+                        selected = index == viewIndex,
+                        onSelect = { viewIndex = index },
+                        secondary = true,
+                        modifier = Modifier.focusRequester(viewTabs[index]).focusProperties { up = tabFocus },
+                    )
+                }
+            }
+        }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             // Not over the status line, if any
             val peekBelow = if (message == null) CardPeek else 0.dp
@@ -221,12 +295,12 @@ fun HaAssistantTab(
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PanelItemSpacing)) {
                         indices.forEachIndexed { position, index ->
                             val card = cards[index]
-                            val weather = card.ids.first().takeIf(::isHaWeather)
+                            val weather = card.ids.first().takeIf { card.isWeather }
                             key(card.key) {
                                 AssistantCard(
-                                    up = if (position == 0) tabFocus else null,
+                                    up = if (position == 0) cardsUp else null,
                                     window = window,
-                                    buttons = card.ids.count(::isHaAction),
+                                    buttons = card.ids.count(::isInteractive),
                                     entered = entered == card.key,
                                     onEnter = { entered = card.key },
                                     onLeave = { entered = null },
@@ -234,7 +308,7 @@ fun HaAssistantTab(
                                     if (weather != null) {
                                         WeatherReading(entities[weather], connection.hourly[weather], connection.daily[weather])
                                     } else {
-                                        CardContent(card, connection, entered == card.key, raised, firstButton, onButtonFocused)
+                                        CardContent(card, connection, names, entered == card.key, raised, firstButton, onButtonFocused)
                                     }
                                 }
                             }
@@ -456,42 +530,129 @@ private const val EnteredCardScale = 1.03f
 private fun CardContent(
     card: SensorCard,
     connection: HaConnection,
+    // The names a dashboard's cards give entities, in place of their own
+    names: Map<String, String>,
     entered: Boolean,
     raised: Boolean,
     firstButton: FocusRequester,
     onButtonFocused: (Int) -> Unit,
 ) {
-    val actions = card.ids.filter(::isHaAction)
-    Text(
-        card.title,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.padding(bottom = 2.dp),
-    )
+    // What the remote lands on once in the card, in order: buttons and switches
+    val interactive = card.ids.filter(::isInteractive)
+    // A dashboard's cards can have no title
+    if (card.title.isNotEmpty()) {
+        Text(
+            card.title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(bottom = 2.dp),
+        )
+    }
     card.ids.forEach { id ->
-        val index = actions.indexOf(id)
+        val index = interactive.indexOf(id)
         if (index < 0) {
-            SensorReading(id, connection.entities[id])
+            SensorReading(id, connection.entities[id], names[id])
             return@forEach
         }
-        ActionButton(
-            connection,
-            id,
-            raised = raised,
-            modifier = Modifier
-                .then(if (index == 0) Modifier.focusRequester(firstButton) else Modifier)
-                .onFocusChanged { if (it.isFocused) onButtonFocused(index) }
-                // Only once gone into the card
-                .focusProperties { canFocus = entered },
+        val modifier = Modifier
+            .then(if (index == 0) Modifier.focusRequester(firstButton) else Modifier)
+            .onFocusChanged { if (it.isFocused) onButtonFocused(index) }
+            // Only once gone into the card
+            .focusProperties { canFocus = entered }
+        if (isHaToggle(id)) {
+            ToggleRow(connection, id, names[id], modifier)
+        } else {
+            ActionButton(connection, id, name = names[id], raised = raised, modifier = modifier)
+        }
+    }
+}
+
+/** Buttons (scenes, scripts, buttons) and switches (lights, switches…): what OK acts on in a card */
+private fun isInteractive(id: String) = isHaAction(id) || isHaToggle(id)
+
+/**
+ * A light, switch, fan or input boolean: a sensor row with a switch at its end, showing whether
+ * it's on. Selected once in its card, OK switches it; greyed out until connected.
+ */
+@Composable
+private fun ToggleRow(connection: HaConnection, id: String, name: String?, modifier: Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val colors = MaterialTheme.colorScheme
+    val entity = connection.entities[id]
+    val on = entity?.state == "on"
+    val ready = connection.session != null
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = { connection.toggle(id, scope, context) },
+        // As wide as the card's padding allows, so its icon and text line up with the sensors' above and below
+        modifier = modifier.onFocusChanged { focused = it.isFocused }.widenBy(ToggleRowInset),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            contentColor = if (ready) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
+            focusedContainerColor = colors.onSurface,
+            focusedContentColor = colors.inverseOnSurface,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = ToggleRowInset, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MdiIcon(entity?.icon ?: "", color = LocalContentColor.current)
+            Text(
+                name ?: entity?.name ?: id,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            SwitchMark(on, LocalContentColor.current, knob = if (focused) colors.onSurface else colors.surfaceVariant)
+        }
+    }
+}
+
+// How far a switch's row reaches into the card's padding on each side
+private val ToggleRowInset = 8.dp
+
+/** Measured [by] wider on each side and placed as much to the left: the same width as the others, plus [by] on each side */
+private fun Modifier.widenBy(by: Dp) = layout { measurable, constraints ->
+    val extra = by.roundToPx()
+    val placeable = measurable.measure(
+        constraints.copy(minWidth = constraints.maxWidth + extra * 2, maxWidth = constraints.maxWidth + extra * 2),
+    )
+    layout(constraints.maxWidth, placeable.height) { placeable.place(-extra, 0) }
+}
+
+/**
+ * A small switch: filled in [color] with a [knob] on the right when [on], an outline with the knob
+ * on the left when off. The knob is the row's background, so it stands out on the fill: light on a
+ * selected row, whose text is dark.
+ */
+@Composable
+private fun SwitchMark(on: Boolean, color: Color, knob: Color) {
+    Box(
+        modifier = Modifier
+            .size(width = 36.dp, height = 20.dp)
+            .then(if (on) Modifier.background(color, CircleShape) else Modifier.border(2.dp, color.copy(alpha = 0.6f), CircleShape))
+            .padding(3.dp),
+        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(
+            Modifier
+                .size(14.dp)
+                .background(if (on) knob else color.copy(alpha = 0.6f), CircleShape),
         )
     }
 }
 
 /** A scene, script or button, as a button the width of its card; greyed out until connected, and while one runs */
 @Composable
-private fun ActionButton(connection: HaConnection, id: String, raised: Boolean, modifier: Modifier) {
+private fun ActionButton(connection: HaConnection, id: String, name: String?, raised: Boolean, modifier: Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
@@ -517,7 +678,7 @@ private fun ActionButton(connection: HaConnection, id: String, raised: Boolean, 
         ) {
             MdiIcon(entity?.icon ?: domainIcon, fallback = domainIcon, color = LocalContentColor.current)
             Text(
-                entity?.name ?: id,
+                name ?: entity?.name ?: id,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
