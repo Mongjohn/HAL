@@ -11,8 +11,12 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.provider.Settings
+import android.text.format.DateFormat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -54,12 +58,15 @@ import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.text.SimpleDateFormat
+import java.util.Collections
+import java.util.Date
+import java.util.Locale
 
 private const val TAG = "Network"
 private const val DETAILS_REFRESH_MS = 1_000L
 private const val NO_SIGNAL_RSSI = -127
 private const val LOOPBACK = "127.0.0.1"
-private const val ADB_TCP_PORT = 5555
 private const val ADB_PROBE_TIMEOUT_MS = 500
 private const val ADB_PROBE_INTERVAL_MS = 5_000L
 private const val WIRELESS_DEBUGGING_SERVICE = "_adb-tls-connect._tcp"
@@ -70,8 +77,17 @@ enum class NetworkKind(val label: String, val icon: String, val brokenIcon: Stri
     Other("Network", "lan", "lan-disconnect"),
 }
 
-/** The TV's connection. [problem] says why it can't be used. Without a network, [kind] is the last one used. */
-data class NetworkStatus(val kind: NetworkKind, val problem: String?, val details: List<Pair<String, String>>)
+/**
+ * The TV's connection. [problem] says why it can't be used: on the link ([linkUp] false) or with its
+ * addresses. Without a network, [kind] is the last one used.
+ */
+data class NetworkStatus(
+    val kind: NetworkKind,
+    val problem: String?,
+    val linkUp: Boolean,
+    val link: List<Pair<String, String>>,
+    val addresses: List<Pair<String, String>>,
+)
 
 /** This network's IPv4 addresses, including a self-assigned one */
 fun ConnectivityManager.ipv4Addresses(network: Network): List<Inet4Address> =
@@ -105,7 +121,12 @@ fun Context.readNetworkStatus(): NetworkStatus {
         else -> "Connected, but no IP address"
     }
     val shown = usable ?: ipv4.firstOrNull()
-    val details = buildList {
+    val linkDetails = buildList {
+        // The interface name is the vendor's choice (eth0, eth1, a USB adapter's), and doesn't decide the type
+        link.interfaceName?.let { add("Interface" to it) }
+        if (kind == NetworkKind.Wifi) addAll(wifiDetails())
+    }
+    val addresses = buildList {
         add("IP address" to (shown?.address?.hostAddress ?: "None"))
         shown?.let { add("Subnet mask" to subnetMask(it.prefixLength)) }
         gateway(link)?.let { add("Gateway" to it) }
@@ -116,10 +137,8 @@ fun Context.readNetworkStatus(): NetworkStatus {
         ipv6?.hostAddress?.let { add("IPv6 address" to it) }
         val internet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         add("Internet" to if (internet) "Yes" else "Not confirmed")
-        if (kind == NetworkKind.Wifi) addAll(wifiDetails())
-        link.interfaceName?.let { add("Interface" to it) }
     }
-    return NetworkStatus(kind, problem, details)
+    return NetworkStatus(kind, problem, linkUp = true, linkDetails, addresses)
 }
 
 /** Android doesn't say whether a cable is plugged in, and Ethernet without an address looks the same */
@@ -132,7 +151,18 @@ private fun Context.noNetworkStatus(prefs: LauncherPrefs): NetworkStatus {
         kind == NetworkKind.Wifi -> "Not connected to a Wi-Fi network"
         else -> "Not connected to a network"
     }
-    return NetworkStatus(kind, problem, listOf("Wi-Fi" to if (wifiOn) "On" else "Off"))
+    return NetworkStatus(kind, problem, linkUp = false, listOf("Wi-Fi" to if (wifiOn) "On" else "Off"), emptyList())
+}
+
+/** When the TV last started: now less the time since boot, which includes time in standby */
+private fun bootTimeMillis(): Long = System.currentTimeMillis() - SystemClock.elapsedRealtime()
+
+private fun Context.bootTimeText(now: Long): String {
+    val locale = Locale.getDefault()
+    val skeleton = if (DateFormat.is24HourFormat(this)) "EEEdMMMHHmm" else "EEEdMMMhmma"
+    val format = SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, skeleton), locale)
+    val boot = bootTimeMillis()
+    return "${format.format(Date(boot))}, ${elapsedText(now - boot)} ago"
 }
 
 /** Android hides the network's name from apps without the location permission */
@@ -207,13 +237,96 @@ fun NetworkButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     }
 }
 
-/** Whether something answers on the fixed port that `adb tcpip` opens. Apps can't read adb's own settings for it. */
-private suspend fun isAdbPortOpen(): Boolean = withContext(Dispatchers.IO) {
-    try {
-        Socket().use { it.connect(InetSocketAddress(LOOPBACK, ADB_TCP_PORT), ADB_PROBE_TIMEOUT_MS) }
-        true
-    } catch (e: IOException) {
-        false
+/** Whether something answers on this port of the TV itself */
+private fun isPortOpen(port: Int): Boolean = try {
+    Socket().use { it.connect(InetSocketAddress(LOOPBACK, port), ADB_PROBE_TIMEOUT_MS) }
+    true
+} catch (e: IOException) {
+    false
+}
+
+/**
+ * A system property, through the `getprop` command. Empty both when it isn't set and when Android
+ * hides it from apps; null if `getprop` couldn't run.
+ */
+private fun systemProperty(name: String): String? = try {
+    val process = ProcessBuilder("getprop", name).redirectErrorStream(true).start()
+    process.inputStream.bufferedReader().use { it.readText().trim() }.also { process.waitFor() }
+} catch (e: IOException) {
+    AppLog.w(TAG, "Couldn't read $name", e)
+    null
+}
+
+private fun propertyText(value: String?): String = when {
+    value == null -> "Couldn't read"
+    value.isEmpty() -> "Empty"
+    else -> value
+}
+
+private val refusedSettings: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
+
+/**
+ * A setting from Settings.Global, or Settings.Secure if it isn't there. Android 12+ refuses most
+ * settings it doesn't document to apps, which reads as "Couldn't read".
+ */
+private fun Context.settingText(name: String): String {
+    var refused = false
+    fun read(get: () -> String?): String? = try {
+        get()
+    } catch (e: SecurityException) {
+        // Read every few seconds while the screen is open: log it once
+        if (refusedSettings.add(name)) AppLog.w(TAG, "Couldn't read setting $name: ${e.message}")
+        refused = true
+        null
+    }
+    return read { Settings.Global.getString(contentResolver, name) }
+        ?: read { Settings.Secure.getString(contentResolver, name) }
+        ?: if (refused) "Couldn't read" else "Not set"
+}
+
+/** Netflix's device group, which includes the model year on Sony TVs (e.g. SONYANDROIDTV2017) */
+private const val NETFLIX_MODEL_GROUP = "ro.vendor.nrdp.modelgroup"
+
+/** The model number on newer Sony TVs (e.g. K-77XR80); the Living Room TV's Android 9 doesn't have it */
+private const val HARDWARE_SKU = "ro.boot.product.hardware.sku"
+
+private class TvInfo(val netflixModelGroup: String?, val hardwareSku: String?)
+
+private fun readTvInfo() = TvInfo(
+    netflixModelGroup = systemProperty(NETFLIX_MODEL_GROUP)?.takeIf { it.isNotEmpty() },
+    hardwareSku = systemProperty(HARDWARE_SKU)?.takeIf { it.isNotEmpty() },
+)
+
+/** `adb tcpip` sets the first two; wireless debugging the last two (Android 11+) */
+private const val ADB_TCP_PORT = "service.adb.tcp.port"
+private const val ADB_TCP_PORT_PERSIST = "persist.adb.tcp.port"
+private const val ADB_TLS_PORT = "service.adb.tls.port"
+private const val ADB_WIFI_SETTING = "adb_wifi_enabled"
+
+/** adb's properties as read, and whether each port they name answers */
+private class AdbInfo(
+    val tcpPort: String?,
+    val tcpPortPersist: String?,
+    val tlsPort: String?,
+    val wifiEnabled: String,
+    val answering: Map<Int, Boolean>,
+)
+
+private fun Context.readAdbInfo(): AdbInfo {
+    val tcp = systemProperty(ADB_TCP_PORT)
+    val persist = systemProperty(ADB_TCP_PORT_PERSIST)
+    val tls = systemProperty(ADB_TLS_PORT)
+    val ports = listOf(tcp, persist, tls).mapNotNull { it?.toIntOrNull() }.filter { it > 0 }.distinct()
+    return AdbInfo(tcp, persist, tls, settingText(ADB_WIFI_SETTING), ports.associateWith(::isPortOpen))
+}
+
+/** A port property's value, and whether that port answers */
+private fun AdbInfo.portText(value: String?): String {
+    val port = value?.toIntOrNull()?.takeIf { it > 0 } ?: return propertyText(value)
+    return when (answering[port]) {
+        true -> "$port, answering"
+        false -> "$port, not answering"
+        null -> "$port"
     }
 }
 
@@ -303,7 +416,7 @@ private fun wirelessDebuggingPort(): Int? {
 
 /** The connection in detail, kept current while open */
 @Composable
-fun NetworkStatusDialog(frigate: FrigateFeed?, onOpenPing: () -> Unit, onDismiss: () -> Unit) {
+fun NetworkStatusDialog(frigate: FrigateFeed?, homeAssistant: HaConnection?, onOpenPing: () -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val status by produceState(context.readNetworkStatus(), context) {
         while (true) {
@@ -311,54 +424,96 @@ fun NetworkStatusDialog(frigate: FrigateFeed?, onOpenPing: () -> Unit, onDismiss
             delay(DETAILS_REFRESH_MS)
         }
     }
-    val adbPortOpen by produceState<Boolean?>(null) {
+    val adb by produceState<AdbInfo?>(null, context) {
         while (true) {
-            value = isAdbPortOpen()
+            value = withContext(Dispatchers.IO) { context.readAdbInfo() }
             delay(ADB_PROBE_INTERVAL_MS)
         }
     }
-    val wirelessPort = wirelessDebuggingPort()
-    val ping = remember { FocusRequester() }
-    TopDialog(title = "Network status", onDismiss = onDismiss) {
-        NetworkRow("Connection", status.kind.label)
-        NetworkRow("Status", status.problem ?: "Connected", if (status.problem != null) ErrorColor else Color.Unspecified)
-        status.details.forEach { (label, value) -> NetworkRow(label, value) }
-        NetworkRow(
-            "adb port",
-            when (adbPortOpen) {
-                null -> "Checking…"
-                true -> "$ADB_TCP_PORT"
-                false -> "$ADB_TCP_PORT not open"
-            },
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            NetworkRow("Wireless debugging", wirelessPort?.let { "Port $it" } ?: "Not found")
-        }
-        frigate?.let { FrigateRows(it) }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = onOpenPing, modifier = Modifier.focusRequester(ping)) { Text("Ping utility") }
-            OutlinedButton(onClick = onDismiss) { Text("Close") }
-        }
-        LaunchedEffect(Unit) { ping.requestFocus() }
+    val tv by produceState<TvInfo?>(null, context) {
+        value = withContext(Dispatchers.IO) { readTvInfo() }
     }
-}
-
-@Composable
-private fun FrigateRows(feed: FrigateFeed) {
+    val wirelessPort = wirelessDebuggingPort()
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
             value = System.currentTimeMillis()
             delay(1_000)
         }
     }
+    val ping = remember { FocusRequester() }
+    // Wireless debugging has no screen of its own to open: it's inside Developer options
+    val hasDeveloperOptions = remember(context) { context.hasSettingsScreen(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS) }
+    TopDialog(
+        title = "Network status",
+        onDismiss = onDismiss,
+        fullWidth = true,
+        atTop = true,
+        actions = {
+            OutlinedButton(onClick = onOpenPing, modifier = Modifier.focusRequester(ping)) { Text("Ping utility") }
+            OutlinedButton(onClick = { context.openSystemSettings(Settings.ACTION_WIFI_SETTINGS) }) { Text("Wi-Fi settings") }
+            if (hasDeveloperOptions) {
+                OutlinedButton(onClick = { context.openSystemSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS) }) {
+                    Text("Developer options")
+                }
+            }
+            OutlinedButton(onClick = onDismiss) { Text("Close") }
+        },
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.weight(1f)) {
+                NetworkSection("TV")
+                NetworkRow("Model", "${Build.MANUFACTURER.replaceFirstChar(Char::uppercase)} ${Build.MODEL}")
+                tv?.hardwareSku?.let { NetworkRow("Hardware SKU", it) }
+                tv?.netflixModelGroup?.let { NetworkRow("Netflix model group", it) }
+                NetworkRow("Android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+                NetworkRow("Last reboot", context.bootTimeText(now))
+
+                frigate?.let {
+                    NetworkSection("Frigate")
+                    FrigateRows(it, now)
+                }
+
+                homeAssistant?.let {
+                    NetworkSection("Home Assistant")
+                    HomeAssistantRows(it, now)
+                }
+
+                NetworkSection("ADB")
+                val checking = "Checking…"
+                NetworkRow(ADB_TCP_PORT, adb?.portText(adb?.tcpPort) ?: checking)
+                NetworkRow(ADB_TCP_PORT_PERSIST, adb?.portText(adb?.tcpPortPersist) ?: checking)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    NetworkRow(ADB_TLS_PORT, adb?.portText(adb?.tlsPort) ?: checking)
+                    NetworkRow(ADB_WIFI_SETTING, adb?.wifiEnabled ?: checking)
+                    NetworkRow("Wireless debugging", wirelessPort?.let { "Port $it, from mDNS" } ?: "Not found on mDNS")
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                NetworkSection("Layer 2: link")
+                NetworkRow("Type", status.kind.label)
+                val linkProblem = status.problem.takeIf { !status.linkUp }
+                NetworkRow("Status", linkProblem ?: "Up", if (linkProblem != null) ErrorColor else Color.Unspecified)
+                status.link.forEach { (label, value) -> NetworkRow(label, value) }
+
+                NetworkSection("Layer 3: IP")
+                if (status.linkUp) {
+                    NetworkRow("Status", status.problem ?: "Connected", if (status.problem != null) ErrorColor else Color.Unspecified)
+                    status.addresses.forEach { (label, value) -> NetworkRow(label, value) }
+                } else {
+                    NetworkRow("Status", "No link", ErrorColor)
+                }
+            }
+        }
+        LaunchedEffect(Unit) { ping.requestFocus() }
+    }
+}
+
+@Composable
+private fun FrigateRows(feed: FrigateFeed, now: Long) {
     val lastQuery = feed.lastQueryAt
     val failed = feed.failedQueries
     NetworkRow(
-        "Last Frigate query",
+        "Last query",
         when {
             lastQuery != null -> "${elapsedText(now - lastQuery)} ago, $failed failed since"
             failed > 0 -> "None worked yet, $failed failed"
@@ -369,7 +524,7 @@ private fun FrigateRows(feed: FrigateFeed) {
     val connectedAt = feed.socketConnectedAt
     val problem = feed.socketProblem
     NetworkRow(
-        "Frigate WebSocket",
+        "WebSocket",
         when {
             connectedAt != null -> "Connected for ${elapsedText(now - connectedAt)}"
             problem != null -> "Not connected: $problem"
@@ -377,6 +532,28 @@ private fun FrigateRows(feed: FrigateFeed) {
             else -> "Waiting for a query to work"
         },
         if (connectedAt == null && problem != null) ErrorColor else Color.Unspecified,
+    )
+}
+
+@Composable
+private fun HomeAssistantRows(connection: HaConnection, now: Long) {
+    val connectedAt = connection.connectedAt
+    val problem = connection.problem
+    NetworkRow(
+        "WebSocket",
+        when {
+            connectedAt != null -> "Connected for ${elapsedText(now - connectedAt)}"
+            connection.status == HaStatus.TokenRejected -> "Login refused, waiting for a new one"
+            problem != null -> "Not connected: $problem"
+            else -> "Connecting…"
+        },
+        if (connectedAt == null && problem != null) ErrorColor else Color.Unspecified,
+    )
+    val failed = connection.failedConnections
+    NetworkRow(
+        "Failed connections",
+        if (connectedAt != null) "$failed since connected" else "$failed in a row",
+        if (failed > 0) ErrorColor else Color.Unspecified,
     )
 }
 
@@ -391,8 +568,17 @@ private fun elapsedText(ms: Long): String {
 }
 
 @Composable
+private fun NetworkSection(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 1.dp),
+    )
+}
+
+@Composable
 private fun NetworkRow(label: String, value: String, color: Color = Color.Unspecified) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp)) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.dp)) {
         Text(
             label,
             style = MaterialTheme.typography.bodyMedium,
@@ -403,4 +589,4 @@ private fun NetworkRow(label: String, value: String, color: Color = Color.Unspec
     }
 }
 
-private val NetworkLabelWidth = 180.dp
+private val NetworkLabelWidth = 150.dp

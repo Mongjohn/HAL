@@ -76,6 +76,8 @@ fun TopDialog(
     onDismiss: () -> Unit,
     info: String? = null,
     fullWidth: Boolean = false,
+    // Starts at the very top of the screen, for a dialog that needs all its height
+    atTop: Boolean = false,
     tabs: (@Composable RowScope.() -> Unit)? = null,
     actions: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -94,11 +96,14 @@ fun TopDialog(
             contentAlignment = Alignment.TopCenter,
         ) {
             Surface(
-                modifier = Modifier.padding(top = TopPadding).then(if (fullWidth) Modifier.padding(horizontal = EdgePadding) else Modifier),
+                modifier = Modifier.padding(top = if (atTop) AtTopGap else TopPadding).then(if (fullWidth) Modifier.padding(horizontal = EdgePadding) else Modifier),
                 shape = RoundedCornerShape(16.dp),
                 colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
             ) {
-                Column(modifier = (if (fullWidth) Modifier.fillMaxWidth() else Modifier.width(640.dp)).padding(16.dp)) {
+                Column(
+                    modifier = (if (fullWidth) Modifier.fillMaxWidth() else Modifier.width(640.dp))
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = if (atTop) AtTopInnerPadding else 16.dp),
+                ) {
                     // Buttons are filled with surfaceVariant: a step up, or they'd vanish into the dialog
                     val raised = MaterialTheme.colorScheme.copy(surfaceVariant = RaisedSurface)
                     Row(
@@ -128,3 +133,9 @@ fun TopDialog(
         }
     }
 }
+
+// A dialog at the top: as much space above it as between its edge and its buttons
+private val AtTopGap = 12.dp
+
+// With the title row's own 8 dp, about half the usual space above the buttons
+private val AtTopInnerPadding = 4.dp

@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,6 +76,14 @@ class HaConnection {
         internal set
     var status by mutableStateOf(HaStatus.Connecting)
         internal set
+
+    // For Network status
+    var connectedAt by mutableStateOf<Long?>(null)
+        internal set
+    var problem by mutableStateOf<String?>(null)
+        internal set
+    var failedConnections by mutableIntStateOf(0)
+        internal set
 }
 
 /**
@@ -101,13 +110,19 @@ fun rememberHaConnection(server: HaServer, entityIds: List<String>): HaConnectio
                         }
                         connection.session = this
                         connection.status = HaStatus.Connected
+                        connection.connectedAt = System.currentTimeMillis()
+                        connection.problem = null
+                        connection.failedConnections = 0
                         try {
                             awaitCancellation()
                         } finally {
                             connection.session = null
+                            connection.connectedAt = null
                         }
                     }
                 } catch (e: HaException) {
+                    connection.problem = e.message
+                    connection.failedConnections++
                     if (e.tokenRejected) {
                         connection.status = HaStatus.TokenRejected
                         return@repeatOnLifecycle

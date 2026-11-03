@@ -479,6 +479,8 @@ class MainActivity : ComponentActivity() {
                     if (networkStatusOpen) {
                         NetworkStatusDialog(
                             frigate = frigateFeed,
+                            // It only connects with something to show
+                            homeAssistant = haConnection.takeIf { haServer.isSet && (haEntities.isNotEmpty() || actions.isNotEmpty()) },
                             onOpenPing = { pingOpen = true },
                             onDismiss = { networkStatusOpen = false },
                         )
