@@ -75,6 +75,8 @@ fun TopDialog(
     title: String,
     onDismiss: () -> Unit,
     info: String? = null,
+    // A smaller line under the title, in the secondary color
+    subtitle: String? = null,
     fullWidth: Boolean = false,
     // Starts at the very top of the screen, for a dialog that needs all its height
     atTop: Boolean = false,
@@ -113,6 +115,11 @@ fun TopDialog(
                     ) {
                         if (tabs != null) {
                             Row(modifier = Modifier.height(44.dp), content = tabs)
+                        } else if (subtitle != null) {
+                            Column {
+                                Text(title, style = MaterialTheme.typography.titleMedium)
+                                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         } else {
                             Text(title, style = MaterialTheme.typography.titleMedium)
                         }

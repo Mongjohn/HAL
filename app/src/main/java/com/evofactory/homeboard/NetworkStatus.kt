@@ -154,6 +154,13 @@ private fun Context.noNetworkStatus(prefs: LauncherPrefs): NetworkStatus {
     return NetworkStatus(kind, problem, linkUp = false, listOf("Wi-Fi" to if (wifiOn) "On" else "Off"), emptyList())
 }
 
+/** HomeBoard's version, its build number (the version code) and when it was built */
+private fun Context.buildText(): String {
+    val built = Date(BuildConfig.BUILD_TIME)
+    val time = "${DateFormat.getMediumDateFormat(this).format(built)} ${DateFormat.getTimeFormat(this).format(built)}"
+    return "HomeBoard ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE}), built $time"
+}
+
 /** When the TV last started: now less the time since boot, which includes time in standby */
 private fun bootTimeMillis(): Long = System.currentTimeMillis() - SystemClock.elapsedRealtime()
 
@@ -284,15 +291,22 @@ private fun Context.settingText(name: String): String {
         ?: if (refused) "Couldn't read" else "Not set"
 }
 
+/**
+ * Sony names the TV's Bluetooth after its model number (e.g. KD-75XE9005); the user can rename it.
+ * Android 14 refuses it to apps targeting SDK 32 or later, like this one; Android 9 allows it.
+ */
+private const val BLUETOOTH_NAME_SETTING = "bluetooth_name"
+
 /** Netflix's device group, which includes the model year on Sony TVs (e.g. SONYANDROIDTV2017) */
 private const val NETFLIX_MODEL_GROUP = "ro.vendor.nrdp.modelgroup"
 
 /** The model number on newer Sony TVs (e.g. K-77XR80); the Living Room TV's Android 9 doesn't have it */
 private const val HARDWARE_SKU = "ro.boot.product.hardware.sku"
 
-private class TvInfo(val netflixModelGroup: String?, val hardwareSku: String?)
+private class TvInfo(val bluetoothName: String, val netflixModelGroup: String?, val hardwareSku: String?)
 
-private fun readTvInfo() = TvInfo(
+private fun Context.readTvInfo() = TvInfo(
+    bluetoothName = settingText(BLUETOOTH_NAME_SETTING),
     netflixModelGroup = systemProperty(NETFLIX_MODEL_GROUP)?.takeIf { it.isNotEmpty() },
     hardwareSku = systemProperty(HARDWARE_SKU)?.takeIf { it.isNotEmpty() },
 )
@@ -431,7 +445,7 @@ fun NetworkStatusDialog(frigate: FrigateFeed?, homeAssistant: HaConnection?, onO
         }
     }
     val tv by produceState<TvInfo?>(null, context) {
-        value = withContext(Dispatchers.IO) { readTvInfo() }
+        value = withContext(Dispatchers.IO) { context.readTvInfo() }
     }
     val wirelessPort = wirelessDebuggingPort()
     val now by produceState(System.currentTimeMillis()) {
@@ -445,6 +459,7 @@ fun NetworkStatusDialog(frigate: FrigateFeed?, homeAssistant: HaConnection?, onO
     val hasDeveloperOptions = remember(context) { context.hasSettingsScreen(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS) }
     TopDialog(
         title = "Network status",
+        subtitle = remember(context) { context.buildText() },
         onDismiss = onDismiss,
         fullWidth = true,
         atTop = true,
@@ -463,6 +478,7 @@ fun NetworkStatusDialog(frigate: FrigateFeed?, homeAssistant: HaConnection?, onO
             Column(Modifier.weight(1f)) {
                 NetworkSection("TV")
                 NetworkRow("Model", "${Build.MANUFACTURER.replaceFirstChar(Char::uppercase)} ${Build.MODEL}")
+                NetworkRow("Bluetooth name", tv?.bluetoothName ?: "Checking…")
                 tv?.hardwareSku?.let { NetworkRow("Hardware SKU", it) }
                 tv?.netflixModelGroup?.let { NetworkRow("Netflix model group", it) }
                 NetworkRow("Android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")

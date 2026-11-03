@@ -76,6 +76,7 @@ fun LauncherSettingsDialog(
     val advancedOption = remember { FocusRequester() }
     val toggle = remember { FocusRequester() }
     val exportButton = remember { FocusRequester() }
+    val restartButton = remember { FocusRequester() }
     val closeButton = remember { FocusRequester() }
     val prefs = remember { LauncherPrefs(context) }
     // An option turned on, once its explanation is accepted
@@ -120,16 +121,24 @@ fun LauncherSettingsDialog(
                 selected = advanced,
                 onSelect = { advanced = true },
                 modifier = Modifier.focusRequester(advancedTab).focusProperties {
-                    right = closeButton
+                    right = restartButton
                     down = if (advanced) advancedOption else toggle
                 },
             )
         },
         actions = {
             OutlinedButton(
+                onClick = { context.restartApp() },
+                modifier = Modifier.focusRequester(restartButton).focusProperties {
+                    left = advancedTab
+                    right = closeButton
+                    down = if (advanced) advancedOption else toggle
+                },
+            ) { Text("Restart app") }
+            OutlinedButton(
                 onClick = onDismiss,
                 modifier = Modifier.focusRequester(closeButton).focusProperties {
-                    left = advancedTab
+                    left = restartButton
                     right = if (advanced) advancedOption else toggle
                     down = if (advanced) advancedOption else toggle
                 },
@@ -207,7 +216,6 @@ fun LauncherSettingsDialog(
                 modifier = Modifier.focusRequester(exportButton).focusProperties { left = toggle },
             ) { Text("Export settings") }
             OutlinedButton(onClick = onImport) { Text("Import settings") }
-            OutlinedButton(onClick = { context.restartApp() }) { Text("Restart app") }
             Spacer(Modifier.weight(1f))
             BuildInfo()
         }
@@ -225,14 +233,14 @@ fun LauncherSettingsDialog(
     }
 }
 
-/** The version, and the date and time of the build: three small lines, as tall as a button */
+/** The version and build number, and the date and time of the build: three small lines, as tall as a button */
 @Composable
 private fun BuildInfo() {
     val context = LocalContext.current
     val built = remember { Date(BuildConfig.BUILD_TIME) }
     Column(horizontalAlignment = Alignment.End) {
         listOf(
-            "Version ${BuildConfig.VERSION_NAME}",
+            "Version ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
             DateFormat.getMediumDateFormat(context).format(built),
             DateFormat.getTimeFormat(context).format(built),
         ).forEach {

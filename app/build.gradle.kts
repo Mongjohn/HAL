@@ -17,7 +17,7 @@ android {
         applicationId = "com.evofactory.homeboard"
         minSdk = 28 // Android 9
         targetSdk = 36
-        versionCode = 2
+        versionCode = 3
         versionName = "1.0.1"
         buildConfigField("long", "BUILD_TIME", "${System.currentTimeMillis()}L")
     }
