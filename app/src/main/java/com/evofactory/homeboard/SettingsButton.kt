@@ -29,19 +29,14 @@ import androidx.tv.material3.Text
 /** The cog's size: the top row leaves room for it */
 val SettingsButtonSize = 40.dp
 
-/**
- * Cog at the right of the top bar; opens the launcher's settings menu. Once Home Assistant is set up,
- * its entry opens a submenu: choose what's shown, or log out.
- */
+/** Cog at the right of the top bar; opens the launcher's settings menu */
 @Composable
 fun SettingsButton(
     showHidden: Boolean,
     hiddenCount: Int,
     onShowHiddenChange: (Boolean) -> Unit,
     onOpenCameras: () -> Unit,
-    homeAssistantSet: Boolean,
-    onOpenHomeAssistant: (HaPick) -> Unit,
-    onLogOutOfHomeAssistant: () -> Unit,
+    onOpenHomeAssistant: () -> Unit,
     onOpenFrigate: () -> Unit,
     onOpenPing: () -> Unit,
     onOpenLauncherSettings: () -> Unit,
@@ -49,7 +44,6 @@ fun SettingsButton(
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
-    var homeAssistantMenuOpen by remember { mutableStateOf(false) }
     var focused by remember { mutableStateOf(false) }
 
     Box(modifier = modifier) {
@@ -71,26 +65,12 @@ fun SettingsButton(
                     },
                     MenuAction("HomeBoard settings", onOpenLauncherSettings),
                     MenuAction("Cameras", onOpenCameras),
-                    MenuAction("Home Assistant") {
-                        if (homeAssistantSet) homeAssistantMenuOpen = true else onOpenHomeAssistant(HaPick.Sensors)
-                    },
+                    MenuAction("Home Assistant", onOpenHomeAssistant),
                     MenuAction("Frigate", onOpenFrigate),
                     MenuAction("Ping utility", onOpenPing),
                     showHiddenAction(showHidden, hiddenCount) { onShowHiddenChange(!showHidden) },
                 ),
                 onDismiss = { menuOpen = false },
-                placement = MenuPlacement.BelowAtRightMargin,
-            )
-        }
-        if (homeAssistantMenuOpen) {
-            ContextMenu(
-                title = "Home Assistant",
-                actions = listOf(
-                    MenuAction("Choose sensors") { onOpenHomeAssistant(HaPick.Sensors) },
-                    MenuAction("Choose action buttons") { onOpenHomeAssistant(HaPick.Actions) },
-                    MenuAction("Log out", onLogOutOfHomeAssistant),
-                ),
-                onDismiss = { homeAssistantMenuOpen = false },
                 placement = MenuPlacement.BelowAtRightMargin,
             )
         }

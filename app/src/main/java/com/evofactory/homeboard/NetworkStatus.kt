@@ -36,7 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -47,7 +46,6 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import kotlinx.coroutines.Dispatchers
@@ -463,16 +461,13 @@ fun NetworkStatusDialog(frigate: FrigateFeed?, homeAssistant: HaConnection?, onO
         onDismiss = onDismiss,
         fullWidth = true,
         atTop = true,
-        actions = {
-            OutlinedButton(onClick = onOpenPing, modifier = Modifier.focusRequester(ping)) { Text("Ping utility") }
-            OutlinedButton(onClick = { context.openSystemSettings(Settings.ACTION_WIFI_SETTINGS) }) { Text("Wi-Fi settings") }
-            if (hasDeveloperOptions) {
-                OutlinedButton(onClick = { context.openSystemSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS) }) {
-                    Text("Developer options")
-                }
-            }
-            OutlinedButton(onClick = onDismiss) { Text("Close") }
-        },
+        buttons = listOfNotNull(
+            DialogButton("Ping utility", focus = ping, onClick = onOpenPing),
+            DialogButton("Wi-Fi settings") { context.openSystemSettings(Settings.ACTION_WIFI_SETTINGS) },
+            DialogButton("Developer options") {
+                context.openSystemSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+            }.takeIf { hasDeveloperOptions },
+        ),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1f)) {

@@ -62,10 +62,11 @@ class MainActivity : ComponentActivity() {
     private var minimizeVideoStreams by mutableStateOf(false)
     private var selectedCamera by mutableStateOf("")
     private var tab by mutableStateOf(HomeTab.Home)
-    private var haPicker by mutableStateOf<HaPick?>(null)
+    private var haDialogOpen by mutableStateOf(false)
     private var haServer by mutableStateOf(HaServer(""))
+    // Everything on the Assistant tab in its order, and the actions also in the top bar
     private var haEntities by mutableStateOf(emptyList<String>())
-    private var haActions by mutableStateOf(emptyList<String>())
+    private var haTopBar by mutableStateOf(emptyList<String>())
     private var frigate by mutableStateOf(FrigateServer())
     private var frigateOpen by mutableStateOf(false)
     private var launcherSettingsOpen by mutableStateOf(false)
@@ -98,7 +99,7 @@ class MainActivity : ComponentActivity() {
         selectedCamera = prefs.selectedCamera
         haServer = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
         haEntities = prefs.haEntities
-        haActions = prefs.haActions
+        haTopBar = prefs.haTopBar
         frigate = prefs.frigate
         hiddenWatching = prefs.hiddenWatching
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
@@ -119,6 +120,7 @@ class MainActivity : ComponentActivity() {
                     val secondTabFocus = remember { FocusRequester() }
                     val homeTabFocus = remember { FocusRequester() }
                     val alertsTabFocus = remember { FocusRequester() }
+                    val assistantTabFocus = remember { FocusRequester() }
                     var topBarSelected by remember { mutableStateOf(false) }
                     var homeTabSelected by remember { mutableStateOf(false) }
                     var firstTileSelected by remember { mutableStateOf(false) }
@@ -132,8 +134,9 @@ class MainActivity : ComponentActivity() {
                             else -> goToFirstTile++
                         }
                     }
-                    val actions = haActions.take(MAX_HA_ACTIONS)
-                    val haConnection = rememberHaConnection(haServer, remember(haEntities, actions) { haEntities + actions })
+                    // The top bar's, in their order on the Assistant tab, which has them all
+                    val actions = remember(haEntities, haTopBar) { haEntities.filter { it in haTopBar }.take(MAX_HA_ACTIONS) }
+                    val haConnection = rememberHaConnection(haServer, haEntities)
                     val sideContent = haServer.isSet
                     // Set when a camera's picked in the grid: it's selected once it's on screen
                     var selectMainCamera by remember { mutableStateOf(false) }
@@ -198,6 +201,7 @@ class MainActivity : ComponentActivity() {
                             secondTabFocus = secondTabFocus,
                             homeTabFocus = homeTabFocus,
                             alertsTabFocus = alertsTabFocus,
+                            assistantTabFocus = assistantTabFocus,
                             onHomeTabSelected = { homeTabSelected = it },
                             showFreeMemory = showFreeMemory,
                             modifier = Modifier
@@ -227,9 +231,7 @@ class MainActivity : ComponentActivity() {
                                 hiddenCount = hiddenApps?.size ?: 0,
                                 onShowHiddenChange = { showHidden = it },
                                 onOpenCameras = { camerasOpen = true },
-                                homeAssistantSet = haServer.isSet,
-                                onOpenHomeAssistant = { haPicker = it },
-                                onLogOutOfHomeAssistant = ::logOutOfHa,
+                                onOpenHomeAssistant = { haDialogOpen = true },
                                 onOpenFrigate = { frigateOpen = true },
                                 onOpenPing = { pingOpen = true },
                                 onOpenLauncherSettings = { launcherSettingsOpen = true },
@@ -255,6 +257,15 @@ class MainActivity : ComponentActivity() {
                                 feed = frigateFeed,
                                 onSetUp = { frigateOpen = true },
                                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding),
+                            )
+                        } else if (tab == HomeTab.Assistant) {
+                            HaAssistantTab(
+                                connection = haConnection,
+                                homeAssistantSet = haServer.isSet,
+                                entityIds = haEntities,
+                                tabFocus = assistantTabFocus,
+                                onSetUp = { haDialogOpen = true },
+                                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
                             )
                         } else {
                             // The camera, as large as fits above the app row, and Home Assistant
@@ -295,11 +306,15 @@ class MainActivity : ComponentActivity() {
                                         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                                             HomeAssistantPanel(
                                                 connection = haConnection,
-                                                entityIds = haEntities,
+                                                entityIds = remember(haEntities) { haEntities.filterNot(::isHaAction) },
                                                 sensorsFocus = haSensorsFocus,
                                                 // The button next to the cog
                                                 upFocus = networkFocus,
-                                                onLogIn = { haPicker = HaPick.Sensors },
+                                                onLogIn = { haDialogOpen = true },
+                                                onOpen = {
+                                                    tab = HomeTab.Assistant
+                                                    runCatching { assistantTabFocus.requestFocus() }
+                                                },
                                                 modifier = Modifier.fillMaxSize(),
                                             )
                                         }
@@ -399,14 +414,14 @@ class MainActivity : ComponentActivity() {
                             onDismiss = { camerasOpen = false },
                         )
                     }
-                    haPicker?.let { pick ->
+                    if (haDialogOpen) {
                         HomeAssistantDialog(
-                            pick = pick,
                             initialServer = haServer,
                             initialUsername = remember { prefs.haUsername },
-                            initialEntities = if (pick == HaPick.Actions) haActions else haEntities,
+                            initialEntities = haEntities,
+                            initialTopBar = haTopBar,
                             loginRejected = haConnection.status == HaStatus.TokenRejected,
-                            onSave = { server, username, entities ->
+                            onSave = { server, username, entities, topBar ->
                                 // A replaced username-and-password login is ended in Home Assistant
                                 if (haServer.refreshToken != server.refreshToken) revokeHaLogin(haServer)
                                 haServer = server
@@ -414,16 +429,11 @@ class MainActivity : ComponentActivity() {
                                 prefs.haToken = server.token
                                 prefs.haRefreshToken = server.refreshToken
                                 prefs.haUsername = username
-                                if (pick == HaPick.Actions) {
-                                    haActions = entities
-                                    prefs.haActions = entities
-                                } else {
-                                    haEntities = entities
-                                    prefs.haEntities = entities
-                                }
+                                saveHaChoice(entities, topBar)
                             },
+                            onLogOut = ::logOutOfHa,
                             onDiscardLogin = ::revokeHaLogin,
-                            onDismiss = { haPicker = null },
+                            onDismiss = { haDialogOpen = false },
                         )
                     }
                     if (frigateOpen) {
@@ -465,8 +475,10 @@ class MainActivity : ComponentActivity() {
                                 cameras = cameras,
                                 login = haServer.takeIf { it.isSet },
                                 username = remember { prefs.haUsername },
-                                sensors = haEntities.map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
-                                actions = haActions.map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
+                                sensors = haEntities.filterNot(::isHaAction).map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
+                                actions = haEntities.filter(::isHaAction).map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
+                                order = haEntities,
+                                topBar = haTopBar,
                                 frigate = frigate.takeIf { it.isSet },
                                 appTiles = visible.orEmpty().map { NamedEntity(it.key, it.label) },
                             ),
@@ -480,7 +492,7 @@ class MainActivity : ComponentActivity() {
                         NetworkStatusDialog(
                             frigate = frigateFeed,
                             // It only connects with something to show
-                            homeAssistant = haConnection.takeIf { haServer.isSet && (haEntities.isNotEmpty() || actions.isNotEmpty()) },
+                            homeAssistant = haConnection.takeIf { haServer.isSet && haEntities.isNotEmpty() },
                             onOpenPing = { pingOpen = true },
                             onDismiss = { networkStatusOpen = false },
                         )
@@ -543,10 +555,11 @@ class MainActivity : ComponentActivity() {
             prefs.haRefreshToken = server.refreshToken
             prefs.haUsername = file.username
         }
-        haEntities = (haEntities + file.sensors.map { it.id }).distinct()
-        prefs.haEntities = haEntities
-        haActions = (haActions + file.actions.map { it.id }).distinct()
-        prefs.haActions = haActions
+        // Files from earlier versions: the sensors, then the actions, the first ones in the top bar
+        val fileActions = file.actions.map { it.id }
+        val imported = file.order ?: (file.sensors.map { it.id } + fileActions)
+        val entities = (haEntities + imported).distinct()
+        saveHaChoice(entities, (haTopBar + (file.topBar ?: fileActions.take(MAX_HA_ACTIONS))).distinct().filter { it in entities }.take(MAX_HA_ACTIONS))
         file.frigate?.let(::saveFrigate)
         // The row becomes the apps in the file that are on this TV; the others can be unhidden later
         val apps = installed.orEmpty().map { it.key }
@@ -556,6 +569,12 @@ class MainActivity : ComponentActivity() {
             saveHidden((hidden + apps).distinct() - shown.toSet())
         }
         Toast.makeText(this, "Settings imported", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveHaChoice(entities: List<String>, topBar: List<String>) {
+        haEntities = entities
+        haTopBar = topBar
+        prefs.saveHaChoice(entities, topBar)
     }
 
     private fun saveFrigate(value: FrigateServer) {

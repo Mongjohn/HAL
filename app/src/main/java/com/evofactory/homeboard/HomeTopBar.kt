@@ -49,6 +49,9 @@ enum class HomeTab(val label: String) {
 
     /** The latest Frigate alerts */
     Alerts("Alerts"),
+
+    /** Every chosen Home Assistant sensor and action, in a card per room */
+    Assistant("Assistant"),
 }
 
 /** The top bar: tabs on the left; free memory, action buttons, the settings cog and the time on the right. */
@@ -59,6 +62,7 @@ fun HomeTopBar(
     secondTabFocus: FocusRequester,
     homeTabFocus: FocusRequester,
     alertsTabFocus: FocusRequester,
+    assistantTabFocus: FocusRequester,
     onHomeTabSelected: (Boolean) -> Unit,
     showFreeMemory: Boolean,
     modifier: Modifier = Modifier,
@@ -70,16 +74,16 @@ fun HomeTopBar(
         horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HomeTab.entries.forEachIndexed { index, entry ->
+        HomeTab.entries.forEach { entry ->
             TabButton(
                 entry.label,
                 selected = entry == tab,
                 onSelect = { onTabChange(entry) },
-                modifier = when (index) {
-                    0 -> Modifier.focusRequester(homeTabFocus).onFocusChanged { onHomeTabSelected(it.hasFocus) }
-                    1 -> Modifier.focusRequester(secondTabFocus)
-                    2 -> Modifier.focusRequester(alertsTabFocus)
-                    else -> Modifier
+                modifier = when (entry) {
+                    HomeTab.Home -> Modifier.focusRequester(homeTabFocus).onFocusChanged { onHomeTabSelected(it.hasFocus) }
+                    HomeTab.Cameras -> Modifier.focusRequester(secondTabFocus)
+                    HomeTab.Alerts -> Modifier.focusRequester(alertsTabFocus)
+                    HomeTab.Assistant -> Modifier.focusRequester(assistantTabFocus)
                 },
             )
         }

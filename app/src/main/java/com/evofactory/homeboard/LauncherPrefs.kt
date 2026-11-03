@@ -81,16 +81,26 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getString("ha_username", null) ?: ""
         set(value) = prefs.edit { putString("ha_username", value) }
 
-    /** Home Assistant sensors and weather shown next to the camera, in the order chosen */
-    var haEntities: List<String>
-        // Earlier versions kept the actions in this list too
-        get() = readList("ha_entities").filterNot(::isHaAction)
-        set(value) = writeList("ha_entities", value)
+    /**
+     * Everything from Home Assistant on the Assistant tab, in its order there: weather, sensors,
+     * scenes and scripts. The sensors and weather also show next to the camera.
+     */
+    val haEntities: List<String>
+        get() = if (prefs.contains("ha_top_bar")) readList("ha_entities") else readList("ha_entities").filterNot(::isHaAction) + oldHaActions()
 
-    /** Home Assistant scenes and scripts shown as buttons in the top bar, in the order chosen */
-    var haActions: List<String>
-        get() = if (prefs.contains("ha_actions")) readList("ha_actions") else readList("ha_entities").filter(::isHaAction)
-        set(value) = writeList("ha_actions", value)
+    /** The scenes and scripts also in the top bar, at most [MAX_HA_ACTIONS] */
+    val haTopBar: List<String>
+        get() = if (prefs.contains("ha_top_bar")) readList("ha_top_bar") else oldHaActions().take(MAX_HA_ACTIONS)
+
+    // Together: before the top bar was a choice of its own, the actions were in another list
+    fun saveHaChoice(entities: List<String>, topBar: List<String>) {
+        writeList("ha_entities", entities)
+        writeList("ha_top_bar", topBar)
+        prefs.edit { remove("ha_actions") }
+    }
+
+    // Earlier versions kept the top bar's actions in "ha_actions", and before that with the sensors
+    private fun oldHaActions() = if (prefs.contains("ha_actions")) readList("ha_actions") else readList("ha_entities").filter(::isHaAction)
 
     /** Frigate's address and login; the password is kept, see [FrigateServer] */
     var frigate: FrigateServer

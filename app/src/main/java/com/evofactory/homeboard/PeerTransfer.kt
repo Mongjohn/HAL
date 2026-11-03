@@ -20,13 +20,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -417,22 +414,9 @@ private fun PeerList(
         title = title,
         info = link.name,
         onDismiss = onDismiss,
-        actions = {
-            OutlinedButton(
-                onClick = onFile,
-                modifier = Modifier.focusRequester(fileButton).focusProperties {
-                    left = rows.current(keys)
-                    down = rows.current(keys)
-                },
-            ) { Text(fileLabel) }
-            OutlinedButton(
-                onClick = onDismiss,
-                modifier = Modifier.focusRequester(close).focusProperties {
-                    right = rows.current(keys)
-                    down = rows.current(keys)
-                },
-            ) { Text("Close") }
-        },
+        buttons = listOf(DialogButton(fileLabel, focus = fileButton, onClick = onFile)),
+        contentFocus = { rows.currentOrNull(keys) },
+        closeFocus = close,
     ) {
         if (peers.isEmpty()) {
             Text(hint, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
@@ -454,11 +438,7 @@ private fun PeerList(
                         )
                     },
                     leadingContent = { MdiIcon(if (chosen) "mdi:check" else "mdi:television", size = 24.dp) },
-                    modifier = rows.row(peer.id).jumpToActions(
-                        left = close,
-                        right = fileButton,
-                        down = if (peer.id == keys.last()) fileButton else null,
-                    ),
+                    modifier = rows.row(peer.id).ringToTop(),
                 )
             }
         }
@@ -575,9 +555,7 @@ fun ImportFromTv(onImport: (SettingsFile) -> Unit, onOpenFile: () -> Unit, onDis
         TopDialog(
             title = "Import from ${session.peer.name}",
             onDismiss = { link.chosenId = null },
-            actions = {
-                OutlinedButton(onClick = { link.chosenId = null }, modifier = Modifier.focusRequester(cancel)) { Text("Cancel") }
-            },
+            closeFocus = cancel,
         ) {
             CodeLine(session)
             Text(

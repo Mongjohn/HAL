@@ -3,7 +3,6 @@ package com.evofactory.homeboard
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -20,11 +19,9 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.FilterChip
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 
 /** Adds or edits one camera: its name, RTSP address, optional substream address and transport. */
@@ -45,10 +42,8 @@ fun CameraDialog(
     val urlField = remember { FocusRequester() }
     val substreamField = remember { FocusRequester() }
     val saveButton = remember { FocusRequester() }
-    val cancelButton = remember { FocusRequester() }
+    val fields = remember { ListFocus() }
     val canSave = name.isNotBlank() && isValidRtspUrl(url.trim()) && (substream.isBlank() || isValidRtspUrl(substream.trim()))
-
-    val toSave = if (canSave) saveButton else cancelButton
 
     fun save() {
         if (!canSave) return
@@ -57,7 +52,14 @@ fun CameraDialog(
         onDismiss()
     }
 
-    TopDialog(title = if (isNew) "Add camera" else "Edit camera", onDismiss = onDismiss, fullWidth = true) {
+    TopDialog(
+        title = if (isNew) "Add camera" else "Edit camera",
+        onDismiss = onDismiss,
+        fullWidth = true,
+        // Greyed out until there's a name and a valid rtsp:// address
+        buttons = listOf(DialogButton("Save", enabled = canSave, primary = true, focus = saveButton, onClick = ::save)),
+        contentFocus = { fields.current(listOf("name", "url", "substream", "tcp", "udp")) },
+    ) {
         TvTextField(
             value = name,
             onValueChange = { name = it },
@@ -68,7 +70,7 @@ fun CameraDialog(
                 keyboard?.hide()
                 urlField.requestFocus()
             },
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp).focusRequester(nameField).jumpToActions(left = cancelButton, right = toSave),
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp).focusRequester(nameField).then(fields.row("name")).ringToTop(),
         )
         TvTextField(
             value = url,
@@ -80,7 +82,7 @@ fun CameraDialog(
                 keyboard?.hide()
                 substreamField.requestFocus()
             },
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp).focusRequester(urlField).jumpToActions(left = cancelButton, right = toSave),
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp).focusRequester(urlField).then(fields.row("url")).ringToTop(),
         )
         TvTextField(
             value = substream,
@@ -92,7 +94,7 @@ fun CameraDialog(
                 keyboard?.hide()
                 if (canSave) saveButton.requestFocus()
             },
-            modifier = Modifier.fillMaxWidth().padding(12.dp).focusRequester(substreamField).jumpToActions(left = cancelButton, right = toSave),
+            modifier = Modifier.fillMaxWidth().padding(12.dp).focusRequester(substreamField).then(fields.row("substream")).ringToTop(),
         )
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -100,14 +102,8 @@ fun CameraDialog(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Transport", style = MaterialTheme.typography.titleSmall)
-            FilterChip(selected = useTcp, onClick = { useTcp = true }) { Text("TCP") }
-            FilterChip(selected = !useTcp, onClick = { useTcp = false }) { Text("UDP") }
-            Spacer(Modifier.weight(1f))
-            // Greyed out until there's a name and a valid rtsp:// address
-            Button(onClick = ::save, enabled = canSave, modifier = Modifier.focusRequester(saveButton)) {
-                Text("Save")
-            }
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.focusRequester(cancelButton)) { Text("Cancel") }
+            FilterChip(selected = useTcp, onClick = { useTcp = true }, modifier = fields.row("tcp").ringToTop(right = false)) { Text("TCP") }
+            FilterChip(selected = !useTcp, onClick = { useTcp = false }, modifier = fields.row("udp").ringToTop(left = false)) { Text("UDP") }
         }
         Text(
             if (useTcp) {

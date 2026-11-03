@@ -2,15 +2,15 @@ package com.evofactory.homeboard
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -22,46 +22,51 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.Button
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.FilterChip
-import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.LocalContentColor
-import androidx.tv.material3.Surface
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
 
-/** What the Home Assistant settings choose: the panel's sensors, or the top bar's action buttons */
-enum class HaPick { Sensors, Actions }
+/** The tabs once connected: choosing sensors, choosing actions, and the order of everything */
+private enum class HaTab(val label: String) { Sensors("Sensors"), Actions("Actions"), Order("Order") }
 
 /**
  * Home Assistant settings, in two steps: the address and how to log in (username and password, or
- * a long-lived token), then, once connected, what to show: sensors, or (with [pick] Actions) the
- * scenes and scripts of the top bar, at most [MAX_HA_ACTIONS]. Once set
- * up, it opens on the second step, connecting with the saved login; if that fails, it goes back
- * to logging in. The password isn't kept: logging in gives the TV a refresh token, which shows in
- * the Home Assistant profile and is ended when it's replaced, or on Log out in the settings menu.
+ * a long-lived token), then, once connected, three tabs: the sensors and weather to show, the
+ * scenes and scripts, and the order of everything on the Assistant tab (see [sensorCards]). All of
+ * it shows there; the actions also chosen for the top bar, at most [MAX_HA_ACTIONS], are its
+ * buttons too, in the same order. Once set up, it opens on the second step, connecting with the
+ * saved login; if that fails, it goes back to logging in. The password isn't kept: logging in gives
+ * the TV a refresh token, which shows in the Home Assistant profile and is ended when it's
+ * replaced, or on Log out.
  */
 @OptIn(ExperimentalTvMaterial3Api::class) // FilterChip
 @Composable
 fun HomeAssistantDialog(
-    pick: HaPick,
     initialServer: HaServer,
     initialUsername: String,
     initialEntities: List<String>,
+    initialTopBar: List<String>,
     loginRejected: Boolean,
-    onSave: (server: HaServer, username: String, entities: List<String>) -> Unit,
+    onSave: (server: HaServer, username: String, entities: List<String>, topBar: List<String>) -> Unit,
+    onLogOut: () -> Unit,
     onDiscardLogin: (HaServer) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -78,21 +83,35 @@ fun HomeAssistantDialog(
     // Set while Home Assistant waits for the two-factor code
     var codeFlow by remember { mutableStateOf<String?>(null) }
     var code by remember { mutableStateOf("") }
+    // Everything chosen, in its order on the Assistant tab, and the actions also in the top bar
     var selected by remember { mutableStateOf(initialEntities) }
-    // The connected Home Assistant and what can be picked on it; set = second step, choosing tiles
+    var topBar by remember { mutableStateOf(initialTopBar.filter { it in initialEntities }) }
+    // The connected Home Assistant and what can be picked on it; set = second step, choosing
     var connected by remember { mutableStateOf<HaServer?>(null) }
     var available by remember { mutableStateOf<List<HaEntity>?>(null) }
     var connecting by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     // Logging in here, rather than using the saved login
     var showLogin by remember { mutableStateOf(!initialServer.isSet || loginRejected) }
+    var tab by remember { mutableStateOf(HaTab.Sensors) }
+    // The Order tab's row being moved, if any
+    var movingKey by remember { mutableStateOf<String?>(null) }
+    var sensorQuery by remember { mutableStateOf("") }
+    var actionQuery by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val urlField = remember { FocusRequester() }
     val firstLoginField = remember { FocusRequester() }
     val passwordField = remember { FocusRequester() }
     val connectButton = remember { FocusRequester() }
-    val closeLoginButton = remember { FocusRequester() }
+    val closeButton = remember { FocusRequester() }
+    val sensorSearch = remember { FocusRequester() }
+    val actionSearch = remember { FocusRequester() }
+    // To come back to the item last on, from the top row
+    val loginFocus = remember { ListFocus() }
+    val sensorFocus = remember { ListFocus() }
+    val actionFocus = remember { ListFocus() }
+    val orderFocus = remember { ListFocus() }
     // Without a password, the saved login is used (if it's for this username)
     val reuseLogin = password.isEmpty() && refreshToken.isNotEmpty() && username.trim() == loginUsername
     val canConnect = normalizeHaUrl(url) != null && when {
@@ -159,35 +178,68 @@ fun HomeAssistantDialog(
         }
     }
 
-    TopDialog(
-        title = when {
-            connected == null || available == null -> "Home Assistant"
-            pick == HaPick.Actions -> "Home Assistant action buttons"
-            else -> "Home Assistant sensors"
-        },
-        onDismiss = onDismiss,
-    ) {
-        val entities = available
-        val server = connected
-        if ((entities == null || server == null) && !showLogin) {
+    // Ends the login, saved or made here, and goes back to logging in; the address and username stay
+    fun logOut() {
+        unsavedLogin?.let(onDiscardLogin)
+        unsavedLogin = null
+        if (initialServer.isSet) onLogOut()
+        refreshToken = ""
+        token = ""
+        password = ""
+        codeFlow = null
+        connected = null
+        available = null
+        status = null
+        showLogin = true
+    }
+
+    val entities = available
+    val server = connected
+    val logOutButton = DialogButton("Log out", onClick = ::logOut)
+
+    if (entities == null || server == null) {
+        if (!showLogin) {
             // Connecting with the saved login
-            val closeButton = remember { FocusRequester() }
-            Text(
-                status ?: "Connecting…",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            )
-            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                Spacer(Modifier.weight(1f))
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.focusRequester(closeButton)) { Text("Close") }
+            TopDialog(title = "Home Assistant", onDismiss = onDismiss, closeFocus = closeButton) {
+                Text(
+                    status ?: "Connecting…",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+                LaunchedEffect(Unit) {
+                    closeButton.requestFocus()
+                    connect()
+                }
             }
-            LaunchedEffect(Unit) {
-                closeButton.requestFocus()
-                connect()
-            }
-        } else if (entities == null || server == null) {
+            return
+        }
+        val loginKeys = listOf("url", "with-password", "with-token") + when {
+            useToken -> listOf("token")
+            codeFlow != null -> listOf("code")
+            else -> listOf("username", "password")
+        }
+        TopDialog(
+            title = "Home Assistant",
+            onDismiss = onDismiss,
+            buttons = listOfNotNull(
+                // Greyed out until everything needed is filled in. Stays enabled while connecting
+                // (presses are ignored), so the remote keeps its place on it
+                DialogButton(
+                    when {
+                        useToken || reuseLogin -> "Connect"
+                        codeFlow != null -> "Verify"
+                        else -> "Log in"
+                    },
+                    enabled = canConnect,
+                    primary = true,
+                    focus = connectButton,
+                    onClick = ::connect,
+                ),
+                logOutButton.takeIf { initialServer.isSet },
+            ),
+            contentFocus = { loginFocus.current(loginKeys) },
+        ) {
             val fieldModifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-            val toConnect = if (canConnect) connectButton else closeLoginButton
             TvTextField(
                 value = url,
                 onValueChange = { url = it },
@@ -198,7 +250,7 @@ fun HomeAssistantDialog(
                     keyboard?.hide()
                     firstLoginField.requestFocus()
                 },
-                modifier = fieldModifier.focusRequester(urlField).jumpToActions(left = closeLoginButton, right = toConnect),
+                modifier = fieldModifier.focusRequester(urlField).then(loginFocus.row("url")).ringToTop(),
             )
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -206,8 +258,16 @@ fun HomeAssistantDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Log in with", style = MaterialTheme.typography.titleSmall)
-                FilterChip(selected = !useToken, onClick = { useToken = false }) { Text("Username and password") }
-                FilterChip(selected = useToken, onClick = { useToken = true }) { Text("Access token") }
+                FilterChip(
+                    selected = !useToken,
+                    onClick = { useToken = false },
+                    modifier = loginFocus.row("with-password").ringToTop(right = false),
+                ) { Text("Username and password") }
+                FilterChip(
+                    selected = useToken,
+                    onClick = { useToken = true },
+                    modifier = loginFocus.row("with-token").ringToTop(left = false),
+                ) { Text("Access token") }
             }
             when {
                 useToken -> TvTextField(
@@ -220,7 +280,7 @@ fun HomeAssistantDialog(
                         keyboard?.hide()
                         if (canConnect) connectButton.requestFocus()
                     },
-                    modifier = fieldModifier.focusRequester(firstLoginField).jumpToActions(left = closeLoginButton, right = toConnect),
+                    modifier = fieldModifier.focusRequester(firstLoginField).then(loginFocus.row("token")).ringToTop(),
                 )
                 codeFlow != null -> {
                     TvTextField(
@@ -230,7 +290,7 @@ fun HomeAssistantDialog(
                         keyboardType = KeyboardType.NumberPassword,
                         imeAction = ImeAction.Done,
                         onImeAction = ::connect,
-                        modifier = fieldModifier.focusRequester(firstLoginField).jumpToActions(left = closeLoginButton, right = toConnect),
+                        modifier = fieldModifier.focusRequester(firstLoginField).then(loginFocus.row("code")).ringToTop(),
                     )
                     LaunchedEffect(Unit) { firstLoginField.requestFocus() }
                 }
@@ -249,7 +309,7 @@ fun HomeAssistantDialog(
                             passwordField.requestFocus()
                         },
                         // Side by side: Right goes to the password, Left comes back
-                        modifier = Modifier.weight(1f).focusRequester(firstLoginField).focusProperties { left = closeLoginButton },
+                        modifier = Modifier.weight(1f).focusRequester(firstLoginField).then(loginFocus.row("username")).ringToTop(right = false),
                     )
                     TvTextField(
                         value = password,
@@ -262,28 +322,9 @@ fun HomeAssistantDialog(
                             if (canConnect) connectButton.requestFocus()
                         },
                         visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.weight(1f).focusRequester(passwordField).focusProperties { right = toConnect },
+                        modifier = Modifier.weight(1f).focusRequester(passwordField).then(loginFocus.row("password")).ringToTop(left = false),
                     )
                 }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Greyed out until everything needed is filled in. Stays enabled while connecting
-                // (presses are ignored), so the remote keeps its place on it
-                Button(onClick = ::connect, enabled = canConnect, modifier = Modifier.focusRequester(connectButton)) {
-                    Text(
-                        when {
-                            useToken || reuseLogin -> "Connect"
-                            codeFlow != null -> "Verify"
-                            else -> "Log in"
-                        },
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.focusRequester(closeLoginButton)) { Text("Close") }
             }
             Text(
                 status ?: when {
@@ -302,120 +343,186 @@ fun HomeAssistantDialog(
                     else -> urlField
                 }.requestFocus()
             }
-        } else {
-            var query by remember { mutableStateOf("") }
-            val searchField = remember { FocusRequester() }
-            val saveButton = remember { FocusRequester() }
-            val closeButton = remember { FocusRequester() }
-            // To come back to the item last on: Left from Save, Right from Close and the search
-            val itemFocus = remember { ListFocus() }
-            val limit = if (pick == HaPick.Actions) MAX_HA_ACTIONS else null
-            // Every word typed, in the name, the full name (with the device's), the room or the id
-            val words = query.lowercase().split(' ').filter { it.isNotEmpty() }
-            val shown = entities.filter { it.isAction == (pick == HaPick.Actions) }.filter { entity ->
-                val text = "${entity.fullName} ${entity.name} ${entity.area.orEmpty()} ${entity.id}".lowercase()
-                words.all { it in text }
+        }
+        return
+    }
+
+    val byId = remember(entities) { entities.associateBy { it.id } }
+    // What was chosen before comes first, so it can be seen in a long list. Not what's chosen
+    // now: items would jump around while choosing
+    val sensorSections = pickerSections(entities.filterNot { it.isAction }, sensorQuery, initialEntities)
+    val actionSections = pickerSections(entities.filter { it.isAction }, actionQuery, initialEntities)
+    val orderRows = orderRows(selected, topBar, byId)
+    fun keysOf(sections: List<Pair<String, List<HaEntity>>>) = sections.flatMap { (_, items) -> items.map { it.id } }
+
+    TopDialog(
+        title = "Home Assistant",
+        onDismiss = onDismiss,
+        tabs = HaTab.entries.map { DialogTab(it.label, selected = it == tab) { tab = it } },
+        buttons = listOf(
+            logOutButton,
+            DialogButton("Save", primary = true) {
+                // Drops entities that no longer exist
+                val ids = entities.map { it.id }.toSet()
+                val chosen = selected.filter { it in ids }
+                onSave(server, if (server.refreshToken.isEmpty()) "" else loginUsername, chosen, topBar.filter { it in chosen })
+                unsavedLogin = null
+                onDismiss()
+            },
+        ),
+        // The item last on, if still listed; otherwise the first in the order shown, or the search
+        contentFocus = {
+            when (tab) {
+                HaTab.Sensors -> sensorFocus.currentOrNull(keysOf(sensorSections)) ?: sensorSearch
+                HaTab.Actions -> actionFocus.currentOrNull(keysOf(actionSections)) ?: actionSearch
+                HaTab.Order -> orderFocus.currentOrNull(orderRows.filter { it.focusable }.map { it.key })
             }
-            // What was chosen before comes first, so it can be seen in a long list. Not what's
-            // chosen now: items would jump around while choosing
-            val listed = shown.sortedBy { it.id !in initialEntities }
-            // Scenes, scripts, weather, then sensors (binary ones too) by room (alphabetical), then
-            // sensors without a room
-            val sensorsByRoom = listed.filter { it.domain in setOf("sensor", "binary_sensor") }.groupBy { it.area }
-            val sections = buildList {
-                add("Scenes" to listed.filter { it.domain == "scene" })
-                add("Scripts" to listed.filter { it.domain == "script" })
-                add("Weather" to listed.filter { it.domain == "weather" })
-                sensorsByRoom.keys.filterNotNull().sortedBy { it.lowercase() }.forEach { add(it to sensorsByRoom.getValue(it)) }
-                add((if (sensorsByRoom.keys.any { it != null }) "Other sensors" else "Sensors") to sensorsByRoom[null].orEmpty())
-            }.filter { (_, items) -> items.isNotEmpty() }
-
-            val full = limit != null && selected.size >= limit
-
-            fun toggle(entity: HaEntity) {
-                selected = when {
-                    entity.id in selected -> selected - entity.id
-                    // The current choice, not [full]: a press can come before the list recomposes
-                    limit != null && selected.size >= limit -> selected
-                    else -> selected + entity.id
-                }
+        },
+        searchFocus = {
+            when (tab) {
+                HaTab.Sensors -> sensorSearch
+                HaTab.Actions -> actionSearch
+                HaTab.Order -> null
             }
-
-            // The item last on, if still listed; otherwise the first in the order shown
-            fun listFocus(): FocusRequester? =
-                sections.flatMap { (_, items) -> items.map { it.id } }.takeIf { it.isNotEmpty() }?.let(itemFocus::current)
-
-            TvTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = "Search",
-                keyboardType = KeyboardType.Text,
-                imeAction = ImeAction.Search,
-                onImeAction = {
-                    keyboard?.hide()
-                    listFocus()?.requestFocus()
+        },
+        hint = when (tab) {
+            HaTab.Sensors -> "OK selects · ${selected.count { !isHaAction(it) }} chosen"
+            HaTab.Actions -> "OK: top bar → chosen → off · ${selected.count(::isHaAction)} chosen · " +
+                "${topBar.size} of $MAX_HA_ACTIONS in the top bar"
+            HaTab.Order -> when {
+                orderRows.isEmpty() -> null
+                movingKey != null -> "Up and down move it · OK keeps it there · Back cancels"
+                else -> "OK on a card's title moves the card, OK on an item moves it within its card"
+            }
+        },
+    ) {
+        when (tab) {
+            HaTab.Sensors -> EntityPicker(
+                sections = sensorSections,
+                query = sensorQuery,
+                onQueryChange = { sensorQuery = it },
+                search = sensorSearch,
+                rows = sensorFocus,
+                mark = { if (it.id in selected) "✓" else "" },
+                onPress = { entity ->
+                    selected = if (entity.id in selected) selected - entity.id else selected + entity.id
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                    .focusRequester(searchField)
-                    .focusProperties {
-                        left = closeButton
-                        listFocus()?.let { right = it }
-                    },
             )
-            Text(
-                when {
-                    shown.isEmpty() -> "Nothing matches"
-                    limit == null -> "OK selects · ${selected.size} chosen"
-                    full -> "$limit of $limit chosen · unselect one to choose another"
-                    else -> "OK selects · ${selected.size} of $limit chosen"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            )
-            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
-                sections.forEach { (title, items) ->
-                    entitySection(title, items, selected, ::toggle) { entity ->
-                        // Left goes back to the search, Right to Save
-                        itemFocus.row(entity.id).jumpToActions(left = searchField, right = saveButton)
+            HaTab.Actions -> EntityPicker(
+                sections = actionSections,
+                query = actionQuery,
+                onQueryChange = { actionQuery = it },
+                search = actionSearch,
+                rows = actionFocus,
+                mark = {
+                    when (it.id) {
+                        in topBar -> "✓ Top bar"
+                        in selected -> "✓"
+                        else -> ""
                     }
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                // Only when logging in here: to change the login
-                if (showLogin) {
-                    OutlinedButton(onClick = {
-                        available = null
-                        connected = null
-                    }) { Text("Back") }
-                }
-                Spacer(Modifier.weight(1f))
-                // On the right, where Down from the list lands
-                Button(
-                    onClick = {
-                        // Drops entities that no longer exist
-                        val ids = entities.map { it.id }.toSet()
-                        onSave(server, if (server.refreshToken.isEmpty()) "" else loginUsername, selected.filter { it in ids })
-                        unsavedLogin = null
-                        onDismiss()
-                    },
-                    // Left goes back into the list, where it was
-                    modifier = Modifier.focusRequester(saveButton).focusProperties { listFocus()?.let { left = it } },
-                ) { Text("Save") }
-                OutlinedButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.focusRequester(closeButton).focusProperties { listFocus()?.let { right = it } },
-                ) { Text("Close") }
-            }
-            // Something chosen already: start on the list, to change it. Otherwise on the search.
-            LaunchedEffect(Unit) {
-                val first = listFocus()
-                if (selected.isNotEmpty() && first != null) first.requestFocus() else searchField.requestFocus()
-            }
+                },
+                // Off, then in the top bar if it has room, then out of it, then off again
+                onPress = { entity ->
+                    val id = entity.id
+                    when (id) {
+                        in topBar -> topBar = topBar - id
+                        in selected -> selected = selected - id
+                        else -> {
+                            selected = selected + id
+                            if (topBar.size < MAX_HA_ACTIONS) topBar = topBar + id
+                        }
+                    }
+                },
+            )
+            HaTab.Order -> SensorOrder(
+                rows = orderRows,
+                ids = selected,
+                movingKey = movingKey,
+                onMovingChange = { movingKey = it },
+                onMove = { key, by ->
+                    selected = if (key.startsWith(CARD_ROW)) {
+                        moveSensorCard(selected, byId, key.removePrefix(CARD_ROW), by)
+                    } else {
+                        moveSensor(selected, byId, key, by)
+                    }
+                },
+                onCancel = { selected = it },
+                rowModifier = { key -> orderFocus.row(key).ringToTop() },
+            )
+        }
+        // Something chosen already: start on the list, to change it. Otherwise on the search.
+        LaunchedEffect(Unit) {
+            val first = sensorFocus.currentOrNull(keysOf(sensorSections))
+            runCatching { if (selected.isNotEmpty() && first != null) first.requestFocus() else sensorSearch.requestFocus() }
+        }
+    }
+}
+
+/**
+ * [entities] matching every word of [query] (in the name, the full name, the room or the id), in
+ * sections: the weather, the rooms (alphabetical), then by type those without a room. Those in
+ * [first] come first in each.
+ */
+private fun pickerSections(entities: List<HaEntity>, query: String, first: List<String>): List<Pair<String, List<HaEntity>>> {
+    val words = query.lowercase().split(' ').filter { it.isNotEmpty() }
+    val listed = entities
+        .filter { entity ->
+            val text = "${entity.fullName} ${entity.name} ${entity.area.orEmpty()} ${entity.id}".lowercase()
+            words.all { it in text }
+        }
+        .sortedBy { it.id !in first }
+    val others = listed.filter { it.domain != "weather" }
+    val byRoom = others.groupBy { it.area }
+    val anyRoom = byRoom.keys.any { it != null }
+    val noRoom = byRoom[null].orEmpty()
+    return buildList {
+        add("Weather" to listed.filter { it.domain == "weather" })
+        byRoom.keys.filterNotNull().sortedBy { it.lowercase() }.forEach { add(it to byRoom.getValue(it)) }
+        noRoom.map { it.domain }.distinct().sortedBy { TypeOrder.indexOf(it).takeIf { i -> i >= 0 } ?: TypeOrder.size }.forEach { domain ->
+            add(sensorTypeTitle(domain, anyRoom) to noRoom.filter { it.domain == domain })
+        }
+    }.filter { (_, items) -> items.isNotEmpty() }
+}
+
+// Types without a room, in this order; any other after them
+private val TypeOrder = listOf("sensor", "binary_sensor", "scene", "script")
+
+/** The Sensors or Actions tab: a search, then [sections] of entities, each with its [mark] at the end. What OK does is the dialog's hint. */
+@Composable
+private fun TopDialogScope.EntityPicker(
+    sections: List<Pair<String, List<HaEntity>>>,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    search: FocusRequester,
+    rows: ListFocus,
+    mark: (HaEntity) -> String,
+    onPress: (HaEntity) -> Unit,
+) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val keys = sections.flatMap { (_, items) -> items.map { it.id } }
+    TvTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        placeholder = "Search",
+        keyboardType = KeyboardType.Text,
+        imeAction = ImeAction.Search,
+        onImeAction = {
+            keyboard?.hide()
+            rows.currentOrNull(keys)?.requestFocus()
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .focusRequester(search)
+            .ringToTop()
+            .downToContent(),
+    )
+    if (keys.isEmpty()) {
+        Text("Nothing matches", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+    }
+    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).padding(top = 4.dp)) {
+        sections.forEach { (title, items) ->
+            entitySection(title, items, mark, onPress) { entity -> rows.row(entity.id).ringToTop() }
         }
     }
 }
@@ -423,8 +530,8 @@ fun HomeAssistantDialog(
 private fun LazyListScope.entitySection(
     title: String,
     entities: List<HaEntity>,
-    selected: List<String>,
-    onToggle: (HaEntity) -> Unit,
+    mark: (HaEntity) -> String,
+    onPress: (HaEntity) -> Unit,
     itemModifier: (HaEntity) -> Modifier,
 ) {
     if (entities.isEmpty()) return
@@ -436,11 +543,10 @@ private fun LazyListScope.entitySection(
         )
     }
     items(entities, key = { it.id }) { entity ->
-        val checked = entity.id in selected
         // One line in small text, so more of a long list fits: the name, then the reading and the
         // full name (it tells apart entities named alike on different devices) and the id
         Surface(
-            onClick = { onToggle(entity) },
+            onClick = { onPress(entity) },
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = Color.Transparent,
@@ -477,7 +583,163 @@ private fun LazyListScope.entitySection(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                Text(if (checked) "✓" else "", style = MaterialTheme.typography.bodyMedium)
+                Text(mark(entity), style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+// Order tab: the key of a card's title row, before the card's key
+private const val CARD_ROW = "card:"
+
+/** A row of the Order tab: a card's title, which moves the whole card, or an entity in it */
+private class OrderRow(
+    val key: String,
+    val title: String,
+    val entity: HaEntity?,
+    val isCard: Boolean,
+    val movable: Boolean,
+    // Shown at the end, e.g. that an action is also in the top bar
+    val note: String? = null,
+) {
+    // A title that can't move is only a label
+    val focusable get() = !isCard || movable
+}
+
+/** The cards of the Assistant tab, each title followed by its entities; a weather card is only its title */
+private fun orderRows(ids: List<String>, topBar: List<String>, entities: Map<String, HaEntity>): List<OrderRow> = buildList {
+    val cards = sensorCards(ids, entities)
+    cards.forEach { card ->
+        val weather = card.ids.singleOrNull()?.takeIf(::isHaWeather)
+        add(
+            OrderRow(
+                CARD_ROW + card.key,
+                if (weather != null) "Weather: ${card.title}" else card.title,
+                weather?.let(entities::get),
+                isCard = true,
+                movable = cards.size > 1,
+            ),
+        )
+        if (weather != null) return@forEach
+        card.ids.forEach { id ->
+            val entity = entities[id]
+            add(
+                OrderRow(
+                    id,
+                    entity?.name ?: id,
+                    entity,
+                    isCard = false,
+                    movable = card.ids.size > 1,
+                    note = if (isHaAction(id)) "top bar".takeIf { id in topBar } else entity?.reading,
+                ),
+            )
+        }
+    }
+}
+
+/**
+ * The Order tab: each card's title, then its entities. OK on a title moves the whole card, OK on
+ * an entity moves it within its card: up and down move it, OK keeps the new order, Back puts back
+ * [ids] as they were, through [onCancel]. [movingKey] is the row being moved: the dialog's hint
+ * says so.
+ */
+@Composable
+private fun SensorOrder(
+    rows: List<OrderRow>,
+    ids: List<String>,
+    movingKey: String?,
+    onMovingChange: (String?) -> Unit,
+    onMove: (key: String, by: Int) -> Unit,
+    onCancel: (List<String>) -> Unit,
+    rowModifier: (key: String) -> Modifier,
+) {
+    var before by remember { mutableStateOf(ids) }
+    val listState = rememberLazyListState()
+
+    // Keeps the row being moved in view, with the row above it
+    LaunchedEffect(ids, movingKey) {
+        val index = rows.indexOfFirst { it.key == movingKey }
+        if (index >= 0) listState.animateScrollToItem((index - 1).coerceAtLeast(0))
+    }
+
+    if (rows.isEmpty()) {
+        Text("Nothing chosen yet", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+    }
+    LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 340.dp).padding(top = 4.dp)) {
+        items(rows, key = { it.key }) { row ->
+            if (!row.focusable) {
+                Text(
+                    row.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+                )
+                return@items
+            }
+            val moving = row.key == movingKey
+            Surface(
+                onClick = {
+                    if (!row.movable) return@Surface
+                    before = ids
+                    onMovingChange(row.key)
+                },
+                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    focusedContainerColor = MaterialTheme.colorScheme.inverseSurface,
+                    focusedContentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                ),
+                scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = if (row.isCard) 6.dp else 0.dp)
+                    .then(rowModifier(row.key))
+                    .onPreviewKeyEvent { event ->
+                        if (!moving) return@onPreviewKeyEvent false
+                        val down = event.type == KeyEventType.KeyDown
+                        when (event.key) {
+                            Key.DirectionUp -> { if (down) onMove(row.key, -1); true }
+                            Key.DirectionDown -> { if (down) onMove(row.key, 1); true }
+                            Key.DirectionLeft, Key.DirectionRight -> true
+                            // On release, so the press doesn't start moving it again
+                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { if (!down) onMovingChange(null); true }
+                            Key.Back -> {
+                                if (!down) {
+                                    onCancel(before)
+                                    onMovingChange(null)
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    },
+            ) {
+                Row(
+                    // A card's entities under its title, set in
+                    modifier = Modifier.padding(start = if (row.isCard) 12.dp else 28.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    when {
+                        moving -> MdiIcon("mdi:arrow-up-down", size = 18.dp)
+                        row.entity != null -> MdiIcon(row.entity.icon, size = 18.dp)
+                    }
+                    Text(
+                        row.title,
+                        style = if (row.isCard) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    row.note?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LocalContentColor.current.copy(alpha = 0.7f),
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
         }
     }

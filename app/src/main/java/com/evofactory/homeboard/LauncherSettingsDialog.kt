@@ -30,7 +30,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -71,13 +70,11 @@ fun LauncherSettingsDialog(
     val serviceName = stringResource(R.string.home_override_label)
     val serviceOn = rememberHomeOverrideServiceOn()
     var advanced by remember { mutableStateOf(false) }
-    val launcherTab = remember { FocusRequester() }
-    val advancedTab = remember { FocusRequester() }
     val advancedOption = remember { FocusRequester() }
     val toggle = remember { FocusRequester() }
-    val exportButton = remember { FocusRequester() }
-    val restartButton = remember { FocusRequester() }
-    val closeButton = remember { FocusRequester() }
+    // The item last on, to come back to from the top row
+    val items = remember { ListFocus() }
+    val itemKeys = if (advanced) listOf("hours-", "hours+", "memory") else listOf("catch", "reopen", "accessibility", "export", "import")
     val prefs = remember { LauncherPrefs(context) }
     // An option turned on, once its explanation is accepted
     var pendingOption by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -109,56 +106,21 @@ fun LauncherSettingsDialog(
     TopDialog(
         title = "HomeBoard settings",
         onDismiss = onDismiss,
-        tabs = {
-            TabButton(
-                "Launcher",
-                selected = !advanced,
-                onSelect = { advanced = false },
-                modifier = Modifier.focusRequester(launcherTab).focusProperties { down = if (advanced) advancedOption else toggle },
-            )
-            TabButton(
-                "Advanced",
-                selected = advanced,
-                onSelect = { advanced = true },
-                modifier = Modifier.focusRequester(advancedTab).focusProperties {
-                    right = restartButton
-                    down = if (advanced) advancedOption else toggle
-                },
-            )
-        },
-        actions = {
-            OutlinedButton(
-                onClick = { context.restartApp() },
-                modifier = Modifier.focusRequester(restartButton).focusProperties {
-                    left = advancedTab
-                    right = closeButton
-                    down = if (advanced) advancedOption else toggle
-                },
-            ) { Text("Restart app") }
-            OutlinedButton(
-                onClick = onDismiss,
-                modifier = Modifier.focusRequester(closeButton).focusProperties {
-                    left = restartButton
-                    right = if (advanced) advancedOption else toggle
-                    down = if (advanced) advancedOption else toggle
-                },
-            ) { Text("Close") }
-        },
+        tabs = listOf(
+            DialogTab("Launcher", selected = !advanced) { advanced = false },
+            DialogTab("Advanced", selected = advanced) { advanced = true },
+        ),
+        buttons = listOf(DialogButton("Restart app") { context.restartApp() }),
+        contentFocus = { items.current(itemKeys) },
     ) {
         LaunchedEffect(Unit) { toggle.requestFocus() }
         if (advanced) {
             LauncherAdvancedSettings(
                 showFreeMemory = showFreeMemory,
                 onShowFreeMemoryChange = onShowFreeMemoryChange,
-                optionModifier = Modifier.jumpToActions(left = closeButton, right = closeButton),
-                firstModifier = Modifier.focusRequester(advancedOption).focusProperties {
-                    up = advancedTab
-                    left = closeButton
-                },
-                lastModifier = Modifier.focusProperties {
-                    up = advancedTab
-                    right = closeButton
-                },
+                optionModifier = items.row("memory").ringToTop(),
+                firstModifier = Modifier.focusRequester(advancedOption).then(items.row("hours-")).ringToTop(right = false),
+                lastModifier = items.row("hours+").ringToTop(left = false),
             )
             return@TopDialog
         }
@@ -169,7 +131,7 @@ fun LauncherSettingsDialog(
             onClick = {
                 if (catchHomeKey) onCatchHomeKeyChange(false) else turnOn { onCatchHomeKeyChange(true) }
             },
-            modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp).focusRequester(toggle).focusProperties { up = launcherTab }.jumpToActions(left = exportButton, right = closeButton),
+            modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp).focusRequester(toggle).then(items.row("catch")).ringToTop(),
         )
         HomeOption(
             title = "Reopen after the TV's home screen",
@@ -178,7 +140,7 @@ fun LauncherSettingsDialog(
             onClick = {
                 if (reopenAfterHome) onReopenAfterHomeChange(false) else turnOn { onReopenAfterHomeChange(true) }
             },
-            modifier = Modifier.padding(horizontal = 12.dp).jumpToActions(left = exportButton, right = closeButton),
+            modifier = Modifier.padding(horizontal = 12.dp).then(items.row("reopen")).ringToTop(),
         )
         if (replaceHome) {
             Row(
@@ -201,7 +163,7 @@ fun LauncherSettingsDialog(
         Text(status, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
         Button(
             onClick = { context.openSystemSettings(Settings.ACTION_ACCESSIBILITY_SETTINGS) },
-            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp).jumpToActions(left = exportButton, right = closeButton),
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp).then(items.row("accessibility")).ringToTop(),
         ) {
             Text(if (accessibilityScreen) "Open Accessibility settings" else "Open TV settings")
         }
@@ -211,11 +173,8 @@ fun LauncherSettingsDialog(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OutlinedButton(
-                onClick = onExport,
-                modifier = Modifier.focusRequester(exportButton).focusProperties { left = toggle },
-            ) { Text("Export settings") }
-            OutlinedButton(onClick = onImport) { Text("Import settings") }
+            OutlinedButton(onClick = onExport, modifier = items.row("export").ringToTop(right = false)) { Text("Export settings") }
+            OutlinedButton(onClick = onImport, modifier = items.row("import").ringToTop(left = false)) { Text("Import settings") }
             Spacer(Modifier.weight(1f))
             BuildInfo()
         }
@@ -311,7 +270,11 @@ private fun LauncherAdvancedSettings(
 private fun HomeOverrideConsentDialog(onAccept: () -> Unit, onDecline: () -> Unit) {
     val serviceName = stringResource(R.string.home_override_label)
     val accept = remember { FocusRequester() }
-    TopDialog(title = "Use the Accessibility service?", onDismiss = onDecline) {
+    TopDialog(
+        title = "Use the Accessibility service?",
+        onDismiss = onDecline,
+        buttons = listOf(DialogButton("Accept", primary = true, focus = accept, onClick = onAccept)),
+    ) {
         Text(
             "To take over from the TV's home screen, this app uses Android's Accessibility service, “$serviceName”. " +
                 "With these options on, it sees your remote's button presses and which app's window opens, " +
@@ -326,14 +289,6 @@ private fun HomeOverrideConsentDialog(onAccept: () -> Unit, onDecline: () -> Uni
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 12.dp),
         )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = onDecline) { Text("Not now") }
-            Button(onClick = onAccept, modifier = Modifier.focusRequester(accept)) { Text("Accept") }
-        }
         LaunchedEffect(Unit) { accept.requestFocus() }
     }
 }

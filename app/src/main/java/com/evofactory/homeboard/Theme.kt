@@ -18,8 +18,11 @@ val AppColorScheme = darkColorScheme(
     inverseSurface = Color(0xFFC4C1C6),
 )
 
-/** A step above surfaceVariant: menus over panels, and buttons on dialogs */
+/** A step above surfaceVariant: menus over panels, buttons on dialogs, the card gone into */
 val RaisedSurface = Color(0xFF3D3C42)
+
+/** A step above RaisedSurface: buttons on a raised card */
+val HigherSurface = Color(0xFF504E55)
 
 /** A step below onSurfaceVariant: figures that are only there if you look for them */
 val FaintText = Color(0xFF6E6C72)

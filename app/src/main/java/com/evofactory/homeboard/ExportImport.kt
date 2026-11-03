@@ -27,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -36,12 +35,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.Button
 import androidx.tv.material3.Checkbox
 import androidx.tv.material3.CheckboxDefaults
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -65,6 +62,11 @@ data class SettingsFile(
     val username: String = "",
     val sensors: List<NamedEntity> = emptyList(),
     val actions: List<NamedEntity> = emptyList(),
+    // The order of the sensors and actions together on the Assistant tab, and the actions also in
+    // the top bar. Null in files from earlier versions: the sensors, then the actions, of which the
+    // first ones were the top bar's.
+    val order: List<String>? = null,
+    val topBar: List<String>? = null,
     val frigate: FrigateServer? = null,
     // The apps visible in the row, in their order
     val appTiles: List<NamedEntity> = emptyList(),
@@ -75,6 +77,8 @@ data class SettingsFile(
         login = login?.takeIf { LOGIN_KEY in keys },
         sensors = sensors.filter { "sensor:${it.id}" in keys },
         actions = actions.filter { "action:${it.id}" in keys },
+        order = order?.filter { "sensor:$it" in keys || "action:$it" in keys },
+        topBar = topBar?.filter { "action:$it" in keys },
         frigate = frigate?.takeIf { FRIGATE_KEY in keys },
         appTiles = appTiles.takeIf { APP_TILES_KEY in keys }.orEmpty(),
     )
@@ -94,6 +98,8 @@ data class SettingsFile(
         .put("sensors", entitiesToJson(sensors))
         .put("actions", entitiesToJson(actions))
         .apply {
+            order?.let { put("order", JSONArray(it)) }
+            topBar?.let { put("topBar", JSONArray(it)) }
             frigate?.let {
                 put(
                     "frigate",
@@ -128,6 +134,8 @@ fun settingsFromJson(json: String): SettingsFile? = runCatching {
         username = login?.optString("username").orEmpty(),
         sensors = entitiesFromJson(root.optJSONArray("sensors")),
         actions = entitiesFromJson(root.optJSONArray("actions")),
+        order = root.optJSONArray("order")?.let { array -> List(array.length()) { array.getString(it) } },
+        topBar = root.optJSONArray("topBar")?.let { array -> List(array.length()) { array.getString(it) } },
         frigate = frigate?.let { FrigateServer(it.getString("url"), it.optString("username"), it.optString("password"), it.optString("certPin")) },
         appTiles = entitiesFromJson(root.optJSONArray("appTiles")),
     )
@@ -165,7 +173,7 @@ private fun sections(file: SettingsFile) = listOf(
         ),
     ),
     Section("Home Assistant sensors", file.sensors.map { Row("sensor:${it.id}", it.name, it.id) }),
-    Section("Home Assistant action buttons", file.actions.map { Row("action:${it.id}", it.name, it.id) }),
+    Section("Home Assistant actions", file.actions.map { Row("action:${it.id}", it.name, it.id) }),
     Section("Frigate login", listOfNotNull(file.frigate?.let { Row(FRIGATE_KEY, Uri.parse(it.url).host ?: it.url, it.username) })),
     // One line: the order only means something as a whole
     Section(
@@ -200,33 +208,18 @@ fun ChecklistDialog(
     TopDialog(
         title = title,
         onDismiss = onDismiss,
-        actions = {
-            if (allKeys.isNotEmpty()) {
-                // Partly checked counts as checked: one press clears the list
-                OutlinedButton(
-                    onClick = {
-                        unchecked.clear()
-                        if (canConfirm) unchecked.addAll(allKeys)
-                    },
-                    modifier = Modifier.focusProperties {
-                        left = rows.current(allKeys)
-                        down = rows.current(allKeys)
-                    },
-                ) { Text(if (canConfirm) "Uncheck all" else "Check all") }
-            }
-            Button(
-                onClick = { onConfirm(file.only(allKeys.toSet() - unchecked.toSet())) },
-                enabled = canConfirm,
-                modifier = Modifier.focusRequester(confirm).focusProperties { down = rows.current(allKeys) },
-            ) { Text(confirmLabel) }
-            OutlinedButton(
-                onClick = onDismiss,
-                modifier = Modifier.focusRequester(cancel).focusProperties {
-                    right = rows.current(allKeys)
-                    down = rows.current(allKeys)
-                },
-            ) { Text("Cancel") }
-        },
+        buttons = listOfNotNull(
+            // Partly checked counts as checked: one press clears the list
+            DialogButton(if (canConfirm) "Uncheck all" else "Check all") {
+                unchecked.clear()
+                if (canConfirm) unchecked.addAll(allKeys)
+            }.takeIf { allKeys.isNotEmpty() },
+            DialogButton(confirmLabel, enabled = canConfirm, primary = true, focus = confirm) {
+                onConfirm(file.only(allKeys.toSet() - unchecked.toSet()))
+            },
+        ),
+        contentFocus = { rows.currentOrNull(allKeys) },
+        closeFocus = cancel,
     ) {
         above()
         if (allKeys.isEmpty()) {
@@ -260,11 +253,7 @@ fun ChecklistDialog(
                                 ),
                             )
                         },
-                        modifier = rows.row(row.key).jumpToActions(
-                            left = cancel,
-                            right = if (canConfirm) confirm else cancel,
-                            down = if (row.key == allKeys.last()) (if (canConfirm) confirm else cancel) else null,
-                        ),
+                        modifier = rows.row(row.key).ringToTop(),
                     )
                 }
             }
@@ -486,36 +475,26 @@ private fun FileBrowser(title: String, defaultName: String?, onPick: (File) -> U
     val rowFocus = remember { ListFocus() }
     val rowKeys = rows.map { it.key }
     val saveButton = remember { FocusRequester() }
-    val cancel = remember { FocusRequester() }
-    val primary = if (defaultName != null && target != null) saveButton else cancel
     val focusIndex = rows.indexOfFirst { it.key == focusKey }.takeIf { it >= 0 } ?: if (current != null && rows.size > 1) 1 else 0
     val focusedKey = rows.getOrNull(focusIndex)?.key
 
     TopDialog(
         title = title,
+        // Back goes up a folder, the X closes
         onDismiss = ::goUp,
-        actions = {
-            if (defaultName != null) {
-                OutlinedButton(
-                    onClick = { newFolder = "" },
-                    enabled = current != null,
-                    modifier = Modifier.focusProperties { left = rowFocus.current(rowKeys) },
-                ) { Text("New folder") }
-                Button(
-                    onClick = { target?.let(onPick) },
-                    enabled = target != null,
-                    modifier = Modifier.focusRequester(saveButton),
-                ) { Text(if (target?.exists() == true) "Replace" else "Save") }
-            }
-            OutlinedButton(
-                onClick = onDismiss,
-                modifier = Modifier.focusRequester(cancel).focusProperties {
-                    right = rowFocus.current(rowKeys)
-                    // Nothing enabled on its left
-                    if (defaultName == null || current == null) left = rowFocus.current(rowKeys)
+        onClose = onDismiss,
+        buttons = if (defaultName == null) {
+            emptyList()
+        } else {
+            listOf(
+                DialogButton("New folder", enabled = current != null) { newFolder = "" },
+                DialogButton(if (target?.exists() == true) "Replace" else "Save", enabled = target != null, primary = true, focus = saveButton) {
+                    target?.let(onPick)
                 },
-            ) { Text("Cancel") }
+            )
         },
+        contentFocus = { rowFocus.currentOrNull(rowKeys) },
+        hint = "Hold OK on a file to delete it".takeIf { files.isNotEmpty() },
     ) {
         // On its own line: a deep folder's path would squeeze the buttons
         Text(
@@ -547,7 +526,7 @@ private fun FileBrowser(title: String, defaultName: String?, onPick: (File) -> U
                     }
                 },
                 modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp).focusRequester(field)
-                    .jumpToActions(left = cancel, right = primary),
+                    .ringToTop(),
             )
             LaunchedEffect(Unit) { runCatching { field.requestFocus() } }
         } else if (defaultName != null) {
@@ -559,7 +538,7 @@ private fun FileBrowser(title: String, defaultName: String?, onPick: (File) -> U
                 imeAction = ImeAction.Done,
                 onImeAction = { keyboard?.hide() },
                 modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp)
-                    .jumpToActions(left = cancel, right = primary),
+                    .ringToTop(),
             )
         }
         if (current != null && folders == null) {
@@ -577,11 +556,7 @@ private fun FileBrowser(title: String, defaultName: String?, onPick: (File) -> U
                     headlineContent = { Text(row.title) },
                     supportingContent = row.subtitle?.let { { Text(it) } },
                     leadingContent = { MdiIcon(row.icon, size = 24.dp) },
-                    modifier = rowFocus.row(row.key).jumpToActions(
-                        left = cancel,
-                        right = primary,
-                        down = if (row.key == rowKeys.last()) primary else null,
-                    ),
+                    modifier = rowFocus.row(row.key).ringToTop(),
                 )
                 if (row.file != null && deleting == row.file) {
                     ContextMenu(
@@ -596,19 +571,11 @@ private fun FileBrowser(title: String, defaultName: String?, onPick: (File) -> U
                 }
             }
         }
-        if (files.isNotEmpty()) {
-            Text(
-                "Hold OK on a file to delete it",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 12.dp),
-            )
-        }
         // Once a folder's contents are in, not while the previous one's are still showing
         LaunchedEffect(current, folders, files, newFolder == null) {
             if (newFolder != null) return@LaunchedEffect
             if (rows.isEmpty()) {
-                runCatching { cancel.requestFocus() }
+                runCatching { close.requestFocus() }
             } else {
                 listState.scrollToItem(focusIndex)
                 withFrameNanos { }

@@ -1,5 +1,6 @@
 package com.evofactory.homeboard
 
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +35,11 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -51,6 +57,7 @@ import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -59,7 +66,7 @@ private const val RETRY_DELAY_MS = 5_000L
 
 private val SensorFadeHeight = 40.dp
 
-/** At most this many action buttons in the top bar */
+/** At most this many actions are also buttons in the top bar; all are on the Assistant tab */
 const val MAX_HA_ACTIONS = 3
 
 enum class HaStatus { Connecting, Connected, Offline, TokenRejected }
@@ -74,6 +81,26 @@ class HaConnection {
     val daily = mutableStateMapOf<String, List<HaForecast>>()
     var session by mutableStateOf<HaSession?>(null)
         internal set
+
+    // The scene or script running: one at a time, from the top bar or the Assistant tab
+    var runningAction by mutableStateOf<String?>(null)
+        private set
+
+    /** Runs a scene or script, unless one is running or Home Assistant isn't connected; a failure shows as a toast */
+    fun runAction(id: String, scope: CoroutineScope, context: Context) {
+        val session = session ?: return
+        if (runningAction != null) return
+        runningAction = id
+        scope.launch {
+            try {
+                session.run(id)
+            } catch (e: HaException) {
+                Toast.makeText(context, e.message, Toast.LENGTH_LONG).show()
+            } finally {
+                runningAction = null
+            }
+        }
+    }
     var status by mutableStateOf(HaStatus.Connecting)
         internal set
 
@@ -137,9 +164,10 @@ fun rememberHaConnection(server: HaServer, entityIds: List<String>): HaConnectio
 }
 
 /**
- * Home Assistant tiles: the weather, then sensor readings grouped by room. The remote can land on
- * them, though they do nothing yet. [sensorsFocus] selects the sensors; up from the top tile goes
- * to [upFocus]. A rejected login shows a button to [onLogIn] instead.
+ * Home Assistant tiles: the weather, then sensor readings in the Assistant tab's cards, one after
+ * the other. OK on a tile [onOpen]s that tab, which has room for them all. [sensorsFocus] selects
+ * the sensors; up from the top tile goes to [upFocus]. A rejected login shows a button to
+ * [onLogIn] instead.
  */
 @Composable
 fun HomeAssistantPanel(
@@ -148,6 +176,7 @@ fun HomeAssistantPanel(
     sensorsFocus: FocusRequester,
     upFocus: FocusRequester,
     onLogIn: () -> Unit,
+    onOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (connection.status == HaStatus.TokenRejected) {
@@ -161,18 +190,15 @@ fun HomeAssistantPanel(
         return
     }
     val entities = connection.entities
-    // Sensors without a room first, as they have no title: under a room they'd look part of it.
-    // Then rooms in the order of their first sensor. Rooms are known once connected.
-    val rooms = entityIds.filterNot { isHaAction(it) || isHaWeather(it) }
-        .groupBy { entities[it]?.area }
-        .entries.sortedBy { it.key != null }
+    // The weather has its own tiles, above
+    val cards = sensorCards(entityIds.filterNot(::isHaWeather), entities)
     val weatherIds = entityIds.filter(::isHaWeather)
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         weatherIds.forEachIndexed { index, id ->
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .selectableTile(if (index == 0) upFocus else null)
+                    .selectableTile(if (index == 0) upFocus else null, onOpen)
                     .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
@@ -186,7 +212,7 @@ fun HomeAssistantPanel(
                 .fillMaxWidth()
                 .weight(1f)
                 .focusRequester(sensorsFocus)
-                .selectableTile(if (weatherIds.isEmpty()) upFocus else null)
+                .selectableTile(if (weatherIds.isEmpty()) upFocus else null, onOpen)
                 .clip(RoundedCornerShape(12.dp))
                 .background(cardColor),
         ) {
@@ -199,10 +225,11 @@ fun HomeAssistantPanel(
                 // Compact: the weather and sensors share the height of the camera
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                rooms.forEachIndexed { index, (room, ids) ->
-                    if (room != null) {
+                cards.forEachIndexed { index, card ->
+                    // A single card needs no title
+                    if (cards.size > 1) {
                         Text(
-                            room,
+                            card.title,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -210,7 +237,7 @@ fun HomeAssistantPanel(
                             modifier = Modifier.padding(top = if (index > 0) 4.dp else 0.dp),
                         )
                     }
-                    ids.forEach { id -> SensorReading(id, entities[id]) }
+                    card.ids.forEach { id -> SensorReading(id, entities[id]) }
                 }
             }
             Box(
@@ -221,25 +248,45 @@ fun HomeAssistantPanel(
                     .background(Brush.verticalGradient(listOf(cardColor.copy(alpha = 0f), cardColor))),
             )
         }
-        val message = when (connection.status) {
-            HaStatus.Connecting -> if (entities.isEmpty()) "Connecting to Home Assistant…" else null
-            HaStatus.Offline -> "Home Assistant offline · retrying"
-            HaStatus.TokenRejected, HaStatus.Connected -> null
-        }
-        message?.let {
+        haStatusMessage(connection)?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
-/** The remote can land on it and it shows; [up] overrides where up goes from here */
+/** While not connected: connecting the first time, or offline. Null once connected. */
+fun haStatusMessage(connection: HaConnection): String? = when (connection.status) {
+    HaStatus.Connecting -> if (connection.entities.isEmpty()) "Connecting to Home Assistant…" else null
+    HaStatus.Offline -> "Home Assistant offline · retrying"
+    HaStatus.TokenRejected, HaStatus.Connected -> null
+}
+
+/**
+ * The remote can land on it and it shows; [up] overrides where up goes from here. OK calls
+ * [onClick], on release like elsewhere, if given.
+ */
 @Composable
-private fun Modifier.selectableTile(up: FocusRequester?): Modifier {
+fun Modifier.selectableTile(up: FocusRequester?, onClick: (() -> Unit)? = null): Modifier {
     var focused by remember { mutableStateOf(false) }
     val border = MaterialTheme.colorScheme.border
     return this
         .onFocusChanged { focused = it.isFocused }
         .focusProperties { if (up != null) this.up = up }
+        .then(
+            if (onClick == null) {
+                Modifier
+            } else {
+                Modifier.onPreviewKeyEvent { event ->
+                    when (event.key) {
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                            if (event.type == KeyEventType.KeyUp) onClick()
+                            true
+                        }
+                        else -> false
+                    }
+                }
+            },
+        )
         .focusable()
         .then(if (focused) Modifier.border(3.dp, border, RoundedCornerShape(12.dp)) else Modifier)
 }
@@ -253,30 +300,17 @@ private fun Modifier.selectableTile(up: FocusRequester?): Modifier {
 fun HaActionButtons(connection: HaConnection, actionIds: List<String>) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var running by remember { mutableStateOf<String?>(null) }
     val colors = MaterialTheme.colorScheme
+    val ready = connection.session != null && connection.runningAction == null
     actionIds.forEach { id ->
         key(id) {
             val entity = connection.entities[id]
-            val session = connection.session
             val name = entity?.name ?: id
             val domainIcon = defaultHaIcon(id.substringBefore('.'), null, "")
             var focused by remember { mutableStateOf(false) }
             Box(Modifier.size(SettingsButtonSize)) {
                 Surface(
-                    onClick = {
-                        if (session == null || running != null) return@Surface
-                        running = id
-                        scope.launch {
-                            try {
-                                session.run(id)
-                            } catch (e: HaException) {
-                                Toast.makeText(context, e.message, Toast.LENGTH_LONG).show()
-                            } finally {
-                                running = null
-                            }
-                        }
-                    },
+                    onClick = { connection.runAction(id, scope, context) },
                     modifier = Modifier
                         .fillMaxSize()
                         .onFocusChanged { focused = it.isFocused }
@@ -284,7 +318,7 @@ fun HaActionButtons(connection: HaConnection, actionIds: List<String>) {
                     shape = ClickableSurfaceDefaults.shape(CircleShape),
                     colors = ClickableSurfaceDefaults.colors(
                         containerColor = colors.surfaceVariant,
-                        contentColor = if (session != null && running == null) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
+                        contentColor = if (ready) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
                         focusedContainerColor = colors.onSurface,
                         focusedContentColor = colors.inverseOnSurface,
                     ),
@@ -299,8 +333,9 @@ fun HaActionButtons(connection: HaConnection, actionIds: List<String>) {
     }
 }
 
+/** A sensor's icon, name and reading, on one line */
 @Composable
-private fun SensorReading(id: String, entity: HaEntity?) {
+fun SensorReading(id: String, entity: HaEntity?) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         MdiIcon(entity?.icon ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(

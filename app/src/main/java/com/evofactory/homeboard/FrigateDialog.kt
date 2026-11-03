@@ -2,7 +2,6 @@ package com.evofactory.homeboard
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -12,19 +11,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
 
@@ -53,11 +48,10 @@ fun FrigateDialog(
     val usernameField = remember { FocusRequester() }
     val passwordField = remember { FocusRequester() }
     val connectButton = remember { FocusRequester() }
-    val closeButton = remember { FocusRequester() }
+    val fields = remember { ListFocus() }
     // Without a password, the saved one is used (if it's for this username)
     val reusePassword = password.isEmpty() && initial.password.isNotEmpty() && username.trim() == initial.username
     val canConnect = normalizeFrigateUrl(url) != null && username.isNotBlank() && (password.isNotEmpty() || reusePassword)
-    val toConnect = if (canConnect) connectButton else closeButton
 
     fun connect() {
         val baseUrl = normalizeFrigateUrl(url) ?: return
@@ -99,7 +93,20 @@ fun FrigateDialog(
         onDismiss()
     }
 
-    TopDialog(title = "Frigate", onDismiss = ::close) {
+    TopDialog(
+        title = "Frigate",
+        onDismiss = ::close,
+        buttons = listOfNotNull(
+            // Greyed out until everything needed is filled in. Stays enabled while connecting
+            // (presses are ignored), so the remote keeps its place on it
+            DialogButton("Connect", enabled = canConnect, primary = true, focus = connectButton, onClick = ::connect),
+            DialogButton("Remove") {
+                onSave(FrigateServer())
+                onDismiss()
+            }.takeIf { initial != FrigateServer() },
+        ),
+        contentFocus = { fields.current(listOf("url", "username", "password")) },
+    ) {
         val fieldModifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
         TvTextField(
             value = url,
@@ -111,7 +118,7 @@ fun FrigateDialog(
                 keyboard?.hide()
                 usernameField.requestFocus()
             },
-            modifier = fieldModifier.focusRequester(urlField).jumpToActions(left = closeButton, right = toConnect),
+            modifier = fieldModifier.focusRequester(urlField).then(fields.row("url")).ringToTop(),
         )
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -128,7 +135,7 @@ fun FrigateDialog(
                     passwordField.requestFocus()
                 },
                 // Side by side: Right goes to the password, Left comes back
-                modifier = Modifier.weight(1f).focusRequester(usernameField).focusProperties { left = closeButton },
+                modifier = Modifier.weight(1f).focusRequester(usernameField).then(fields.row("username")).ringToTop(right = false),
             )
             TvTextField(
                 value = password,
@@ -141,25 +148,8 @@ fun FrigateDialog(
                     if (canConnect) connectButton.requestFocus()
                 },
                 visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.weight(1f).focusRequester(passwordField).focusProperties { right = toConnect },
+                modifier = Modifier.weight(1f).focusRequester(passwordField).then(fields.row("password")).ringToTop(left = false),
             )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Greyed out until everything needed is filled in. Stays enabled while connecting
-            // (presses are ignored), so the remote keeps its place on it
-            Button(onClick = ::connect, enabled = canConnect, modifier = Modifier.focusRequester(connectButton)) { Text("Connect") }
-            if (initial != FrigateServer()) {
-                OutlinedButton(onClick = {
-                    onSave(FrigateServer())
-                    onDismiss()
-                }) { Text("Remove") }
-            }
-            Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = ::close, modifier = Modifier.focusRequester(closeButton)) { Text("Close") }
         }
         Text(
             status ?: ("The password is stored on this TV, to log in again when the login expires: " +

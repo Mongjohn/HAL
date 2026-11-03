@@ -4,10 +4,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import androidx.annotation.OptIn
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -17,13 +13,11 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 
@@ -43,6 +37,35 @@ private val stuckSince = mutableStateListOf<Long>()
 private val watched = mutableListOf<PlayerWatch>()
 
 val anyPlayerStuck: Boolean get() = stuckSince.isNotEmpty()
+
+/**
+ * Waits until every player but [except] has released and its playback thread has ended, which frees
+ * its decoder, for TVs that refuse a new one before. Media3's own wait in release() can end first.
+ * [onWait] runs once if it has to wait. Gives up after [RELEASE_STUCK_AFTER_MS], when the top bar
+ * warns about the stuck player.
+ */
+suspend fun awaitPlayersGone(label: String, except: PlayerWatch? = null, onWait: () -> Unit = {}) {
+    val start = SystemClock.elapsedRealtime()
+    var waiting = false
+    while (true) {
+        watched.removeAll { it.ended }
+        val others = watched.count { it !== except }
+        val waited = SystemClock.elapsedRealtime() - start
+        if (others == 0) {
+            if (waiting) AppLog.i(TAG, "$label waited $waited ms for the other players to release")
+            return
+        }
+        if (waited >= RELEASE_STUCK_AFTER_MS) {
+            AppLog.w(TAG, "$label stopped waiting for $others other players to release after $waited ms")
+            return
+        }
+        if (!waiting) {
+            waiting = true
+            onWait()
+        }
+        delay(GONE_CHECK_INTERVAL_MS)
+    }
+}
 
 /**
  * Watches a player's playback thread for its whole life, and raises the top bar warning if it hangs.
@@ -73,28 +96,11 @@ class PlayerWatch(private val player: ExoPlayer, private val label: String) {
         player.release()
     }
 
-    /**
-     * Waits until every other player has released and its playback thread has ended, which frees its
-     * decoder, for TVs that refuse a new one before. Media3's own wait in release() can end first.
-     * Gives up after [RELEASE_STUCK_AFTER_MS], when the top bar warns about the stuck player.
-     */
-    suspend fun awaitOthersGone() {
-        val start = SystemClock.elapsedRealtime()
-        while (true) {
-            watched.removeAll { !it.thread.isAlive }
-            val others = watched.count { it !== this }
-            val waited = SystemClock.elapsedRealtime() - start
-            if (others == 0) {
-                if (waited > 0) AppLog.i(TAG, "$label waited $waited ms for the other players to release")
-                return
-            }
-            if (waited >= RELEASE_STUCK_AFTER_MS) {
-                AppLog.w(TAG, "$label stopped waiting for $others other players to release after $waited ms")
-                return
-            }
-            delay(GONE_CHECK_INTERVAL_MS)
-        }
-    }
+    /** The playback thread has ended: whatever it held is free */
+    val ended: Boolean get() = !thread.isAlive
+
+    /** See [awaitPlayersGone] */
+    suspend fun awaitOthersGone(onWait: () -> Unit = {}) = awaitPlayersGone(label, except = this, onWait = onWait)
 
     private fun check() {
         val now = SystemClock.elapsedRealtime()
@@ -156,7 +162,12 @@ fun StuckPlayersDialog(onDismiss: () -> Unit) {
     }
     val restart = remember { FocusRequester() }
     val close = remember { FocusRequester() }
-    TopDialog(title = "Video player stuck", onDismiss = onDismiss) {
+    TopDialog(
+        title = "Video player stuck",
+        onDismiss = onDismiss,
+        buttons = listOfNotNull(DialogButton("Restart app", focus = restart) { context.restartApp() }.takeIf { count > 0 }),
+        closeFocus = close,
+    ) {
         val paragraphs = if (count == 0) {
             listOf("The video players have recovered. There's nothing more to do.")
         } else {
@@ -175,18 +186,6 @@ fun StuckPlayersDialog(onDismiss: () -> Unit) {
         }
         paragraphs.forEach {
             Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.focusRequester(close)) { Text("Close") }
-            if (count > 0) {
-                OutlinedButton(onClick = { context.restartApp() }, modifier = Modifier.focusRequester(restart)) {
-                    Text("Restart app")
-                }
-            }
         }
         LaunchedEffect(count == 0) { runCatching { (if (count == 0) close else restart).requestFocus() } }
     }

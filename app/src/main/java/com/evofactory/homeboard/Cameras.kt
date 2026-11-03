@@ -48,7 +48,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -65,12 +64,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MimeTypes
 import androidx.tv.material3.Border
-import androidx.tv.material3.Button
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -374,8 +371,6 @@ fun CamerasDialog(
 ) {
     var advanced by remember { mutableStateOf(false) }
     val advancedOption = remember { FocusRequester() }
-    val camerasTab = remember { FocusRequester() }
-    val advancedTab = remember { FocusRequester() }
     var editing by remember { mutableStateOf<Camera?>(null) }
     var menuFor by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
@@ -384,13 +379,14 @@ fun CamerasDialog(
     val rows = remember { ListFocus() }
     val addButton = remember { FocusRequester() }
     val closeButton = remember { FocusRequester() }
+    val advancedItems = remember { ListFocus() }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     // While moving a camera the list shows this working copy
     var moveOrder by remember { mutableStateOf<List<Camera>?>(null) }
     var movingId by remember { mutableStateOf<String?>(null) }
-    // The camera last selected: left and right come back to it from the buttons
-    fun currentItem() = if (advanced) advancedOption else rows.current(cameras.map { it.id })
+    // The camera last selected: the top row comes back to it
+    fun currentItem() = if (advanced) advancedItems.current(listOf("substreams", "minimize")) else rows.currentOrNull(cameras.map { it.id })
 
     LaunchedEffect(focusOn, cameras) {
         withFrameNanos { } // let the list lay out first
@@ -431,47 +427,15 @@ fun CamerasDialog(
     TopDialog(
         title = "Cameras",
         onDismiss = onDismiss,
-        tabs = {
-            TabButton(
-                "Cameras",
-                selected = !advanced,
-                onSelect = { advanced = false },
-                modifier = Modifier.focusRequester(camerasTab).focusProperties { down = currentItem() },
-            )
-            TabButton(
-                "Advanced",
-                selected = advanced,
-                onSelect = { advanced = true },
-                modifier = Modifier.focusRequester(advancedTab).focusProperties {
-                    right = if (advanced) closeButton else addButton
-                    down = currentItem()
-                },
-            )
-        },
-        actions = {
-            if (!advanced) {
-                Button(
-                    onClick = { editing = Camera(name = "", url = "") },
-                    modifier = Modifier
-                        .focusRequester(addButton)
-                        .focusProperties {
-                            left = currentItem()
-                            right = closeButton
-                            down = currentItem()
-                        },
-                ) { Text("Add camera") }
-            }
-            OutlinedButton(
-                onClick = onDismiss,
-                modifier = Modifier
-                    .focusRequester(closeButton)
-                    .focusProperties {
-                        left = if (advanced) currentItem() else addButton
-                        right = currentItem()
-                        down = currentItem()
-                    },
-            ) { Text("Close") }
-        },
+        tabs = listOf(
+            DialogTab("Cameras", selected = !advanced) { advanced = false },
+            DialogTab("Advanced", selected = advanced) { advanced = true },
+        ),
+        buttons = listOfNotNull(
+            DialogButton("Add camera", primary = true, focus = addButton) { editing = Camera(name = "", url = "") }.takeIf { !advanced },
+        ),
+        contentFocus = ::currentItem,
+        closeFocus = closeButton,
     ) {
         if (advanced) {
             CameraAdvancedSettings(
@@ -479,9 +443,8 @@ fun CamerasDialog(
                 onPlaySubstreamsChange = onPlaySubstreamsChange,
                 minimizeStreams = minimizeStreams,
                 onMinimizeStreamsChange = onMinimizeStreamsChange,
-                modifier = Modifier.focusRequester(advancedOption).focusProperties { up = advancedTab }
-                    .jumpToActions(left = closeButton, right = closeButton),
-                lastModifier = Modifier.jumpToActions(left = closeButton, right = closeButton, down = closeButton),
+                modifier = Modifier.focusRequester(advancedOption).then(advancedItems.row("substreams")).ringToTop(),
+                lastModifier = advancedItems.row("minimize").ringToTop(),
             )
             return@TopDialog
         }
@@ -522,12 +485,7 @@ fun CamerasDialog(
                                     else -> false
                                 }
                             }
-                            .focusProperties { if (index == 0) up = camerasTab }
-                            .jumpToActions(
-                                left = closeButton,
-                                right = addButton,
-                                down = if (index == cameras.lastIndex) addButton else null,
-                            ),
+                            .ringToTop(),
                     )
                     if (menuFor == camera.id) {
                         ContextMenu(

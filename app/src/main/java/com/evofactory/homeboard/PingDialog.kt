@@ -2,9 +2,7 @@ package com.evofactory.homeboard
 
 import android.content.Context
 import android.net.ConnectivityManager
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -18,7 +16,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -28,9 +25,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,7 +77,7 @@ fun PingDialog(initialHost: String, onHostEntered: (String) -> Unit, onDismiss: 
         val target = host.trim()
         if (!isValidIpv4(target)) return
         keyboard?.hide()
-        // Ping is disabled while it runs: wait on Close, then come back to Ping to run it again
+        // Ping is disabled while it runs: wait on the X, then come back to Ping to run it again
         closeButton.requestFocus()
         onHostEntered(target)
         job?.cancel()
@@ -105,32 +100,25 @@ fun PingDialog(initialHost: String, onHostEntered: (String) -> Unit, onDismiss: 
         }
     }
 
-    TopDialog(title = "Ping utility", onDismiss = onDismiss, info = address) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TvTextField(
-                value = host,
-                onValueChange = { host = it },
-                placeholder = "IP address, e.g. 192.168.1.1",
-                keyboardType = KeyboardType.Uri,
-                imeAction = ImeAction.Go,
-                onImeAction = ::start,
-                modifier = Modifier.weight(1f).focusRequester(hostField).jumpToActions(left = closeButton, right = if (valid && !running) pingButton else closeButton),
-            )
-            // Greyed out (and skipped by the remote) until the address is a valid IPv4
-            // address, and while a ping runs
-            Button(
-                onClick = ::start,
-                enabled = valid && !running,
-                modifier = Modifier.focusRequester(pingButton),
-            ) {
-                Text("Ping")
-            }
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.focusRequester(closeButton)) { Text("Close") }
-        }
+    TopDialog(
+        title = "Ping utility",
+        onDismiss = onDismiss,
+        info = address,
+        // Greyed out (and skipped by the remote) until the address is a valid IPv4 address, and
+        // while a ping runs
+        buttons = listOf(DialogButton("Ping", enabled = valid && !running, primary = true, focus = pingButton, onClick = ::start)),
+        contentFocus = { hostField },
+        closeFocus = closeButton,
+    ) {
+        TvTextField(
+            value = host,
+            onValueChange = { host = it },
+            placeholder = "IP address, e.g. 192.168.1.1",
+            keyboardType = KeyboardType.Uri,
+            imeAction = ImeAction.Go,
+            onImeAction = ::start,
+            modifier = Modifier.fillMaxWidth().padding(12.dp).focusRequester(hostField).ringToTop(),
+        )
         status?.let {
             Text(it, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(horizontal = 12.dp))
         }
