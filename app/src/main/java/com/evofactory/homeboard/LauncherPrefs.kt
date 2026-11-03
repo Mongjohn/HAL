@@ -83,12 +83,12 @@ class LauncherPrefs(context: Context) {
 
     /**
      * Everything from Home Assistant on the Assistant tab, in its order there: weather, sensors,
-     * scenes and scripts. The sensors and weather also show next to the camera.
+     * scenes, scripts and buttons. The sensors and weather also show next to the camera.
      */
     val haEntities: List<String>
         get() = if (prefs.contains("ha_top_bar")) readList("ha_entities") else readList("ha_entities").filterNot(::isHaAction) + oldHaActions()
 
-    /** The scenes and scripts also in the top bar, at most [MAX_HA_ACTIONS] */
+    /** The scenes, scripts and buttons also in the top bar, at most [MAX_HA_ACTIONS] */
     val haTopBar: List<String>
         get() = if (prefs.contains("ha_top_bar")) readList("ha_top_bar") else oldHaActions().take(MAX_HA_ACTIONS)
 

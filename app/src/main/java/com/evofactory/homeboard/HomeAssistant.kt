@@ -205,7 +205,7 @@ class HaEntity(
     /** Material Design Icons name, as on the Home Assistant dashboard: the one set for it, or its type's */
     val icon: String get() = attributes.string("icon") ?: defaultHaIcon(domain, deviceClass, state)
 
-    /** Scenes and scripts: shown as buttons that run them */
+    /** Scenes, scripts and buttons: shown as buttons that run them */
     val isAction get() = domain in ActionDomains
 
     /** What can be shown above the app row: actions, weather, sensors and binary sensors (doors, motion…) */
@@ -262,7 +262,9 @@ class HaForecast(json: JSONObject) {
     val rain: Double? = json.optDouble("precipitation").takeUnless { it.isNaN() }
 }
 
-private val ActionDomains = setOf("scene", "script")
+// Scenes and scripts are turned on, buttons pressed
+private val ActionDomains = setOf("scene", "script", "button", "input_button")
+private val PressedDomains = setOf("button", "input_button")
 
 private class HaRegistryEntry(val name: String?, val area: String?)
 
@@ -275,6 +277,9 @@ private fun JSONArray?.objects(): List<JSONObject> =
 fun isHaAction(entityId: String) = entityId.substringBefore('.') in ActionDomains
 
 fun isHaWeather(entityId: String) = entityId.substringBefore('.') == "weather"
+
+/** The type an entity is listed under when it has no room: its domain, with helper buttons among the buttons */
+fun haEntityType(entityId: String) = entityId.substringBefore('.').let { if (it == "input_button") "button" else it }
 
 // The pings notice a server that vanished without closing the connection (e.g. Home Assistant
 // restarting, Wi-Fi gone)
@@ -478,11 +483,12 @@ class HaSession internal constructor(private val socket: WebSocket) {
         false
     }
 
-    /** Runs a scene or script */
+    /** Runs a scene or script, or presses a button */
     suspend fun run(entityId: String) {
+        val domain = entityId.substringBefore('.')
         command("call_service") {
-            put("domain", entityId.substringBefore('.'))
-            put("service", "turn_on")
+            put("domain", domain)
+            put("service", if (domain in PressedDomains) "press" else "turn_on")
             put("target", JSONObject().put("entity_id", entityId))
         }
     }

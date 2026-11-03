@@ -86,14 +86,14 @@ fun sensorCards(ids: List<String>, entities: Map<String, HaEntity>): List<Sensor
         .groupBy { id ->
             when {
                 isHaWeather(id) -> "weather:$id"
-                else -> entities[id]?.area?.let { "room:$it" } ?: "type:${id.substringBefore('.')}"
+                else -> entities[id]?.area?.let { "room:$it" } ?: "type:${haEntityType(id)}"
             }
         }
         .map { (key, cardIds) ->
             val first = cardIds.first()
             val title = when {
                 isHaWeather(first) -> entities[first]?.name ?: "Weather"
-                else -> entities[first]?.area ?: sensorTypeTitle(first.substringBefore('.'), anyRoom)
+                else -> entities[first]?.area ?: sensorTypeTitle(haEntityType(first), anyRoom)
             }
             SensorCard(key, title, cardIds)
         }
@@ -106,6 +106,7 @@ fun sensorTypeTitle(domain: String, anyRoom: Boolean): String {
         "binary_sensor" -> "binary sensors"
         "scene" -> "scenes"
         "script" -> "scripts"
+        "button" -> "buttons"
         else -> domain
     }
     return if (anyRoom) "Other $type" else type.replaceFirstChar { it.uppercase() }
@@ -152,7 +153,7 @@ private class CardWindow(val scroll: ScrollState, val height: Int, val fadeTop: 
 private val MinCardWidth = 280.dp
 
 /**
- * The Assistant tab: everything chosen ([entityIds]: weather, sensors, scenes and scripts), in
+ * The Assistant tab: everything chosen ([entityIds]: weather, sensors, scenes, scripts and buttons), in
  * [sensorCards], with the actions as buttons among the sensors. The cards are spread over as many
  * columns as fit, each going to the shortest column. The remote can land on the cards, to scroll
  * when they don't all fit; where they're cut off, they show a little into the margins, fading
@@ -488,7 +489,7 @@ private fun CardContent(
     }
 }
 
-/** A scene or script, as a button the width of its card; greyed out until connected, and while one runs */
+/** A scene, script or button, as a button the width of its card; greyed out until connected, and while one runs */
 @Composable
 private fun ActionButton(connection: HaConnection, id: String, raised: Boolean, modifier: Modifier) {
     val context = LocalContext.current

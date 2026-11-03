@@ -61,6 +61,7 @@ fun MdiIcon(name: String, modifier: Modifier = Modifier, size: Dp = 20.dp, color
 fun defaultHaIcon(domain: String, deviceClass: String?, state: String): String = when (domain) {
     "scene" -> "mdi:palette"
     "script" -> "mdi:script-text"
+    "button", "input_button" -> "mdi:button-pointer"
     "weather" -> weatherIcon(state)
     "sensor" -> when (deviceClass) {
         "battery" -> batteryIcon(state)

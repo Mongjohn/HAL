@@ -50,7 +50,7 @@ private enum class HaTab(val label: String) { Sensors("Sensors"), Actions("Actio
 /**
  * Home Assistant settings, in two steps: the address and how to log in (username and password, or
  * a long-lived token), then, once connected, three tabs: the sensors and weather to show, the
- * scenes and scripts, and the order of everything on the Assistant tab (see [sensorCards]). All of
+ * scenes, scripts and buttons, and the order of everything on the Assistant tab (see [sensorCards]). All of
  * it shows there; the actions also chosen for the top bar, at most [MAX_HA_ACTIONS], are its
  * buttons too, in the same order. Once set up, it opens on the second step, connecting with the
  * saved login; if that fails, it goes back to logging in. The password isn't kept: logging in gives
@@ -478,14 +478,14 @@ private fun pickerSections(entities: List<HaEntity>, query: String, first: List<
     return buildList {
         add("Weather" to listed.filter { it.domain == "weather" })
         byRoom.keys.filterNotNull().sortedBy { it.lowercase() }.forEach { add(it to byRoom.getValue(it)) }
-        noRoom.map { it.domain }.distinct().sortedBy { TypeOrder.indexOf(it).takeIf { i -> i >= 0 } ?: TypeOrder.size }.forEach { domain ->
-            add(sensorTypeTitle(domain, anyRoom) to noRoom.filter { it.domain == domain })
+        noRoom.map { haEntityType(it.id) }.distinct().sortedBy { TypeOrder.indexOf(it).takeIf { i -> i >= 0 } ?: TypeOrder.size }.forEach { type ->
+            add(sensorTypeTitle(type, anyRoom) to noRoom.filter { haEntityType(it.id) == type })
         }
     }.filter { (_, items) -> items.isNotEmpty() }
 }
 
 // Types without a room, in this order; any other after them
-private val TypeOrder = listOf("sensor", "binary_sensor", "scene", "script")
+private val TypeOrder = listOf("sensor", "binary_sensor", "scene", "script", "button")
 
 /** The Sensors or Actions tab: a search, then [sections] of entities, each with its [mark] at the end. What OK does is the dialog's hint. */
 @Composable

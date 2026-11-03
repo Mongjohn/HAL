@@ -82,11 +82,11 @@ class HaConnection {
     var session by mutableStateOf<HaSession?>(null)
         internal set
 
-    // The scene or script running: one at a time, from the top bar or the Assistant tab
+    // The scene, script or button running: one at a time, from the top bar or the Assistant tab
     var runningAction by mutableStateOf<String?>(null)
         private set
 
-    /** Runs a scene or script, unless one is running or Home Assistant isn't connected; a failure shows as a toast */
+    /** Runs a scene or script or presses a button, unless one is running or Home Assistant isn't connected; a failure shows as a toast */
     fun runAction(id: String, scope: CoroutineScope, context: Context) {
         val session = session ?: return
         if (runningAction != null) return
@@ -292,7 +292,7 @@ fun Modifier.selectableTile(up: FocusRequester?, onClick: (() -> Unit)? = null):
 }
 
 /**
- * Action buttons (scenes and scripts) for the top bar: round, as large as the cog, showing only
+ * Action buttons (scenes, scripts and buttons) for the top bar: round, as large as the cog, showing only
  * the icon. The name shows underneath while the remote is on one, in the margin below the bar.
  * Greyed out until connected, and while one runs; a failure shows as a toast.
  */
