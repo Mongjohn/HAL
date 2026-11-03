@@ -6,6 +6,8 @@ import android.view.KeyEvent.KEYCODE_9
 import android.view.KeyEvent.KEYCODE_NUMPAD_0
 import android.view.KeyEvent.KEYCODE_NUMPAD_1
 import android.view.KeyEvent.KEYCODE_NUMPAD_9
+import android.view.KeyEvent.KEYCODE_NUMPAD_DOT
+import android.view.KeyEvent.KEYCODE_PERIOD
 import android.view.KeyEvent.KEYCODE_PROG_BLUE
 import android.view.KeyEvent.KEYCODE_PROG_GREEN
 import android.view.KeyEvent.KEYCODE_PROG_RED
@@ -28,3 +30,6 @@ fun cameraButtonIndex(event: KeyEvent): Int? = when (val code = event.nativeKeyE
     KEYCODE_0, KEYCODE_NUMPAD_0 -> 9
     else -> null
 }
+
+/** The dot button, next to 0 on the remote's number pad: opens the settings menu */
+fun isSettingsButton(event: KeyEvent): Boolean = event.nativeKeyEvent.keyCode.let { it == KEYCODE_NUMPAD_DOT || it == KEYCODE_PERIOD }

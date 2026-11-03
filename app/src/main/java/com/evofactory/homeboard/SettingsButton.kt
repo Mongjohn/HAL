@@ -8,6 +8,7 @@ import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,7 +30,7 @@ import androidx.tv.material3.Text
 /** The cog's size: the top row leaves room for it */
 val SettingsButtonSize = 40.dp
 
-/** Cog at the right of the top bar; opens the launcher's settings menu */
+/** Cog at the right of the top bar; opens the launcher's settings menu, also each time [openMenu] goes up */
 @Composable
 fun SettingsButton(
     showHidden: Boolean,
@@ -41,9 +42,11 @@ fun SettingsButton(
     onOpenPing: () -> Unit,
     onOpenLauncherSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    openMenu: Int = 0,
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(openMenu) { if (openMenu > 0) menuOpen = true }
     var focused by remember { mutableStateOf(false) }
 
     Box(modifier = modifier) {
