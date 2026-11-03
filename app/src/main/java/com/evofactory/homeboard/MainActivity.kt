@@ -32,6 +32,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.tv.material3.MaterialTheme
@@ -188,7 +192,48 @@ class MainActivity : ComponentActivity() {
                         slot < FIRST_SLOT_UNDER_PANEL && tab == HomeTab.Home && camera != null -> mainCameraFocus
                         else -> FocusRequester.Default
                     }
-                    Column(modifier = Modifier.fillMaxSize()) {
+                    // A number button from the Alerts or Assistant tab: the selection goes to the camera
+                    var mainCameraDue by remember { mutableStateOf(false) }
+                    LaunchedEffect(mainCameraDue, tab) {
+                        if (!mainCameraDue || tab != HomeTab.Home) return@LaunchedEffect
+                        withFrameNanos { } // let the Home tab lay out, so the camera is focusable
+                        runCatching { mainCameraFocus.requestFocus() }
+                        mainCameraDue = false
+                    }
+                    // A number button on the Cameras tab: the selection goes to that camera
+                    var gridCameraDue by remember { mutableStateOf<String?>(null) }
+                    // The colour buttons open the tabs, with the selection on the tab. A number button picks
+                    // a camera: selected on the Cameras tab, as the Home tab's camera everywhere else.
+                    fun onRemoteButton(event: KeyEvent): Boolean {
+                        colorButtonTab(event)?.let { pressed ->
+                            if (event.type == KeyEventType.KeyDown) {
+                                tab = pressed
+                                val tabFocus = when (pressed) {
+                                    HomeTab.Home -> homeTabFocus
+                                    HomeTab.Cameras -> secondTabFocus
+                                    HomeTab.Alerts -> alertsTabFocus
+                                    HomeTab.Assistant -> assistantTabFocus
+                                }
+                                runCatching { tabFocus.requestFocus() }
+                            }
+                            return true
+                        }
+                        val index = cameraButtonIndex(event) ?: return false
+                        val picked = cameras.getOrNull(index)
+                        if (event.type == KeyEventType.KeyDown && picked != null) {
+                            if (tab == HomeTab.Cameras) {
+                                gridCameraDue = picked.id
+                            } else {
+                                selectCamera(picked)
+                                if (tab != HomeTab.Home) {
+                                    tab = HomeTab.Home
+                                    mainCameraDue = true
+                                }
+                            }
+                        }
+                        return true
+                    }
+                    Column(modifier = Modifier.fillMaxSize().onPreviewKeyEvent(::onRemoteButton)) {
                         HomeTopBar(
                             tab = tab,
                             onTabChange = { tab = it },
@@ -243,6 +288,8 @@ class MainActivity : ComponentActivity() {
                                 spareDecoder = fullScreenCamera != null,
                                 onSelect = { fullScreenCamera = it },
                                 onSetUp = { camerasOpen = true },
+                                selectCamera = gridCameraDue,
+                                onCameraSelected = { gridCameraDue = null },
                                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
                             )
                         } else if (tab == HomeTab.Alerts) {
@@ -390,7 +437,14 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.height(EdgePadding - TileGrowRoom))
                     }
                     frigateFeed?.let { FrigateClipPlayer(it, minimizeVideoStreams) }
-                    fullScreenCamera?.let { FullScreenCamera(it, minimizeVideoStreams, onClose = { fullScreenCamera = null }) }
+                    fullScreenCamera?.let {
+                        FullScreenCamera(
+                            it,
+                            minimizeVideoStreams,
+                            onCameraButton = { index -> cameras.getOrNull(index)?.let { picked -> fullScreenCamera = picked } },
+                            onClose = { fullScreenCamera = null },
+                        )
+                    }
                     if (camerasOpen) {
                         CamerasDialog(
                             cameras = cameras,

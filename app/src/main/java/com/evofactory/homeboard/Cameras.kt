@@ -107,7 +107,7 @@ private const val NAME_SHOWN_MS = 2_000L
 /**
  * The camera shown on the home screen. Once selected, left and right switch to the previous or
  * next camera, and the new camera's name shows briefly over the picture. OK shows it full screen,
- * with the same player and stream.
+ * with the same player and stream, where the number buttons pick a camera.
  */
 @Composable
 fun MainCamera(
@@ -163,6 +163,7 @@ fun MainCamera(
             minimizeStreams = minimizeStreams,
             fullScreen = fullScreen,
             onCloseFullScreen = { fullScreen = false },
+            onCameraButton = { index -> cameras.getOrNull(index)?.let(onSelect) },
         )
         AnimatedVisibility(
             visible = nameShown,
@@ -193,17 +194,19 @@ fun MainCamera(
 private val OkKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
 
 /**
- * A camera's main stream full screen, opened from the Cameras tab; OK or Back closes it. On older
- * TVs the tab's substreams stop for it, and it waits for them to let go of their decoders.
+ * A camera's main stream full screen, opened from the Cameras tab; OK or Back closes it, a number
+ * button switches to that camera. On older TVs the tab's substreams stop for it, and it waits for
+ * them to let go of their decoders.
  */
 @Composable
-fun FullScreenCamera(camera: Camera, minimizeStreams: Boolean, onClose: () -> Unit) {
+fun FullScreenCamera(camera: Camera, minimizeStreams: Boolean, onCameraButton: (Int) -> Unit, onClose: () -> Unit) {
     CameraView(
         url = camera.url,
         useTcp = camera.useTcp,
         minimizeStreams = minimizeStreams,
         fullScreen = true,
         onCloseFullScreen = onClose,
+        onCameraButton = onCameraButton,
         waitForOtherPlayers = minimizeStreams,
     )
 }
@@ -233,13 +236,23 @@ fun CameraGrid(
     onSelect: (Camera) -> Unit,
     onSetUp: () -> Unit,
     modifier: Modifier = Modifier,
+    // Moves the selection to the camera with this id, then calls [onCameraSelected]
+    selectCamera: String? = null,
+    onCameraSelected: () -> Unit = {},
 ) {
     if (cameras.isEmpty()) {
         SettingsPrompt(null, "Set up cameras", onSetUp, modifier)
         return
     }
     val liveSlots = remember { LiveSlots(maxLiveVideos()) }
-    TwoRowGrid(cameras, key = { it.id }, onSelect = onSelect, modifier = modifier) { camera ->
+    TwoRowGrid(
+        cameras,
+        key = { it.id },
+        onSelect = onSelect,
+        modifier = modifier,
+        selectKey = selectCamera,
+        onSelected = onCameraSelected,
+    ) { camera ->
         val live = playSubstreams && camera.substreamUrl.isNotEmpty()
         var playing by remember(camera.id) { mutableStateOf(false) }
         if (live) {

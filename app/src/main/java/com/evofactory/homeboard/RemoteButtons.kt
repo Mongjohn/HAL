@@ -1,0 +1,30 @@
+package com.evofactory.homeboard
+
+import android.view.KeyEvent.KEYCODE_0
+import android.view.KeyEvent.KEYCODE_1
+import android.view.KeyEvent.KEYCODE_9
+import android.view.KeyEvent.KEYCODE_NUMPAD_0
+import android.view.KeyEvent.KEYCODE_NUMPAD_1
+import android.view.KeyEvent.KEYCODE_NUMPAD_9
+import android.view.KeyEvent.KEYCODE_PROG_BLUE
+import android.view.KeyEvent.KEYCODE_PROG_GREEN
+import android.view.KeyEvent.KEYCODE_PROG_RED
+import android.view.KeyEvent.KEYCODE_PROG_YELLOW
+import androidx.compose.ui.input.key.KeyEvent
+
+/** The tab a colour button opens: red, green, yellow and blue, in the tabs' order. Null for other keys. */
+fun colorButtonTab(event: KeyEvent): HomeTab? = when (event.nativeKeyEvent.keyCode) {
+    KEYCODE_PROG_RED -> HomeTab.Home
+    KEYCODE_PROG_GREEN -> HomeTab.Cameras
+    KEYCODE_PROG_YELLOW -> HomeTab.Alerts
+    KEYCODE_PROG_BLUE -> HomeTab.Assistant
+    else -> null
+}
+
+/** The camera a number button picks, 0-based: 1 is the first camera and 0 the tenth. Null for other keys. */
+fun cameraButtonIndex(event: KeyEvent): Int? = when (val code = event.nativeKeyEvent.keyCode) {
+    in KEYCODE_1..KEYCODE_9 -> code - KEYCODE_1
+    in KEYCODE_NUMPAD_1..KEYCODE_NUMPAD_9 -> code - KEYCODE_NUMPAD_1
+    KEYCODE_0, KEYCODE_NUMPAD_0 -> 9
+    else -> null
+}

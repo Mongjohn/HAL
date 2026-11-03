@@ -6,7 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -22,10 +20,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,19 +42,19 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** What the screen above the apps shows */
-enum class HomeTab(val label: String) {
+/** What the screen above the apps shows. [color]: the remote's colour button that opens it, softened, for the open tab's underline. */
+enum class HomeTab(val label: String, val color: Color) {
     /** The main camera and Home Assistant */
-    Home("Home"),
+    Home("Home", Color(0xFFD9605A)),
 
     /** All the cameras' last pictures */
-    Cameras("Cameras"),
+    Cameras("Cameras", Color(0xFF5FB36A)),
 
     /** The latest Frigate alerts */
-    Alerts("Alerts"),
+    Alerts("Alerts", Color(0xFFD9B84A)),
 
     /** Every chosen Home Assistant sensor and action, in a card per room */
-    Assistant("Assistant"),
+    Assistant("Assistant", Color(0xFF5A8FD9)),
 }
 
 /** The top bar: tabs on the left; free memory, action buttons, the settings cog and the time on the right. */
@@ -78,6 +81,7 @@ fun HomeTopBar(
             TabButton(
                 entry.label,
                 selected = entry == tab,
+                underline = entry.color,
                 onSelect = { onTabChange(entry) },
                 modifier = when (entry) {
                     HomeTab.Home -> Modifier.focusRequester(homeTabFocus).onFocusChanged { onHomeTabSelected(it.hasFocus) }
@@ -102,11 +106,11 @@ fun HomeTopBar(
 }
 
 /**
- * A tab: the arrows only move the selection, OK opens it. The open tab is underlined; the one the
- * remote is on gets a light background.
+ * A tab: the arrows only move the selection, OK opens it. The open tab is underlined, in [underline]
+ * if given, else the text's colour; the one the remote is on gets a light background.
  */
 @Composable
-fun TabButton(label: String, selected: Boolean, onSelect: () -> Unit, modifier: Modifier = Modifier) {
+fun TabButton(label: String, selected: Boolean, onSelect: () -> Unit, modifier: Modifier = Modifier, underline: Color = Color.Unspecified) {
     val colors = MaterialTheme.colorScheme
     Surface(
         onClick = onSelect,
@@ -121,23 +125,36 @@ fun TabButton(label: String, selected: Boolean, onSelect: () -> Unit, modifier: 
             focusedContentColor = colors.inverseOnSurface,
         ),
     ) {
+        // Else the text's color: it reverses with the tab when the remote is on it
+        val lineColor = when {
+            !selected -> Color.Transparent
+            underline.isSpecified -> underline
+            else -> LocalContentColor.current
+        }
+        // The text alone is centred, in line with the buttons on the right; the line hangs just below
+        // it, drawn outside the layout so it doesn't push the text up
         Box(Modifier.fillMaxHeight().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-            Column(Modifier.width(IntrinsicSize.Max)) {
-                Text(label, style = MaterialTheme.typography.titleMedium)
-                Box(
-                    Modifier
-                        .padding(top = 2.dp)
-                        .fillMaxWidth()
-                        .height(TabUnderline)
-                        // The text's color: it reverses with the tab when the remote is on it
-                        .background(if (selected) LocalContentColor.current else Color.Transparent, RoundedCornerShape(TabUnderline / 2)),
-                )
-            }
+            Text(
+                label,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.drawBehind {
+                    val thickness = TabUnderline.toPx()
+                    drawRoundRect(
+                        lineColor,
+                        topLeft = Offset(0f, size.height + TabUnderlineGap.toPx()),
+                        size = Size(size.width, thickness),
+                        cornerRadius = CornerRadius(thickness / 2),
+                    )
+                },
+            )
         }
     }
 }
 
 private val TabUnderline = 4.dp
+
+// Between the text and the line
+private val TabUnderlineGap = 2.dp
 
 /** Something needs attention: a red pill, OK says more. [text] is short, it shares the bar with the action buttons. */
 @Composable

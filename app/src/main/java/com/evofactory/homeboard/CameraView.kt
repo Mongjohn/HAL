@@ -228,8 +228,9 @@ fun NotLiveMark(modifier: Modifier = Modifier, size: Dp = 24.dp) {
  * Not live, it shows a [NotLiveMark], or if [compact] leaves that to its owner through [onLiveChange].
  *
  * [fullScreen] moves the picture to a window over everything, with the same player and stream; OK
- * or Back calls [onCloseFullScreen]. With [waitForOtherPlayers], it only connects once every other
- * player has released, for TVs that refuse a decoder until then.
+ * or Back calls [onCloseFullScreen], and a number button calls [onCameraButton] with the camera's
+ * 0-based index. With [waitForOtherPlayers], it only connects once every other player has released,
+ * for TVs that refuse a decoder until then.
  */
 @Composable
 fun CameraView(
@@ -241,6 +242,7 @@ fun CameraView(
     minimizeStreams: Boolean = false,
     fullScreen: Boolean = false,
     onCloseFullScreen: () -> Unit = {},
+    onCameraButton: (Int) -> Unit = {},
     waitForOtherPlayers: Boolean = false,
     onLiveChange: (Boolean) -> Unit = {},
 ) {
@@ -333,15 +335,18 @@ fun CameraView(
     }
 
     if (fullScreen) {
-        FullScreenWindow(onClose = onCloseFullScreen) { Picture(Modifier.fillMaxSize(), rounded = false) }
+        FullScreenWindow(onClose = onCloseFullScreen, onCameraButton = onCameraButton) { Picture(Modifier.fillMaxSize(), rounded = false) }
     } else {
         Picture(modifier, rounded = true)
     }
 }
 
-/** Over everything, on black. OK or Back closes it, on release, so it can't be the press that opened it. */
+/**
+ * Over everything, on black. OK or Back closes it, on release, so it can't be the press that opened it.
+ * A window of its own, so it handles the number buttons itself.
+ */
 @Composable
-private fun FullScreenWindow(onClose: () -> Unit, content: @Composable () -> Unit) {
+private fun FullScreenWindow(onClose: () -> Unit, onCameraButton: (Int) -> Unit, content: @Composable () -> Unit) {
     val focus = remember { FocusRequester() }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         LaunchedEffect(Unit) { focus.requestFocus() }
@@ -351,6 +356,10 @@ private fun FullScreenWindow(onClose: () -> Unit, content: @Composable () -> Uni
                 .background(Color.Black)
                 .focusRequester(focus)
                 .onPreviewKeyEvent { event ->
+                    cameraButtonIndex(event)?.let { index ->
+                        if (event.type == KeyEventType.KeyDown) onCameraButton(index)
+                        return@onPreviewKeyEvent true
+                    }
                     when (event.key) {
                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Escape -> {
                             if (event.type == KeyEventType.KeyUp) onClose()
