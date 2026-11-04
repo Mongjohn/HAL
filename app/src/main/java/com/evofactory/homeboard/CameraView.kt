@@ -196,6 +196,9 @@ private class ConnectionStatus(val cameraHost: String) {
 
     val live get() = phase == Phase.Live
 
+    /** Something went wrong, rather than only still connecting */
+    val failing get() = lastError != null || phase == Phase.WaitingForNetwork
+
     fun reset(phase: Phase) {
         this.phase = phase
         lostAt = null
@@ -231,6 +234,8 @@ fun NotLiveMark(modifier: Modifier = Modifier, size: Dp = 24.dp) {
  * or Back calls [onCloseFullScreen], and a number button calls [onCameraButton] with the camera's
  * 0-based index. With [waitForOtherPlayers], it only connects once every other player has released,
  * for TVs that refuse a decoder until then; with [minimizeStreams], once those already stopping have.
+ *
+ * [showProgress] off leaves out the status while it's only connecting: it shows once something fails.
  */
 @Composable
 fun CameraView(
@@ -245,6 +250,7 @@ fun CameraView(
     onCameraButton: (Int) -> Unit = {},
     waitForOtherPlayers: Boolean = false,
     onLiveChange: (Boolean) -> Unit = {},
+    showProgress: Boolean = true,
 ) {
     val context = LocalContext.current
     val status = remember(url) { ConnectionStatus(Uri.parse(url).host.orEmpty()) }
@@ -318,7 +324,7 @@ fun CameraView(
             if (compact) {
                 CompactCameraStatus(status)
             } else {
-                CameraStatus(status, snapshot?.takenAt)
+                if (showProgress || status.failing) CameraStatus(status, snapshot?.takenAt)
                 NotLiveMark(Modifier.align(Alignment.BottomEnd).padding(16.dp), size = 36.dp)
             }
         }

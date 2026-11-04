@@ -157,6 +157,21 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("minimize_video_streams", false)
         set(value) = prefs.edit { putBoolean("minimize_video_streams", value) }
 
+    /** How long the screensaver shows each camera, one of [SCREENSAVER_SECONDS] */
+    var screensaverSeconds: Int
+        get() = prefs.getInt("screensaver_seconds", SCREENSAVER_SECONDS_DEFAULT).takeIf { it in SCREENSAVER_SECONDS } ?: SCREENSAVER_SECONDS_DEFAULT
+        set(value) = prefs.edit { putInt("screensaver_seconds", value) }
+
+    /** Ids of the cameras the screensaver leaves out; new cameras show */
+    var screensaverHiddenCameras: List<String>
+        get() = readList("screensaver_hidden_cameras")
+        set(value) = writeList("screensaver_hidden_cameras", value)
+
+    /** The screensaver shows a camera's status while it connects; off, only once something fails */
+    var screensaverShowProgress: Boolean
+        get() = prefs.getBoolean("screensaver_show_progress", false)
+        set(value) = prefs.edit { putBoolean("screensaver_show_progress", value) }
+
     /** How many hours of the app's log to keep, see [AppLog] */
     var logHoursKept: Int
         get() = prefs.getInt("log_hours_kept", LOG_HOURS_DEFAULT).coerceIn(LOG_HOURS_MIN, LOG_HOURS_MAX)

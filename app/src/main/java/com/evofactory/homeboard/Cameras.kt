@@ -38,6 +38,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +49,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -59,6 +61,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -457,8 +460,15 @@ fun CamerasDialog(
     onMinimizeStreamsChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var advanced by remember { mutableStateOf(false) }
+    var tab by remember { mutableStateOf(CamerasTab.List) }
+    val advanced = tab == CamerasTab.Advanced
     val advancedOption = remember { FocusRequester() }
+    val context = LocalContext.current
+    val prefs = remember { LauncherPrefs(context) }
+    var screensaverSeconds by remember { mutableIntStateOf(prefs.screensaverSeconds) }
+    var screensaverShowProgress by remember { mutableStateOf(prefs.screensaverShowProgress) }
+    var screensaverHidden by remember { mutableStateOf(prefs.screensaverHiddenCameras) }
+    val hasScreensaverSettings = remember { context.screensaverScreen() != null }
     var editing by remember { mutableStateOf<Camera?>(null) }
     var menuFor by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
@@ -474,7 +484,11 @@ fun CamerasDialog(
     var moveOrder by remember { mutableStateOf<List<Camera>?>(null) }
     var movingId by remember { mutableStateOf<String?>(null) }
     // The camera last selected: the top row comes back to it
-    fun currentItem() = if (advanced) advancedItems.current(listOf("substreams", "minimize")) else rows.currentOrNull(cameras.map { it.id })
+    fun currentItem() = when (tab) {
+        CamerasTab.List -> rows.currentOrNull(cameras.map { it.id })
+        CamerasTab.Screensaver -> advancedItems.current(listOf("shorter", "longer") + cameras.map { "screensaver:${it.id}" } + "progress")
+        CamerasTab.Advanced -> advancedItems.current(listOf("substreams", "minimize"))
+    }
 
     LaunchedEffect(focusOn, cameras) {
         withFrameNanos { } // let the list lay out first
@@ -516,11 +530,15 @@ fun CamerasDialog(
         title = "Cameras",
         onDismiss = onDismiss,
         tabs = listOf(
-            DialogTab("Cameras", selected = !advanced) { advanced = false },
-            DialogTab("Advanced", selected = advanced) { advanced = true },
+            DialogTab("Cameras", selected = tab == CamerasTab.List) { tab = CamerasTab.List },
+            DialogTab("Screensaver", selected = tab == CamerasTab.Screensaver) { tab = CamerasTab.Screensaver },
+            DialogTab("Advanced", selected = advanced) { tab = CamerasTab.Advanced },
         ),
         buttons = listOfNotNull(
-            DialogButton("Add camera", primary = true, focus = addButton) { editing = Camera(name = "", url = "") }.takeIf { !advanced },
+            DialogButton("Add camera", primary = true, focus = addButton) { editing = Camera(name = "", url = "") }.takeIf { tab == CamerasTab.List },
+            // Without a screensaver screen to open, the TV's main settings open
+            DialogButton(if (hasScreensaverSettings) "TV screensaver settings" else "TV settings", onClick = context::openScreensaverSettings)
+                .takeIf { tab == CamerasTab.Screensaver },
         ),
         contentFocus = ::currentItem,
         closeFocus = closeButton,
@@ -533,6 +551,35 @@ fun CamerasDialog(
                 onMinimizeStreamsChange = onMinimizeStreamsChange,
                 modifier = Modifier.focusRequester(advancedOption).then(advancedItems.row("substreams")).ringToTop(),
                 lastModifier = advancedItems.row("minimize").ringToTop(),
+            )
+            return@TopDialog
+        }
+        if (tab == CamerasTab.Screensaver) {
+            val firstScreensaverCamera = cameras.firstOrNull()?.let { advancedItems.requester("screensaver:${it.id}") }
+            ScreensaverSettings(
+                seconds = screensaverSeconds,
+                onSecondsChange = {
+                    screensaverSeconds = it
+                    prefs.screensaverSeconds = it
+                },
+                showProgress = screensaverShowProgress,
+                onShowProgressChange = {
+                    screensaverShowProgress = it
+                    prefs.screensaverShowProgress = it
+                },
+                // Down from the time goes to the first camera, on the left, not straight down past them
+                firstModifier = advancedItems.row("shorter").ringToTop(right = false).focusProperties { firstScreensaverCamera?.let { down = it } },
+                lastModifier = advancedItems.row("longer").ringToTop(left = false).focusProperties { firstScreensaverCamera?.let { down = it } },
+                progressModifier = advancedItems.row("progress").ringToTop(),
+                cameras = cameras,
+                hiddenCameras = screensaverHidden,
+                onHiddenCamerasChange = {
+                    screensaverHidden = it
+                    prefs.screensaverHiddenCameras = it
+                },
+                cameraModifier = { index ->
+                    advancedItems.row("screensaver:${cameras[index].id}").ringToTop(left = index == 0, right = index == cameras.lastIndex)
+                },
             )
             return@TopDialog
         }
@@ -622,6 +669,8 @@ fun CamerasDialog(
         )
     }
 }
+
+private enum class CamerasTab { List, Screensaver, Advanced }
 
 @Composable
 private fun CameraAdvancedSettings(
