@@ -154,6 +154,7 @@ private fun CameraRotation(cameras: List<Camera>, seconds: Int, minimizeStreams:
             onLiveChange = { live = it },
             showProgress = showProgress,
             rounded = false,
+            stretch = camera.stretch,
         )
         Text(
             camera.name,

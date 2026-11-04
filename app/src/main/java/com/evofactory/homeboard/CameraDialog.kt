@@ -33,8 +33,8 @@ import androidx.tv.material3.Text
 
 /**
  * Adds or edits one camera: its name, then its main stream and optional substream, each with its
- * RTSP address and whether to use its audio track. The transport is in the Advanced tab. Test
- * connects to the streams as entered, without saving them.
+ * RTSP address, whether to stretch it to 16:9 and whether to use its audio track. The transport is
+ * in the Advanced tab. Test connects to the streams as entered, without saving them.
  */
 @OptIn(ExperimentalTvMaterial3Api::class) // FilterChip
 @Composable
@@ -50,6 +50,8 @@ fun CameraDialog(
     var useTcp by remember { mutableStateOf(camera.useTcp) }
     var useAudio by remember { mutableStateOf(camera.useAudio) }
     var useSubstreamAudio by remember { mutableStateOf(camera.useSubstreamAudio) }
+    var stretch by remember { mutableStateOf(camera.stretch) }
+    var stretchSubstream by remember { mutableStateOf(camera.stretchSubstream) }
     var advanced by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -73,6 +75,8 @@ fun CameraDialog(
                 substreamUrl = substream.trim(),
                 useAudio = useAudio,
                 useSubstreamAudio = useSubstreamAudio,
+                stretch = stretch,
+                stretchSubstream = stretchSubstream,
             ),
         )
         onDismiss()
@@ -95,7 +99,7 @@ fun CameraDialog(
             if (advanced) {
                 fields.current(listOf("tcp", "udp"))
             } else {
-                fields.current(listOf("name", "audio", "url", "substreamAudio", "substream"))
+                fields.current(listOf("name", "stretch", "audio", "url", "substreamStretch", "substreamAudio", "substream"))
             }
         },
     ) {
@@ -133,17 +137,28 @@ fun CameraDialog(
             },
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp).focusRequester(nameField).then(fields.row("name")).ringToTop()
                 // The switches are at the end of the line in between: the remote would go past them
-                .focusProperties { down = fields.requester("audio") },
+                .focusProperties { down = fields.requester("stretch") },
         )
-        StreamTitle(
-            "Main Stream",
-            useAudio,
-            { useAudio = !useAudio },
-            fields.row("audio").ringToTop().focusProperties {
-                up = nameField
-                down = urlField
-            },
-        )
+        StreamTitle("Main Stream") {
+            SwitchToggle(
+                "Stretch to 16:9",
+                stretch,
+                { stretch = !stretch },
+                fields.row("stretch").ringToTop(right = false).focusProperties {
+                    up = nameField
+                    down = urlField
+                },
+            )
+            SwitchToggle(
+                "Use audio track",
+                useAudio,
+                { useAudio = !useAudio },
+                fields.row("audio").ringToTop(left = false).focusProperties {
+                    up = nameField
+                    down = urlField
+                },
+            )
+        }
         TvTextField(
             value = url,
             onValueChange = { url = it },
@@ -156,19 +171,30 @@ fun CameraDialog(
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).focusRequester(urlField).then(fields.row("url")).ringToTop()
                 .focusProperties {
-                    up = fields.requester("audio")
-                    down = fields.requester("substreamAudio")
+                    up = fields.requester("stretch")
+                    down = fields.requester("substreamStretch")
                 },
         )
-        StreamTitle(
-            "Sub Stream (for small previews)",
-            useSubstreamAudio,
-            { useSubstreamAudio = !useSubstreamAudio },
-            fields.row("substreamAudio").ringToTop().focusProperties {
-                up = urlField
-                down = substreamField
-            },
-        )
+        StreamTitle("Sub Stream (for small previews)") {
+            SwitchToggle(
+                "Stretch to 16:9",
+                stretchSubstream,
+                { stretchSubstream = !stretchSubstream },
+                fields.row("substreamStretch").ringToTop(right = false).focusProperties {
+                    up = urlField
+                    down = substreamField
+                },
+            )
+            SwitchToggle(
+                "Use audio track",
+                useSubstreamAudio,
+                { useSubstreamAudio = !useSubstreamAudio },
+                fields.row("substreamAudio").ringToTop(left = false).focusProperties {
+                    up = urlField
+                    down = substreamField
+                },
+            )
+        }
         TvTextField(
             value = substream,
             onValueChange = { substream = it },
@@ -181,7 +207,7 @@ fun CameraDialog(
             },
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
                 .focusRequester(substreamField).then(fields.row("substream")).ringToTop()
-                .focusProperties { up = fields.requester("substreamAudio") },
+                .focusProperties { up = fields.requester("substreamStretch") },
         )
         LaunchedEffect(Unit) { nameField.requestFocus() }
     }
@@ -190,21 +216,22 @@ fun CameraDialog(
     }
 }
 
-/** A stream's title over its address, with its "Use audio track" switch at the end of the line */
+/** A stream's title over its address, with its [switches] at the end of the line */
 @Composable
-private fun StreamTitle(title: String, useAudio: Boolean, onToggleAudio: () -> Unit, toggleModifier: Modifier) {
+private fun StreamTitle(title: String, switches: @Composable () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 16.dp, end = 12.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-        AudioToggle(useAudio, onToggleAudio, toggleModifier)
+        switches()
     }
 }
 
-/** "Use audio track" and a small switch, which OK turns on or off */
+/** A [label] and a small switch, which OK turns on or off */
 @Composable
-private fun AudioToggle(on: Boolean, onToggle: () -> Unit, modifier: Modifier) {
+private fun SwitchToggle(label: String, on: Boolean, onToggle: () -> Unit, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
     Surface(
@@ -224,7 +251,7 @@ private fun AudioToggle(on: Boolean, onToggle: () -> Unit, modifier: Modifier) {
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Use audio track", style = MaterialTheme.typography.bodyMedium)
+            Text(label, style = MaterialTheme.typography.bodyMedium)
             SwitchMark(on, LocalContentColor.current, knob = if (focused) colors.onSurface else colors.surfaceVariant)
         }
     }

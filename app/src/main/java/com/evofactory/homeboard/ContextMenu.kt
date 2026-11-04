@@ -52,12 +52,12 @@ enum class MenuPlacement {
 }
 
 /**
- * Small popup menu: a title, a divider, then the actions. Choosing an action closes the menu
- * ([onDismiss]) and then runs it. Back closes it too.
+ * Small popup menu: a title, a divider, then the actions, or only the actions with no [title].
+ * Choosing an action closes the menu ([onDismiss]) and then runs it. Back closes it too.
  */
 @Composable
 fun ContextMenu(
-    title: String,
+    title: String?,
     actions: List<MenuAction>,
     onDismiss: () -> Unit,
     placement: MenuPlacement = MenuPlacement.Above,
@@ -84,14 +84,16 @@ fun ContextMenu(
             colors = SurfaceDefaults.colors(containerColor = RaisedSurface),
         ) {
             Column(modifier = Modifier.width(300.dp).padding(8.dp)) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                )
-                MenuDivider()
+                if (title != null) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                    MenuDivider()
+                }
                 actions.forEachIndexed { index, action ->
                     ListItem(
                         selected = false,

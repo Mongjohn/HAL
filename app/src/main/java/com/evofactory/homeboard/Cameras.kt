@@ -89,6 +89,9 @@ data class Camera(
     // Each stream's audio tracks; off, the player never sees them. Sound plays in full screen, from the main stream.
     val useAudio: Boolean = true,
     val useSubstreamAudio: Boolean = true,
+    // Each stream shown at 16:9 whatever its shape: substreams are often squeezed, e.g. 640×480 from a 16:9 camera
+    val stretch: Boolean = false,
+    val stretchSubstream: Boolean = true,
 ) {
     /** Address without the login, for display: e.g. 192.168.1.10 */
     val host: String get() = Uri.parse(url).host.orEmpty()
@@ -98,6 +101,7 @@ fun camerasToJson(cameras: List<Camera>): String = JSONArray(
     cameras.map {
         JSONObject().put("id", it.id).put("name", it.name).put("url", it.url).put("tcp", it.useTcp).put("sub", it.substreamUrl)
             .put("audio", it.useAudio).put("subAudio", it.useSubstreamAudio)
+            .put("stretch", it.stretch).put("subStretch", it.stretchSubstream)
     },
 ).toString()
 
@@ -113,6 +117,8 @@ fun camerasFromJson(json: String): List<Camera> {
                 it.optString("sub"),
                 it.optBoolean("audio", true),
                 it.optBoolean("subAudio", true),
+                it.optBoolean("stretch", false),
+                it.optBoolean("subStretch", true),
             )
         }
     }
@@ -180,6 +186,7 @@ fun MainCamera(
             minimizeStreams = minimizeStreams,
             useAudio = camera.useAudio,
             fullScreenSound = true,
+            stretch = camera.stretch,
             fullScreen = fullScreen,
             onCloseFullScreen = { fullScreen = false },
             onCameraButton = { index -> cameras.getOrNull(index)?.let(onSelect) },
@@ -224,6 +231,7 @@ fun FullScreenCamera(camera: Camera, minimizeStreams: Boolean, onCameraButton: (
         useTcp = camera.useTcp,
         minimizeStreams = minimizeStreams,
         useAudio = camera.useAudio,
+        stretch = camera.stretch,
         fullScreen = true,
         onCloseFullScreen = onClose,
         onCameraButton = onCameraButton,
@@ -301,12 +309,21 @@ fun CameraGrid(
                     fallbackPictureUrl = camera.url,
                     minimizeStreams = minimizeStreams,
                     useAudio = camera.useSubstreamAudio,
+                    stretch = camera.stretchSubstream,
                     onLiveChange = { playing = it },
                 )
             } else {
-                val snapshot = cameraSnapshot(camera.substreamUrl) ?: cameraSnapshot(camera.url)
+                val substreamSnapshot = cameraSnapshot(camera.substreamUrl)
+                val snapshot = substreamSnapshot ?: cameraSnapshot(camera.url)
                 if (snapshot != null) {
-                    Image(snapshot.image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    // The tile is 16:9 already
+                    val stretched = if (substreamSnapshot != null) camera.stretchSubstream else camera.stretch
+                    Image(
+                        snapshot.image,
+                        contentDescription = null,
+                        contentScale = if (stretched) ContentScale.FillBounds else ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 } else {
                     Text(
                         "No picture yet",
@@ -488,6 +505,7 @@ fun CamerasDialog(
     var screensaverHidden by remember { mutableStateOf(prefs.screensaverHiddenCameras) }
     val hasScreensaverSettings = remember { context.screensaverScreen() != null }
     var editing by remember { mutableStateOf<Camera?>(null) }
+    var testing by remember { mutableStateOf<Camera?>(null) }
     var menuFor by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     // Camera to select once the list has updated (after moving it, or adding it)
@@ -645,6 +663,7 @@ fun CamerasDialog(
                             title = camera.name,
                             actions = listOfNotNull(
                                 MenuAction("Edit") { editing = camera },
+                                MenuAction("Test") { testing = camera },
                                 MenuAction("Move") {
                                     moveOrder = cameras
                                     movingId = camera.id
@@ -672,6 +691,10 @@ fun CamerasDialog(
                 }
             }
         }
+    }
+
+    testing?.let { camera ->
+        CameraTestDialog(camera.name, camera.url, camera.substreamUrl, camera.useAudio, camera.useSubstreamAudio, onDismiss = { testing = null })
     }
 
     editing?.let { camera ->

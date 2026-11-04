@@ -20,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -161,6 +162,9 @@ private const val SNAPSHOT_SAVE_INTERVAL_MS = 300_000L
 // Same corners as the app tiles (TV Material's default card shape)
 val CameraShape = RoundedCornerShape(8.dp)
 
+/** A stretched camera picture's shape: the TV's */
+const val STRETCHED_ASPECT = 16f / 9f
+
 // Error line of the status: readable on the dark chip, clearly not the normal text
 val ErrorColor = Color(0xFFFFB4AB)
 
@@ -245,6 +249,9 @@ fun NotLiveMark(modifier: Modifier = Modifier, size: Dp = 24.dp) {
  * sees them. Otherwise its sound plays in full screen. With [fullScreenSound], the audio plays muted
  * until then: a player can't add audio to a stream that's playing, the camera refuses it.
  *
+ * [stretch] shows the picture, and its saved copy, at 16:9 whatever the stream's shape, e.g. for a
+ * 4:3 substream of a 16:9 camera.
+ *
  * [showProgress] off leaves out the status while it's only connecting: it shows once something fails.
  */
 @Composable
@@ -265,6 +272,7 @@ fun CameraView(
     showProgress: Boolean = true,
     // Off when the picture fills the screen
     rounded: Boolean = true,
+    stretch: Boolean = false,
 ) {
     val context = LocalContext.current
     val status = remember(url) { ConnectionStatus(Uri.parse(url).host.orEmpty()) }
@@ -294,7 +302,7 @@ fun CameraView(
         LifecycleStartEffect(url, useTcp, useAudio, withAudio, minimizeStreams) {
             val snapshotInterval = if (compact) COMPACT_SNAPSHOT_INTERVAL_MS else SNAPSHOT_INTERVAL_MS
             val connection = CameraConnection(
-                context, url, useTcp, useAudio, withAudio, audible, video, frame, status, snapshots, snapshotInterval, minimizeStreams,
+                context, url, useTcp, useAudio, withAudio, audible, stretch, video, frame, status, snapshots, snapshotInterval, minimizeStreams,
             )
             current.value = connection
             onStopOrDispose {
@@ -303,7 +311,10 @@ fun CameraView(
             }
         }
         // Without restarting the stream
-        SideEffect { current.value?.audible = audible }
+        SideEffect {
+            current.value?.audible = audible
+            current.value?.stretch = stretch
+        }
     } else {
         LaunchedEffect(url) {
             val label = "Player ${Integer.toHexString(url.hashCode()).takeLast(4)}"
@@ -340,8 +351,8 @@ fun CameraView(
                     Image(
                         snapshot.image,
                         contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize(),
+                        contentScale = if (stretch) ContentScale.FillBounds else ContentScale.Fit,
+                        modifier = if (stretch) Modifier.align(Alignment.Center).aspectRatio(STRETCHED_ASPECT) else Modifier.fillMaxSize(),
                     )
                 }
             }
@@ -442,6 +453,7 @@ private class CameraConnection(
     // Plays the audio track, muted unless [audible]
     private val withAudio: Boolean,
     audible: Boolean,
+    stretch: Boolean,
     private val video: SurfaceView,
     private val frame: AspectRatioFrameLayout,
     private val status: ConnectionStatus,
@@ -480,6 +492,19 @@ private class CameraConnection(
             player.applyAudio()
         }
 
+    // The picture's shape as the stream sends it, 0 until known
+    private var videoAspect = 0f
+
+    /** 16:9 whatever the stream's shape. Changes on the same stream, without starting over. */
+    var stretch = stretch
+        set(value) {
+            if (field == value) return
+            field = value
+            applyAspect()
+        }
+
+    private fun applyAspect() = frame.setAspectRatio(if (stretch) STRETCHED_ASPECT else videoAspect)
+
     private var player = createPlayer()
 
     private fun createPlayer() = ExoPlayer.Builder(context, if (decodersTakeTurns) OneAtATimeRenderers(context) else DefaultRenderersFactory(context))
@@ -514,7 +539,8 @@ private class CameraConnection(
 
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
                     if (videoSize.height > 0) {
-                        frame.setAspectRatio(videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height)
+                        videoAspect = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+                        applyAspect()
                     }
                 }
             })
@@ -574,6 +600,8 @@ private class CameraConnection(
         openPlayers += 1
         AppLog.i(TAG, "Player $logId started over ${if (useTcp) "TCP" else "UDP"}, open: $openPlayers")
         status.reset(Phase.Connecting)
+        // Known before the stream's own shape is
+        if (stretch) applyAspect()
         attempt()
         handler.post(tick)
         connectivity.registerDefaultNetworkCallback(networkCallback, handler)

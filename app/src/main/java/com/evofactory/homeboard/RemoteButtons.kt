@@ -31,5 +31,5 @@ fun cameraButtonIndex(event: KeyEvent): Int? = when (val code = event.nativeKeyE
     else -> null
 }
 
-/** The dot button, next to 0 on the remote's number pad: opens the settings menu */
+/** The dot button, next to 0 on the remote's number pad: selects the settings cog */
 fun isSettingsButton(event: KeyEvent): Boolean = event.nativeKeyEvent.keyCode.let { it == KEYCODE_NUMPAD_DOT || it == KEYCODE_PERIOD }

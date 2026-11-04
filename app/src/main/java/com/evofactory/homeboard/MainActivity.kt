@@ -205,16 +205,12 @@ class MainActivity : ComponentActivity() {
                     }
                     // A number button on the Cameras tab: the selection goes to that camera
                     var gridCameraDue by remember { mutableStateOf<String?>(null) }
-                    var settingsMenuRequests by remember { mutableIntStateOf(0) }
                     // The colour buttons open the tabs, with the selection on the tab. A number button picks
                     // a camera: selected on the Cameras tab, as the Home tab's camera everywhere else. The
-                    // dot button opens the settings menu, with the selection on the cog once it closes.
+                    // dot button selects the cog.
                     fun onRemoteButton(event: KeyEvent): Boolean {
                         if (isSettingsButton(event)) {
-                            if (event.type == KeyEventType.KeyDown) {
-                                runCatching { cogFocus.requestFocus() }
-                                settingsMenuRequests++
-                            }
+                            if (event.type == KeyEventType.KeyDown) runCatching { cogFocus.requestFocus() }
                             return true
                         }
                         colorButtonTab(event)?.let { pressed ->
@@ -287,7 +283,6 @@ class MainActivity : ComponentActivity() {
                                 onOpenPing = { pingOpen = true },
                                 onOpenLauncherSettings = { launcherSettingsOpen = true },
                                 modifier = Modifier.focusRequester(cogFocus),
-                                openMenu = settingsMenuRequests,
                             )
                         }
                         if (tab == HomeTab.Cameras) {
