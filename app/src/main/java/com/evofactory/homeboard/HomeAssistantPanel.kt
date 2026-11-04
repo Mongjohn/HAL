@@ -77,12 +77,32 @@ class HaConnection {
     // Last known states stay on screen while reconnecting
     val entities = mutableStateMapOf<String, HaEntity>()
 
-    // The dashboard the Assistant tab shows, once read; null while it isn't, or when Home Assistant
-    // builds it itself (then [dashboardMissing])
-    var dashboard by mutableStateOf<HaDashboard?>(null)
-        internal set
-    var dashboardMissing by mutableStateOf(false)
-        internal set
+    // The dashboards shown (the Assistant tab's and the Home tab's), by key, once read; a key in
+    // [missingDashboards] when Home Assistant builds that dashboard itself, with nothing to read
+    private val dashboards = mutableStateMapOf<String, HaDashboard>()
+    private val missingDashboards = mutableStateMapOf<String, Unit>()
+
+    /** The dashboard [key], once read; null for none, while it isn't read, or when it's [dashboardMissing] */
+    fun dashboard(key: String?): HaDashboard? = key?.let { dashboards[it] }
+
+    /** Whether Home Assistant builds the dashboard [key] itself: there's nothing to read */
+    fun dashboardMissing(key: String?): Boolean = key != null && key in missingDashboards
+
+    internal fun setDashboard(key: String, board: HaDashboard?) {
+        if (board == null) {
+            dashboards.remove(key)
+            missingDashboards[key] = Unit
+        } else {
+            dashboards[key] = board
+            missingDashboards.remove(key)
+        }
+    }
+
+    // Forgets dashboards no longer shown
+    internal fun keepDashboards(keys: List<String>) {
+        dashboards.keys.retainAll(keys.toSet())
+        missingDashboards.keys.retainAll(keys.toSet())
+    }
 
     // Weather forecasts by entity id
     val hourly = mutableStateMapOf<String, List<HaForecast>>()
@@ -154,21 +174,18 @@ class HaConnection {
 /**
  * Follows [entityIds] on [server]. Connected only while the launcher is on screen; reconnects on
  * its own, except when the token is rejected: then it waits for a new login or an app restart, so
- * a wrong login doesn't hammer Home Assistant. With a [dashboard] (its key, see
- * [HaDashboardInfo.key]), it also reads that dashboard and follows its entities, and reconnects at
- * once when the dashboard is saved in Home Assistant, to show the new one.
+ * a wrong login doesn't hammer Home Assistant. It also reads the [dashboards] (their keys, see
+ * [HaDashboardInfo.key]) and follows their entities, and reconnects at once when one is saved in
+ * Home Assistant, to show the new one.
  */
 @Composable
-fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboard: String?): HaConnection {
+fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboards: List<String>): HaConnection {
     val connection = remember(server) { HaConnection() }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
 
-    LaunchedEffect(server, entityIds, dashboard) {
-        if (dashboard == null) {
-            connection.dashboard = null
-            connection.dashboardMissing = false
-        }
-        if (!server.isSet || (entityIds.isEmpty() && dashboard == null)) return@LaunchedEffect
+    LaunchedEffect(server, entityIds, dashboards) {
+        connection.keepDashboards(dashboards)
+        if (!server.isSet || (entityIds.isEmpty() && dashboards.isEmpty())) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             if (connection.status == HaStatus.TokenRejected) return@repeatOnLifecycle
             while (true) {
@@ -177,14 +194,11 @@ fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboard: S
                 try {
                     haSession(server) {
                         val saved = CompletableDeferred<Unit>()
-                        val board = dashboard?.let { key ->
-                            val urlPath = dashboardUrlPath(key)
-                            followDashboardEdits(urlPath) { saved.complete(Unit) }
-                            parseDashboard(dashboardConfig(urlPath))
-                        }
-                        connection.dashboard = board
-                        connection.dashboardMissing = dashboard != null && board == null
-                        val followed = (entityIds + board?.entityIds.orEmpty()).distinct()
+                        // Followed first, so a save while reading isn't missed
+                        if (dashboards.isNotEmpty()) followDashboardEdits(dashboards.map(::dashboardUrlPath).toSet()) { saved.complete(Unit) }
+                        val boards = dashboards.map { key -> parseDashboard(dashboardConfig(dashboardUrlPath(key))) }
+                        dashboards.forEachIndexed { index, key -> connection.setDashboard(key, boards[index]) }
+                        val followed = (entityIds + boards.flatMap { it?.entityIds.orEmpty() }).distinct()
                         followEntities(followed, connection.entities)
                         for (id in followed.filter(::isHaWeather)) {
                             followForecast(id, "hourly") { connection.hourly[id] = it }

@@ -92,24 +92,24 @@ class LauncherPrefs(context: Context) {
     val haTopBar: List<String>
         get() = if (prefs.contains("ha_top_bar")) readList("ha_top_bar") else oldHaActions().take(MAX_HA_ACTIONS)
 
-    /** The Home Assistant dashboard the Assistant tab shows (see [HaDashboardInfo.key]); null: the choice above */
-    var haDashboard: String?
-        get() = prefs.getString("ha_dashboard", null)
-        set(value) = prefs.edit { if (value == null) remove("ha_dashboard") else putString("ha_dashboard", value) }
-
-    /** Whether the Assistant tab shows the bottom rows (alerts, apps, Continue Watching) like the other tabs; off by default, for its cards to take the whole height */
-    var haBottomRow: Boolean
-        get() = prefs.getBoolean("ha_bottom_row", false)
+    /** What the Assistant tab and the Home tab's panel show of Home Assistant */
+    var haDisplay: HaDisplay
+        get() = HaDisplay(
+            dashboard = prefs.getString("ha_dashboard", null),
+            bottomRow = prefs.getBoolean("ha_bottom_row", false),
+            sectionColumns = prefs.getBoolean("ha_section_columns", false),
+            homeDashboard = prefs.getString("ha_home_dashboard", null),
+            homeColumns = prefs.getBoolean("ha_home_columns", true),
+        )
         set(value) = prefs.edit {
-            putBoolean("ha_bottom_row", value)
-            // Its first version, which only hid the alerts row
+            if (value.dashboard == null) remove("ha_dashboard") else putString("ha_dashboard", value.dashboard)
+            putBoolean("ha_bottom_row", value.bottomRow)
+            putBoolean("ha_section_columns", value.sectionColumns)
+            if (value.homeDashboard == null) remove("ha_home_dashboard") else putString("ha_home_dashboard", value.homeDashboard)
+            putBoolean("ha_home_columns", value.homeColumns)
+            // The bottom row's first version, which only hid the alerts row
             remove("ha_alerts_row")
         }
-
-    /** Whether the Assistant tab shows each card (section) in a column of its own, scrolling sideways; off by default */
-    var haSectionColumns: Boolean
-        get() = prefs.getBoolean("ha_section_columns", false)
-        set(value) = prefs.edit { putBoolean("ha_section_columns", value) }
 
     // Together: before the top bar was a choice of its own, the actions were in another list
     fun saveHaChoice(entities: List<String>, topBar: List<String>) {

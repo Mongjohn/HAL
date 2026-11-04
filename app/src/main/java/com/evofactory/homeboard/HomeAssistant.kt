@@ -533,11 +533,11 @@ class HaSession internal constructor(private val socket: WebSocket) {
         null
     }
 
-    /** Calls [onSaved] when the dashboard at [urlPath] is saved in Home Assistant; false if Home Assistant won't tell */
-    suspend fun followDashboardEdits(urlPath: String?, onSaved: () -> Unit): Boolean = try {
+    /** Calls [onSaved] when one of the dashboards at [urlPaths] is saved in Home Assistant; false if Home Assistant won't tell */
+    suspend fun followDashboardEdits(urlPaths: Set<String?>, onSaved: () -> Unit): Boolean = try {
         subscribe("subscribe_events", { put("event_type", "lovelace_updated") }) { event ->
             val data = event.optJSONObject("data")
-            if (data?.string("url_path") == urlPath) onSaved()
+            if (data?.string("url_path") in urlPaths) onSaved()
         }
         true
     } catch (_: HaException) {

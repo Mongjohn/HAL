@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -40,6 +41,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.tv.material3.MaterialTheme
@@ -77,9 +79,7 @@ class MainActivity : ComponentActivity() {
     private var haEntities by mutableStateOf(emptyList<String>())
     private var haTopBar by mutableStateOf(emptyList<String>())
     // The Home Assistant dashboard the Assistant tab shows instead, if any
-    private var haDashboard by mutableStateOf<String?>(null)
-    private var haBottomRow by mutableStateOf(false)
-    private var haSectionColumns by mutableStateOf(false)
+    private var haDisplay by mutableStateOf(HaDisplay())
     private var frigate by mutableStateOf(FrigateServer())
     private var frigateOpen by mutableStateOf(false)
     private var launcherSettingsOpen by mutableStateOf(false)
@@ -113,9 +113,7 @@ class MainActivity : ComponentActivity() {
         haServer = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
         haEntities = prefs.haEntities
         haTopBar = prefs.haTopBar
-        haDashboard = prefs.haDashboard
-        haBottomRow = prefs.haBottomRow
-        haSectionColumns = prefs.haSectionColumns
+        haDisplay = prefs.haDisplay
         frigate = prefs.frigate
         hiddenWatching = prefs.hiddenWatching
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
@@ -144,7 +142,7 @@ class MainActivity : ComponentActivity() {
                     // The alerts, apps and Continue Watching at the bottom: off on the Assistant tab
                     // unless chosen in the Home Assistant dialog. Off, they slide in while the
                     // selection is on them, reached with Down from the cards.
-                    val bottomRow = tab != HomeTab.Assistant || haBottomRow
+                    val bottomRow = tab != HomeTab.Assistant || haDisplay.bottomRow
                     var bottomRevealed by remember { mutableStateOf(false) }
                     val bottomShown = bottomRow || bottomRevealed
                     val bottomFraction by animateFloatAsState(if (bottomShown) 1f else 0f, label = "bottom rows")
@@ -161,7 +159,7 @@ class MainActivity : ComponentActivity() {
                     }
                     // The top bar's, in their order on the Assistant tab, which has them all
                     val actions = remember(haEntities, haTopBar) { haEntities.filter { it in haTopBar }.take(MAX_HA_ACTIONS) }
-                    val haConnection = rememberHaConnection(haServer, haEntities, haDashboard)
+                    val haConnection = rememberHaConnection(haServer, haEntities, haDisplay.dashboards)
                     val sideContent = haServer.isSet
                     // Picked in the Cameras tab, showing full screen
                     var fullScreenCamera by remember { mutableStateOf<Camera?>(null) }
@@ -329,63 +327,110 @@ class MainActivity : ComponentActivity() {
                                 connection = haConnection,
                                 homeAssistantSet = haServer.isSet,
                                 entityIds = haEntities,
-                                dashboard = haDashboard,
+                                dashboard = haDisplay.dashboard,
                                 tabFocus = assistantTabFocus,
                                 onSetUp = { haDialogOpen = true },
-                                sectionColumns = haSectionColumns,
+                                sectionColumns = haDisplay.sectionColumns,
                                 toScreenEdge = !bottomShown,
                                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
                             )
                         } else {
-                            // The camera, as large as fits above the app row, and Home Assistant
-                            // next to it, which gets all the width the camera leaves
-                            BoxWithConstraints(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth()
-                                    .padding(start = EdgePadding, top = EdgePadding, end = EdgePadding)
-                                    .onFocusChanged { middleSelected = it.hasFocus },
-                            ) {
-                                val cameraWidth = minOf(
-                                    maxHeight * 16f / 9f,
-                                    if (sideContent) maxWidth - SidePanelWidth - EdgePadding else maxWidth,
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
-                                    Box(modifier = Modifier.width(cameraWidth).fillMaxHeight()) {
-                                        // Stopped before a clip opens, so the clip can have its decoder
-                                        if (camera != null && !(minimizeVideoStreams && frigateFeed?.playing != null)) {
-                                            // Restarted when the panel appears or goes: the playing video
-                                            // doesn't follow the camera's new size otherwise
-                                            key(sideContent) {
-                                                MainCamera(
-                                                    camera = camera,
-                                                    cameras = cameras,
-                                                    minimizeStreams = minimizeVideoStreams,
-                                                    onSelect = ::selectCamera,
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .aspectRatio(16f / 9f)
-                                                        .focusRequester(mainCameraFocus)
-                                                        .focusProperties { up = secondTabFocus },
-                                                )
-                                            }
+                            // The camera, stopped before a clip opens, so the clip can have its decoder
+                            @Composable
+                            fun CameraBox(width: Dp) {
+                                Box(modifier = Modifier.width(width).fillMaxHeight()) {
+                                    if (camera != null && !(minimizeVideoStreams && frigateFeed?.playing != null)) {
+                                        // Restarted when the panel appears or goes: the playing video
+                                        // doesn't follow the camera's new size otherwise
+                                        key(sideContent) {
+                                            MainCamera(
+                                                camera = camera,
+                                                cameras = cameras,
+                                                minimizeStreams = minimizeVideoStreams,
+                                                onSelect = ::selectCamera,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .aspectRatio(16f / 9f)
+                                                    .focusRequester(mainCameraFocus)
+                                                    .focusProperties { up = secondTabFocus },
+                                            )
                                         }
                                     }
-                                    if (sideContent) {
-                                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                                            HomeAssistantPanel(
+                                }
+                            }
+                            val homeEntities = remember(haEntities) { haEntities.filterNot(::isHaAction) }
+                            if (sideContent && haDisplay.homeDashboard != null && haDisplay.homeColumns) {
+                                // A dashboard in columns: the camera and the columns in one row that
+                                // scrolls sideways to the screen's right edge, the camera leaving on
+                                // the left as Right brings in more columns
+                                BoxWithConstraints(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth()
+                                        .padding(top = EdgePadding)
+                                        .onFocusChanged { middleSelected = it.hasFocus },
+                                ) {
+                                    // As large as when next to the panel
+                                    val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - EdgePadding * 3 - SidePanelWidth)
+                                    HaAssistantTab(
+                                        connection = haConnection,
+                                        homeAssistantSet = haServer.isSet,
+                                        entityIds = homeEntities,
+                                        dashboard = haDisplay.homeDashboard,
+                                        // The button next to the cog
+                                        tabFocus = networkFocus,
+                                        onSetUp = { haDialogOpen = true },
+                                        sectionColumns = true,
+                                        leading = LeadingItem(cameraWidth) { CameraBox(cameraWidth) },
+                                        columnsFocus = haSensorsFocus,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                            } else {
+                                // The camera, as large as fits above the app row, and Home Assistant
+                                // next to it, which gets all the width the camera leaves
+                                BoxWithConstraints(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth()
+                                        .padding(start = EdgePadding, top = EdgePadding, end = EdgePadding)
+                                        .onFocusChanged { middleSelected = it.hasFocus },
+                                ) {
+                                    val cameraWidth = minOf(
+                                        maxHeight * 16f / 9f,
+                                        if (sideContent) maxWidth - SidePanelWidth - EdgePadding else maxWidth,
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
+                                        CameraBox(cameraWidth)
+                                        if (sideContent && haDisplay.homeDashboard != null) {
+                                            // A dashboard chosen for the Home tab: its sections, card by card
+                                            HaAssistantTab(
                                                 connection = haConnection,
-                                                entityIds = remember(haEntities) { haEntities.filterNot(::isHaAction) },
-                                                sensorsFocus = haSensorsFocus,
+                                                homeAssistantSet = haServer.isSet,
+                                                entityIds = homeEntities,
+                                                dashboard = haDisplay.homeDashboard,
                                                 // The button next to the cog
-                                                upFocus = networkFocus,
-                                                onLogIn = { haDialogOpen = true },
-                                                onOpen = {
-                                                    tab = HomeTab.Assistant
-                                                    runCatching { assistantTabFocus.requestFocus() }
-                                                },
-                                                modifier = Modifier.fillMaxSize(),
+                                                tabFocus = networkFocus,
+                                                onSetUp = { haDialogOpen = true },
+                                                inset = 0.dp,
+                                                modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(haSensorsFocus),
                                             )
+                                        } else if (sideContent) {
+                                            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                                HomeAssistantPanel(
+                                                    connection = haConnection,
+                                                    entityIds = homeEntities,
+                                                    sensorsFocus = haSensorsFocus,
+                                                    // The button next to the cog
+                                                    upFocus = networkFocus,
+                                                    onLogIn = { haDialogOpen = true },
+                                                    onOpen = {
+                                                        tab = HomeTab.Assistant
+                                                        runCatching { assistantTabFocus.requestFocus() }
+                                                    },
+                                                    modifier = Modifier.fillMaxSize(),
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -510,11 +555,9 @@ class MainActivity : ComponentActivity() {
                             initialUsername = remember { prefs.haUsername },
                             initialEntities = haEntities,
                             initialTopBar = haTopBar,
-                            initialDashboard = haDashboard,
-                            initialBottomRow = haBottomRow,
-                            initialSectionColumns = haSectionColumns,
+                            initialDisplay = haDisplay,
                             loginRejected = haConnection.status == HaStatus.TokenRejected,
-                            onSave = { server, username, entities, topBar, dashboard, bottomRow, sectionColumns ->
+                            onSave = { server, username, entities, topBar, display ->
                                 // A replaced username-and-password login is ended in Home Assistant
                                 if (haServer.refreshToken != server.refreshToken) revokeHaLogin(haServer)
                                 haServer = server
@@ -523,12 +566,8 @@ class MainActivity : ComponentActivity() {
                                 prefs.haRefreshToken = server.refreshToken
                                 prefs.haUsername = username
                                 saveHaChoice(entities, topBar)
-                                haDashboard = dashboard
-                                prefs.haDashboard = dashboard
-                                haBottomRow = bottomRow
-                                prefs.haBottomRow = bottomRow
-                                haSectionColumns = sectionColumns
-                                prefs.haSectionColumns = sectionColumns
+                                haDisplay = display
+                                prefs.haDisplay = display
                             },
                             onLogOut = ::logOutOfHa,
                             onDiscardLogin = ::revokeHaLogin,

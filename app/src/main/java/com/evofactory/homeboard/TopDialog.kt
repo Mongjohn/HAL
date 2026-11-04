@@ -31,6 +31,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -118,8 +119,12 @@ private class TopDialogScopeImpl(override val close: FocusRequester) : TopDialog
  * the content, to [contentFocus], the item last selected there, as does Down from the top row, unless the content has a search field at
  * its top ([searchFocus]): Down goes to the search, and from there to the item last selected (see
  * [TopDialogScope.downToContent]). [hint] says what OK does, at the bottom, faint. [fullWidth] is for long content, e.g.
- * addresses. [atTop] starts at the very top of the screen, for a dialog that needs all its height.
+ * addresses. [atTop] starts at the very top of the screen, for a dialog that needs all its height. [width] is
+ * the dialog's when not [fullWidth]: wider for a top row with many tabs.
  */
+// A dialog's usual width
+private val DialogWidth = 640.dp
+
 @Composable
 fun TopDialog(
     title: String,
@@ -128,6 +133,7 @@ fun TopDialog(
     // A smaller line under the title, in the secondary color
     subtitle: String? = null,
     fullWidth: Boolean = false,
+    width: Dp = DialogWidth,
     atTop: Boolean = false,
     tabs: List<DialogTab> = emptyList(),
     buttons: List<DialogButton> = emptyList(),
@@ -167,7 +173,7 @@ fun TopDialog(
                 colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
             ) {
                 Column(
-                    modifier = (if (fullWidth) Modifier.fillMaxWidth() else Modifier.width(640.dp))
+                    modifier = (if (fullWidth) Modifier.fillMaxWidth() else Modifier.width(width))
                         .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = if (atTop) AtTopInnerPadding else 16.dp),
                 ) {
                     // Buttons are filled with surfaceVariant: a step up, or they'd vanish into the dialog

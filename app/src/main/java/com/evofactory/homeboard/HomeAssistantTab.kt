@@ -219,14 +219,21 @@ fun HaAssistantTab(
     sectionColumns: Boolean = false,
     // Nothing below the tab: the cards go to the screen's edge, cut by it rather than fading out
     toScreenEdge: Boolean = false,
+    // From the sides to the cards: the screen's margin on the tab, none in the Home tab's panel
+    inset: Dp = EdgePadding,
+    // Before the columns, scrolling with them, e.g. the Home tab's camera (with [sectionColumns])
+    leading: LeadingItem? = null,
+    // Selects the cards, as a group: up from the tiles on the Home tab
+    columnsFocus: FocusRequester? = null,
 ) {
-    val board = connection.dashboard.takeIf { dashboard != null }
-    val reading = dashboard != null && board == null && !connection.dashboardMissing
+    val board = connection.dashboard(dashboard)
+    val missing = connection.dashboardMissing(dashboard)
+    val reading = dashboard != null && board == null && !missing
     val prompt = when {
         !homeAssistantSet -> null to "Set up Home Assistant"
         connection.status == HaStatus.TokenRejected -> "Home Assistant rejected the login" to "Log in again"
         board == null && !reading && entityIds.isEmpty() ->
-            (if (connection.dashboardMissing) "This dashboard is built by Home Assistant itself, with nothing to read" else null) to "Choose sensors"
+            (if (missing) "This dashboard is built by Home Assistant itself, with nothing to read" else null) to "Choose sensors"
         else -> null
     }
     if (prompt != null) {
@@ -238,13 +245,17 @@ fun HaAssistantTab(
             haStatusMessage(connection) ?: "Reading the dashboard…",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier.padding(horizontal = EdgePadding),
+            modifier = modifier.padding(horizontal = inset),
         )
         return
     }
     val entities = connection.entities
     var viewIndex by remember(board) { mutableIntStateOf(0) }
-    val views = board?.views.orEmpty()
+    // With something before the columns (the Home tab's camera), every view's cards follow each
+    // other, without the views' names above them
+    val views = board?.views.orEmpty().let { all ->
+        if (leading != null && all.size > 1) listOf(DashboardView(all.first().title, all.flatMap { it.cards })) else all
+    }
     val viewTabs = remember(views.size) { List(views.size) { FocusRequester() } }
     val cards = if (board != null) views.getOrNull(viewIndex)?.cards.orEmpty() else sensorCards(entityIds, entities)
     val names = board?.names.orEmpty()
@@ -260,7 +271,7 @@ fun HaAssistantTab(
     // The card whose buttons the remote moves between, after OK on it; Back leaves it
     var entered by remember { mutableStateOf<String?>(null) }
     val message = haStatusMessage(connection)
-        ?: "This dashboard is built by Home Assistant itself: your selection shows instead".takeIf { dashboard != null && connection.dashboardMissing }
+        ?: "This dashboard is built by Home Assistant itself: your selection shows instead".takeIf { missing }
         ?: "Nothing on this dashboard can be shown here".takeIf { board != null && views.isEmpty() }
     val density = LocalDensity.current
     Column(
@@ -285,7 +296,7 @@ fun HaAssistantTab(
                         val lift = ViewRowLift.roundToPx()
                         layout(placeable.width, placeable.height - lift) { placeable.place(0, -lift) }
                     }
-                    .padding(start = EdgePadding, end = EdgePadding, bottom = 4.dp)
+                    .padding(start = inset, end = inset, bottom = 4.dp)
                     .height(ViewRowHeight),
             ) {
                 views.forEachIndexed { index, view ->
@@ -313,7 +324,7 @@ fun HaAssistantTab(
             val window = with(density) {
                 CardWindow(scroll, constraints.maxHeight + (CardPeek + peekBelow).roundToPx(), CardFadeTop.roundToPx(), bottom.clearance.roundToPx(), CardPeek.roundToPx())
             }
-            val width = maxWidth - EdgePadding * 2
+            val width = maxWidth - inset * 2
             val columnCount = ((width + PanelItemSpacing) / (MinCardWidth + PanelItemSpacing)).toInt().coerceAtLeast(1)
             // Each card to the shortest column so far, the leftmost if equal
             val columns = List(columnCount) { mutableListOf<Int>() }
@@ -344,21 +355,24 @@ fun HaAssistantTab(
                 }
             }
             if (sectionColumns) {
-                SectionColumns(cards, viewIndex, bottom, cardsUp) { card, up, columnWindow -> Card(card, up, columnWindow) }
+                SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus) { card, up, columnWindow -> Card(card, up, columnWindow) }
                 return@BoxWithConstraints
             }
             // Scrolls only as much as a selected card needs, in whole pixels: TVs otherwise keep it at
             // a fixed height on screen, which moved everything by a pixel back and forth with
             // each update of a card (Kitchen TV, 2026-11-04)
+            // Room on the sides for a card gone into, which is a little larger, when there's no inset
+            val sideRoom = if (inset > 0.dp) 0.dp else PanelItemSpacing / 2
             CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
                 Row(
                     modifier = Modifier
                         .extendVertically(CardPeek, peekBelow)
+                        .extendHorizontally(sideRoom)
                         .fillMaxSize()
                         .fadingEdges(scroll, bottom = bottom.fade)
                         .verticalScroll(scroll)
                         // Where the cards start and end once scrolled to either end: the usual margins
-                        .padding(start = EdgePadding, end = EdgePadding, top = CardPeek, bottom = bottom.end),
+                        .padding(start = inset + sideRoom, end = inset + sideRoom, top = CardPeek, bottom = bottom.end),
                     horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
                 ) {
                     columns.forEach { indices ->
@@ -377,18 +391,18 @@ fun HaAssistantTab(
                 it,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = EdgePadding),
+                modifier = Modifier.padding(horizontal = inset),
             )
         }
     }
 }
 
 /**
- * The cards one per column, as many columns as there are cards, scrolling sideways: three show
- * whole with a tenth of the fourth at the right edge, and once scrolled, a twentieth of the
- * columns before and after at each edge, until the last column, which ends at the margin. Each
- * column scrolls up and down on its own. [card] draws a card, given where up goes from it and its
- * column's window.
+ * The cards one per column, as many columns as there are cards, scrolling sideways: as many as
+ * fit show whole (three on the tab) with a tenth of the next at the right edge, and once
+ * scrolled, a little of the columns before and after at each edge (a twentieth on the tab), until
+ * the last column, which ends at the [inset]. Each column scrolls up and down on its own. [card]
+ * draws a card, given where up goes from it and its column's window.
  */
 @OptIn(ExperimentalFoundationApi::class) // LocalBringIntoViewSpec
 @Composable
@@ -396,15 +410,24 @@ private fun BoxWithConstraintsScope.SectionColumns(
     cards: List<SensorCard>,
     viewIndex: Int,
     bottom: CardsBottom,
+    inset: Dp,
     up: FocusRequester,
+    leading: LeadingItem?,
+    columnsFocus: FocusRequester?,
     card: @Composable (SensorCard, FocusRequester?, CardWindow) -> Unit,
 ) {
     val density = LocalDensity.current
     val viewHeight = constraints.maxHeight
-    // A gap as wide as the margin: then a tenth of the fourth column shows at first, and a
-    // twentieth of each neighbour once scrolled, with the same column width
-    val gap = EdgePadding
-    val columnWidth = (maxWidth - EdgePadding - gap * 3) / (ColumnsShown + FirstPeek)
+    // On the tab, a gap as wide as the margin: then a tenth of the fourth column shows at first,
+    // and a twentieth of each neighbour once scrolled, with the same column width
+    val gap = if (inset > 0.dp) inset else PanelItemSpacing
+    // What comes before the columns, with its gap
+    val lead = leading?.let { it.width + gap } ?: 0.dp
+    // Beside it, the first column with a tenth of the next at the edge
+    val shown = if (leading != null) 1 else ((maxWidth - inset + gap) / (MinCardWidth + gap)).toInt().coerceAtLeast(1)
+    val columnWidth = (maxWidth - inset - lead - gap * shown) / (shown + FirstPeek)
+    // What shows of each neighbour once scrolled: what's left, shared between the two edges
+    val sidePeek = ((maxWidth - columnWidth * shown - gap * (shown + 1)) / 2).coerceAtLeast(0.dp)
     val sideways = rememberScrollState()
     // The column on the left of those shown whole, and the one selected
     var first by remember(viewIndex) { mutableIntStateOf(0) }
@@ -412,26 +435,56 @@ private fun BoxWithConstraintsScope.SectionColumns(
     LaunchedEffect(viewIndex) { sideways.scrollTo(0) }
     LaunchedEffect(selected) {
         val index = selected ?: return@LaunchedEffect
+        if (leading != null) {
+            // Only as far as the column and a twentieth of each neighbour need; back to the start
+            // beside what comes first
+            val target = with(density) {
+                if (index <= 0) {
+                    0
+                } else {
+                    val peek = columnWidth * 0.05f
+                    val left = inset + lead + (columnWidth + gap) * index
+                    val right = left + columnWidth
+                    val end = right + if (index < cards.size - 1) gap + peek else inset
+                    sideways.value.coerceIn((end - maxWidth).roundToPx(), (left - gap - peek).roundToPx())
+                }
+            }
+            sideways.animateScrollTo(target.coerceIn(0, sideways.maxValue))
+            return@LaunchedEffect
+        }
         first = when {
             index < first -> index
-            index > first + ColumnsShown - 1 -> index - (ColumnsShown - 1)
+            index > first + shown - 1 -> index - (shown - 1)
             else -> first
         }
-        // Column [first] starts after a twentieth of the one before and a gap; the first one at the margin
+        // Column [first] starts after a little of the one before and a gap; the first one at the inset
         val target = with(density) {
-            if (first == 0) 0 else ((columnWidth + gap) * first - columnWidth * SidePeek).roundToPx()
+            if (first == 0) 0 else (inset + (columnWidth + gap) * first - gap - sidePeek).roundToPx()
         }
         sideways.animateScrollTo(target.coerceIn(0, sideways.maxValue))
     }
     // Sideways, only [selected] scrolls; up and down, each column keeps its selected card in view
+    // Room on each side of a column for its card gone into, which is a little larger: half the
+    // gap, and as much at the ends when there's no inset
+    val sideRoom = gap / 2
+    val endRoom = if (inset > 0.dp) 0.dp else sideRoom
     CompositionLocalProvider(LocalBringIntoViewSpec provides NoScroll) {
         Row(
             modifier = Modifier
+                .extendHorizontally(endRoom)
                 .fillMaxSize()
                 .horizontalScroll(sideways)
-                .padding(horizontal = EdgePadding),
+                .padding(horizontal = inset + endRoom),
             horizontalArrangement = Arrangement.spacedBy(gap),
         ) {
+            if (leading != null) {
+                Box(Modifier.width(leading.width).onFocusChanged { if (it.hasFocus) selected = -1 }) { leading.content() }
+            }
+            // The columns, as a group the remote can be sent to
+            Row(
+                modifier = Modifier.then(if (columnsFocus != null) Modifier.focusRequester(columnsFocus) else Modifier).focusGroup(),
+                horizontalArrangement = Arrangement.spacedBy(gap),
+            ) {
             cards.forEachIndexed { index, item ->
                 key(item.key) {
                     val scroll = rememberScrollState()
@@ -442,26 +495,29 @@ private fun BoxWithConstraintsScope.SectionColumns(
                         Column(
                             Modifier
                                 .width(columnWidth)
+                                .extendHorizontally(sideRoom)
                                 .extendVertically(CardPeek, bottom.peek)
                                 .fillMaxHeight()
                                 .onFocusChanged { if (it.hasFocus) selected = index }
                                 .fadingEdges(scroll, bottom = bottom.fade)
                                 .verticalScroll(scroll)
-                                .padding(top = CardPeek, bottom = bottom.end),
+                                .padding(start = sideRoom, end = sideRoom, top = CardPeek, bottom = bottom.end),
                         ) {
                             card(item, up, window)
                         }
                     }
                 }
             }
+            }
         }
     }
 }
 
-// Columns shown whole, and the share of the next one showing at first and of each neighbour once scrolled
-private const val ColumnsShown = 3
+/** What comes before the columns and scrolls with them, e.g. the Home tab's camera, [width] wide */
+class LeadingItem(val width: Dp, val content: @Composable () -> Unit)
+
+// The share of the next column showing at first
 private const val FirstPeek = 0.1f
-private const val SidePeek = 0.05f
 
 /** Never scrolls to bring something into view: for a scroll that's moved by hand */
 @OptIn(ExperimentalFoundationApi::class)
@@ -486,6 +542,15 @@ private val MinimalScroll = object : BringIntoViewSpec {
         }
         return round(distance)
     }
+}
+
+/** Measured [by] wider on each side than given, over what's next to it, without moving what's around */
+private fun Modifier.extendHorizontally(by: Dp) = layout { measurable, constraints ->
+    val extra = by.roundToPx()
+    val placeable = measurable.measure(
+        constraints.copy(minWidth = constraints.minWidth + 2 * extra, maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth + 2 * extra else constraints.maxWidth),
+    )
+    layout(placeable.width - 2 * extra, placeable.height) { placeable.place(-extra, 0) }
 }
 
 /** Measured [top] and [bottom] taller than given, over what's above and below it, without moving what's around */

@@ -25,6 +25,22 @@ class HaDashboard(val views: List<DashboardView>, val names: Map<String, String>
 
 class DashboardView(val title: String, val cards: List<SensorCard>)
 
+/**
+ * What the Assistant tab and the Home tab's panel show of Home Assistant: each a [dashboard] (its
+ * key, see [HaDashboardInfo.key]) or, if null, the sensors and actions chosen; the Assistant tab
+ * with or without the [bottomRow], each with its sections in columns or not.
+ */
+data class HaDisplay(
+    val dashboard: String? = null,
+    val bottomRow: Boolean = false,
+    val sectionColumns: Boolean = false,
+    val homeDashboard: String? = null,
+    val homeColumns: Boolean = true,
+) {
+    /** The dashboards to read, each once */
+    val dashboards get() = listOfNotNull(dashboard, homeDashboard).distinct()
+}
+
 /** The dashboard [key] as Home Assistant's lovelace/config wants it: no url path for the default one */
 fun dashboardUrlPath(key: String): String? = key.ifEmpty { null }
 
