@@ -19,7 +19,7 @@ Cameras, Home Assistant and Frigate are all optional. Without them, HomeBoard is
 
 ## Privacy
 
-There's no account, no analytics and no HomeBoard server. The app connects to the addresses you enter, and to other TVs on your network when you transfer settings. Your Home Assistant password isn't stored: the TV keeps a login you can revoke from your Home Assistant profile.
+There's no account, no analytics and no HomeBoard server. The app connects to the addresses you enter, to other TVs on your network when you transfer settings, and to wherever your other apps keep the pictures of the shows in Continue Watching. Your Home Assistant password isn't stored: the TV keeps a login you can revoke from your Home Assistant profile.
 
 ## Requirements
 
