@@ -161,6 +161,8 @@ class MainActivity : ComponentActivity() {
                     val actions = remember(haEntities, haTopBar) { haEntities.filter { it in haTopBar }.take(MAX_HA_ACTIONS) }
                     val haConnection = rememberHaConnection(haServer, haEntities, haDisplay.dashboards)
                     val sideContent = haServer.isSet
+                    // A dashboard in columns on the Home tab: the camera and the columns scroll sideways together
+                    val homeStrip = sideContent && haDisplay.homeDashboard != null && haDisplay.homeColumns
                     // Picked in the Cameras tab, showing full screen
                     var fullScreenCamera by remember { mutableStateOf<Camera?>(null) }
                     val continueItems = remember(watchNext, watchNextReadAt, hiddenWatching, visible) {
@@ -208,6 +210,8 @@ class MainActivity : ComponentActivity() {
                     }
                     // Where up goes from the bottom rows, from the item on screen in this 0-based slot
                     fun aboveRows(slot: Int) = when {
+                        // What's above moves sideways: the nearest card or the camera
+                        tab == HomeTab.Home && homeStrip -> FocusRequester.Default
                         slot >= FIRST_SLOT_UNDER_PANEL && tab == HomeTab.Home && haServer.isSet -> haSensorsFocus
                         slot < FIRST_SLOT_UNDER_PANEL && tab == HomeTab.Home && camera != null -> mainCameraFocus
                         else -> FocusRequester.Default
@@ -359,7 +363,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             val homeEntities = remember(haEntities) { haEntities.filterNot(::isHaAction) }
-                            if (sideContent && haDisplay.homeDashboard != null && haDisplay.homeColumns) {
+                            if (homeStrip) {
                                 // A dashboard in columns: the camera and the columns in one row that
                                 // scrolls sideways to the screen's right edge, the camera leaving on
                                 // the left as Right brings in more columns
@@ -381,7 +385,7 @@ class MainActivity : ComponentActivity() {
                                         tabFocus = networkFocus,
                                         onSetUp = { haDialogOpen = true },
                                         sectionColumns = true,
-                                        leading = LeadingItem(cameraWidth) { CameraBox(cameraWidth) },
+                                        leading = LeadingItem(cameraWidth, cameraWidth * 9f / 16f) { CameraBox(cameraWidth) },
                                         columnsFocus = haSensorsFocus,
                                         modifier = Modifier.fillMaxSize(),
                                     )

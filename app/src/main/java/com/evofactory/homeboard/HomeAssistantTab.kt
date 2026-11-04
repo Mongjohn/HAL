@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -336,7 +337,7 @@ fun HaAssistantTab(
             }
             // One card, selected as a whole, with its buttons once gone into
             @Composable
-            fun Card(card: SensorCard, up: FocusRequester?, window: CardWindow) {
+            fun Card(card: SensorCard, up: FocusRequester?, window: CardWindow?, maxHeight: Dp? = null) {
                 // Selection's weather cards have the weather's name as title, which its reading says already
                 val weather = card.ids.first().takeIf { card.isWeather && board == null }
                 AssistantCard(
@@ -346,6 +347,7 @@ fun HaAssistantTab(
                     entered = entered == card.key,
                     onEnter = { entered = card.key },
                     onLeave = { entered = null },
+                    maxHeight = maxHeight,
                 ) { raised, firstButton, onButtonFocused ->
                     if (weather != null) {
                         WeatherReading(entities[weather], connection.hourly[weather], connection.daily[weather])
@@ -355,7 +357,9 @@ fun HaAssistantTab(
                 }
             }
             if (sectionColumns) {
-                SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus) { card, up, columnWindow -> Card(card, up, columnWindow) }
+                SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus) { card, up, columnWindow, maxHeight ->
+                    Card(card, up, columnWindow, maxHeight)
+                }
                 return@BoxWithConstraints
             }
             // Scrolls only as much as a selected card needs, in whole pixels: TVs otherwise keep it at
@@ -414,7 +418,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
     up: FocusRequester,
     leading: LeadingItem?,
     columnsFocus: FocusRequester?,
-    card: @Composable (SensorCard, FocusRequester?, CardWindow) -> Unit,
+    card: @Composable (SensorCard, FocusRequester?, CardWindow?, Dp?) -> Unit,
 ) {
     val density = LocalDensity.current
     val viewHeight = constraints.maxHeight
@@ -486,6 +490,21 @@ private fun BoxWithConstraintsScope.SectionColumns(
                 horizontalArrangement = Arrangement.spacedBy(gap),
             ) {
             cards.forEachIndexed { index, item ->
+                // Beside the camera: no taller than it, what doesn't fit scrolling inside the card
+                if (leading != null) {
+                    key(item.key) {
+                        Box(
+                            Modifier
+                                .width(columnWidth)
+                                .extendHorizontally(sideRoom)
+                                .padding(horizontal = sideRoom)
+                                .onFocusChanged { if (it.hasFocus) selected = index },
+                        ) {
+                            card(item, up, null, leading.height)
+                        }
+                    }
+                    return@forEachIndexed
+                }
                 key(item.key) {
                     val scroll = rememberScrollState()
                     val window = with(density) {
@@ -503,7 +522,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
                                 .verticalScroll(scroll)
                                 .padding(start = sideRoom, end = sideRoom, top = CardPeek, bottom = bottom.end),
                         ) {
-                            card(item, up, window)
+                            card(item, up, window, null)
                         }
                     }
                 }
@@ -513,8 +532,11 @@ private fun BoxWithConstraintsScope.SectionColumns(
     }
 }
 
-/** What comes before the columns and scrolls with them, e.g. the Home tab's camera, [width] wide */
-class LeadingItem(val width: Dp, val content: @Composable () -> Unit)
+/**
+ * What comes before the columns and scrolls with them, e.g. the Home tab's camera, [width] wide
+ * and [height] high: the cards next to it are no higher
+ */
+class LeadingItem(val width: Dp, val height: Dp, val content: @Composable () -> Unit)
 
 // The share of the next column showing at first
 private const val FirstPeek = 0.1f
@@ -630,17 +652,19 @@ private fun Modifier.scrollsThrough(window: CardWindow, active: Boolean): Modifi
  * An arrow past its edge (from the first or last button, or sideways) leaves it for the next card
  * that way. [content] gets whether the card is raised, its first button, and what to
  * call when a button is selected, with its index. A card taller than the screen scrolls through,
- * see [scrollsThrough].
+ * see [scrollsThrough]. With a [maxHeight] instead of a [window], the card is no taller, and what
+ * doesn't fit scrolls inside it, fading out at its edges (see [scrollsInside]).
  */
-@OptIn(ExperimentalFoundationApi::class) // BringIntoViewRequester
+@OptIn(ExperimentalFoundationApi::class) // BringIntoViewRequester, LocalBringIntoViewSpec
 @Composable
 private fun AssistantCard(
     up: FocusRequester?,
-    window: CardWindow,
+    window: CardWindow?,
     buttons: Int,
     entered: Boolean,
     onEnter: () -> Unit,
     onLeave: () -> Unit,
+    maxHeight: Dp? = null,
     content: @Composable (raised: Boolean, firstButton: FocusRequester, onButtonFocused: (Int) -> Unit) -> Unit,
 ) {
     val card = remember { FocusRequester() }
@@ -663,12 +687,13 @@ private fun AssistantCard(
     }
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(12.dp)
+    val inner = rememberScrollState()
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .onSizeChanged { size = it }
             .bringIntoViewRequester(bringer)
-            .scrollsThrough(window, active = !entered)
+            .then(if (window != null) Modifier.scrollsThrough(window, active = !entered) else Modifier.scrollsInside(inner, active = !entered))
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -715,7 +740,7 @@ private fun AssistantCard(
             .focusRequester(card)
             .onFocusChanged {
                 focused = it.isFocused
-                if (it.isFocused) {
+                if (it.isFocused && window != null) {
                     val rect = Rect(0f, -window.fadeTop.toFloat(), size.width.toFloat(), size.height + window.fadeBottom.toFloat())
                     scope.launch { bringer.bringIntoView(rect) }
                 }
@@ -734,11 +759,45 @@ private fun AssistantCard(
                     else -> Modifier
                 },
             )
+            .then(if (maxHeight != null) Modifier.heightIn(max = maxHeight) else Modifier)
             .background(if (entered) RaisedSurface else colors.surfaceVariant, shape)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = if (maxHeight != null) 0.dp else 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        content(entered, firstButton) { focusedButton = it }
+        if (maxHeight == null) {
+            content(entered, firstButton) { focusedButton = it }
+        } else {
+            // Scrolls inside the card, fading out at its edges; its buttons come into view as they're selected
+            CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
+                Column(
+                    Modifier.fadingEdges(inner).verticalScroll(inner).padding(vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    content(entered, firstButton) { focusedButton = it }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * For a card whose content scrolls inside it ([scroll]): up and down scroll through what's hidden
+ * that way, half the card at a time, before going to the next card. Not while [active] is false,
+ * e.g. inside the card, where the buttons scroll into view.
+ */
+@Composable
+private fun Modifier.scrollsInside(scroll: ScrollState, active: Boolean): Modifier {
+    val scope = rememberCoroutineScope()
+    return onPreviewKeyEvent { event ->
+        val half = scroll.viewportSize / 2
+        val step = when (event.key) {
+            Key.DirectionDown -> minOf(scroll.maxValue - scroll.value, half)
+            Key.DirectionUp -> -minOf(scroll.value, half)
+            else -> 0
+        }
+        if (step == 0 || !active) return@onPreviewKeyEvent false
+        if (event.type == KeyEventType.KeyDown) scope.launch { scroll.animateScrollBy(step.toFloat()) }
+        true
     }
 }
 
