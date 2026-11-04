@@ -35,6 +35,7 @@ import org.json.JSONObject
 import kotlin.math.roundToInt
 
 private const val COMMAND_TIMEOUT_MS = 10_000L
+private const val NO_ANSWER = "No answer from Home Assistant"
 
 // Longer than OkHttp's connect timeout, so an unreachable address reports why
 private const val LOGIN_TIMEOUT_MS = 15_000L
@@ -245,7 +246,7 @@ class HaEntity(
 private fun String.words() = replace('_', ' ').replaceFirstChar { it.uppercase() }
 
 // Whose state is a value to show as it is, e.g. "21.5" or "Partly cloudy"
-private val ValueDomains = setOf("sensor", "input_number", "number", "input_text", "text", "counter")
+private val ValueDomains = setOf("sensor", "input_number", "number", "input_text", "text", "counter", "select", "input_select")
 
 private val PersonDomains = setOf("person", "device_tracker")
 
@@ -299,9 +300,15 @@ fun isHaWeather(entityId: String) = entityId.substringBefore('.') == "weather"
 
 // That OK can switch on and off on the Assistant tab. Not covers or locks: a slip of the remote
 // shouldn't open the garage or the front door.
-private val ToggleDomains = setOf("light", "switch", "input_boolean", "fan")
+private val ToggleDomains = setOf("light", "switch", "input_boolean", "fan", "automation")
+
+// Whose state is one of a list of options, chosen from a menu
+private val SelectDomains = setOf("select", "input_select")
 
 fun isHaToggle(entityId: String) = entityId.substringBefore('.') in ToggleDomains
+
+/** A select or input select: OK opens a menu of its options */
+fun isHaSelect(entityId: String) = entityId.substringBefore('.') in SelectDomains
 
 /** The type an entity is listed under when it has no room: its domain, with helper buttons among the buttons */
 fun haEntityType(entityId: String) = entityId.substringBefore('.').let { if (it == "input_button") "button" else it }
@@ -384,7 +391,7 @@ private suspend fun logIn(socket: WebSocket, incoming: ReceiveChannel<JSONObject
             message = incoming.receive()
         }
         message
-    } ?: throw HaException("No answer from Home Assistant")
+    } ?: throw HaException(NO_ANSWER)
     when (reply.optString("type")) {
         "auth_ok" -> Unit
         "auth_invalid" -> throw HaException("Home Assistant rejected the token", tokenRejected = true)
@@ -537,22 +544,57 @@ class HaSession internal constructor(private val socket: WebSocket) {
         false
     }
 
-    /** Switches a light, switch, fan or input boolean on if it's off, and off if it's on */
-    suspend fun toggle(entityId: String) {
-        command("call_service") {
-            put("domain", entityId.substringBefore('.'))
-            put("service", "toggle")
-            put("target", JSONObject().put("entity_id", entityId))
+    /**
+     * Each entity's states since [since] (milliseconds), oldest first, from the state it had then.
+     * Home Assistant's compact format: "s" the state, "lc" when it changed (only when not "lu"),
+     * "lu" when it was updated, in seconds.
+     */
+    suspend fun history(entityIds: List<String>, since: Long): Map<String, List<HaHistoryPoint>> {
+        val result = command("history/history_during_period") {
+            put("start_time", java.time.Instant.ofEpochMilli(since).toString())
+            put("entity_ids", JSONArray(entityIds))
+            put("minimal_response", true)
+            put("no_attributes", true)
+            put("significant_changes_only", false)
+        } as? JSONObject ?: return emptyMap()
+        return withContext(Dispatchers.Default) {
+            result.keys().asSequence().associateWith { id ->
+                result.optJSONArray(id).objects().mapNotNull { state ->
+                    val seconds = state.optDouble("lc").takeUnless { it.isNaN() } ?: state.optDouble("lu")
+                    if (seconds.isNaN()) null else HaHistoryPoint((seconds * 1000).toLong(), state.optString("s"))
+                }
+            }
         }
     }
+
+    /** Switches a light, switch, fan or input boolean on if it's off, and off if it's on */
+    suspend fun toggle(entityId: String) = callService(entityId, "toggle")
+
+    /** Sets a select or input select to [option], one of its options */
+    suspend fun selectOption(entityId: String, option: String) = callService(entityId, "select_option") { put("option", option) }
 
     /** Runs a scene or script, or presses a button */
     suspend fun run(entityId: String) {
         val domain = entityId.substringBefore('.')
-        command("call_service") {
-            put("domain", domain)
-            put("service", if (domain in PressedDomains) "press" else "turn_on")
-            put("target", JSONObject().put("entity_id", entityId))
+        callService(entityId, if (domain in PressedDomains) "press" else "turn_on")
+    }
+
+    /**
+     * Calls [service] on [entityId]. No answer means the connection is most likely dead without
+     * having noticed, e.g. after the TV changed network: it's dropped, so the next try reconnects
+     * rather than waiting for the pings to notice.
+     */
+    private suspend fun callService(entityId: String, service: String, data: (JSONObject.() -> Unit)? = null) {
+        try {
+            command("call_service") {
+                put("domain", entityId.substringBefore('.'))
+                put("service", service)
+                put("target", JSONObject().put("entity_id", entityId))
+                if (data != null) put("service_data", JSONObject().apply(data))
+            }
+        } catch (e: HaException) {
+            if (e.message == NO_ANSWER) socket.cancel()
+            throw e
         }
     }
 
@@ -564,7 +606,7 @@ class HaSession internal constructor(private val socket: WebSocket) {
             // A timeout is reported as an HaException: a TimeoutCancellationException would look
             // like the caller being cancelled
             return withTimeoutOrNull(COMMAND_TIMEOUT_MS) { result.await() }
-                ?: throw HaException("No answer from Home Assistant")
+                ?: throw HaException(NO_ANSWER)
         } finally {
             results.remove(id)
         }

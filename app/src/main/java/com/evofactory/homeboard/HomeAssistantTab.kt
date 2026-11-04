@@ -7,8 +7,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraintsScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -25,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -49,6 +56,7 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -72,12 +80,28 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.round
 import kotlin.math.roundToInt
 
-/** A card of sensors and actions: a room's, or those of one type that have no room. [key] tells cards apart. */
-class SensorCard(val key: String, val title: String, val ids: List<String>) {
-    /** A weather alone: shown with its forecast */
-    val isWeather get() = ids.size == 1 && isHaWeather(ids.first())
+/**
+ * A card of sensors and actions: a room's, those of one type that have no room, or a block of a
+ * dashboard. [key] tells cards apart. [subtitles] head parts of the card, by the index in [ids]
+ * of the part's first entity. [gauges] are the entities shown with a bar, and [graphs] the history
+ * graphs among [ids].
+ */
+class SensorCard(
+    val key: String,
+    val title: String,
+    val ids: List<String>,
+    val subtitles: Map<Int, String> = emptyMap(),
+    // A dashboard's entities shown as a gauge
+    val gauges: Map<String, HaGauge> = emptyMap(),
+    // A dashboard's history graphs, by their key in [ids] (see isGraphKey)
+    val graphs: Map<String, HaGraph> = emptyMap(),
+) {
+    /** A weather alone: shown as a weather card, with its forecast */
+    val isWeather get() = ids.size == 1 && isHaWeather(ids.first()) && subtitles.isEmpty()
 }
 
 /**
@@ -178,7 +202,10 @@ private val MinCardWidth = 280.dp
  * With a [dashboard] chosen (its key), the cards are that dashboard's instead, as the connection
  * read it, with a row of its views above them if it has several. A dashboard Home Assistant
  * builds itself has nothing to read: the chosen entities show instead.
+ *
+ * With [sectionColumns], each card has a column of its own instead (see [SectionColumns]).
  */
+@OptIn(ExperimentalFoundationApi::class) // LocalBringIntoViewSpec
 @Composable
 fun HaAssistantTab(
     connection: HaConnection,
@@ -188,6 +215,10 @@ fun HaAssistantTab(
     tabFocus: FocusRequester,
     onSetUp: () -> Unit,
     modifier: Modifier = Modifier,
+    // Each card (a dashboard's section, or a room) in a column of its own, scrolling sideways
+    sectionColumns: Boolean = false,
+    // Nothing below the tab: the cards go to the screen's edge, cut by it rather than fading out
+    toScreenEdge: Boolean = false,
 ) {
     val board = connection.dashboard.takeIf { dashboard != null }
     val reading = dashboard != null && board == null && !connection.dashboardMissing
@@ -219,8 +250,11 @@ fun HaAssistantTab(
     val names = board?.names.orEmpty()
     // Up from the top cards: to the views, if there are several, else to the tab
     val cardsUp = viewTabs.getOrNull(viewIndex)?.takeIf { views.size > 1 } ?: tabFocus
-    // Roughly in rows of sensors: the weather takes about 5, with its next hours
-    val heights = cards.map { if (it.isWeather) 5 else it.ids.size + 1 }
+    // Roughly in rows of sensors: a weather takes about 5, with its next hours, and a heading 1
+    val heights = cards.map { card ->
+        if (card.isWeather) 5 else card.ids.size + 1 + card.subtitles.size + card.gauges.size + 4 * card.ids.count(::isHaWeather) +
+            card.graphs.values.sumOf { 2 + it.entities.size }
+    }
     val scroll = rememberScrollState()
     LaunchedEffect(viewIndex) { scroll.scrollTo(0) }
     // The card whose buttons the remote moves between, after OK on it; Back leaves it
@@ -266,10 +300,18 @@ fun HaAssistantTab(
             }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            // Not over the status line, if any
-            val peekBelow = if (message == null) CardPeek else 0.dp
+            // Into the margin below, unless over the status line or at the screen's edge already
+            val peekBelow = if (message == null && !toScreenEdge) CardPeek else 0.dp
+            val bottom = CardsBottom(
+                peek = peekBelow,
+                // Below the last card once scrolled to the end
+                end = if (toScreenEdge) EdgePadding else peekBelow,
+                fade = !toScreenEdge,
+                // Kept clear below a selected card: the fade, or a margin from the screen's edge
+                clearance = if (toScreenEdge) EdgePadding else CardFadeBottom,
+            )
             val window = with(density) {
-                CardWindow(scroll, constraints.maxHeight + (CardPeek + peekBelow).roundToPx(), CardFadeTop.roundToPx(), CardFadeBottom.roundToPx(), CardPeek.roundToPx())
+                CardWindow(scroll, constraints.maxHeight + (CardPeek + peekBelow).roundToPx(), CardFadeTop.roundToPx(), bottom.clearance.roundToPx(), CardPeek.roundToPx())
             }
             val width = maxWidth - EdgePadding * 2
             val columnCount = ((width + PanelItemSpacing) / (MinCardWidth + PanelItemSpacing)).toInt().coerceAtLeast(1)
@@ -281,36 +323,49 @@ fun HaAssistantTab(
                 columns[column] += index
                 columnHeights[column] += height
             }
-            Row(
-                modifier = Modifier
-                    .extendVertically(CardPeek, peekBelow)
-                    .fillMaxSize()
-                    .fadingEdges(scroll)
-                    .verticalScroll(scroll)
-                    // Where the cards start and end once scrolled to either end: the usual margins
-                    .padding(start = EdgePadding, end = EdgePadding, top = CardPeek, bottom = peekBelow),
-                horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
-            ) {
-                columns.forEach { indices ->
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PanelItemSpacing)) {
-                        indices.forEachIndexed { position, index ->
-                            val card = cards[index]
-                            val weather = card.ids.first().takeIf { card.isWeather }
-                            key(card.key) {
-                                AssistantCard(
-                                    up = if (position == 0) cardsUp else null,
-                                    window = window,
-                                    buttons = card.ids.count(::isInteractive),
-                                    entered = entered == card.key,
-                                    onEnter = { entered = card.key },
-                                    onLeave = { entered = null },
-                                ) { raised, firstButton, onButtonFocused ->
-                                    if (weather != null) {
-                                        WeatherReading(entities[weather], connection.hourly[weather], connection.daily[weather])
-                                    } else {
-                                        CardContent(card, connection, names, entered == card.key, raised, firstButton, onButtonFocused)
-                                    }
-                                }
+            // One card, selected as a whole, with its buttons once gone into
+            @Composable
+            fun Card(card: SensorCard, up: FocusRequester?, window: CardWindow) {
+                // Selection's weather cards have the weather's name as title, which its reading says already
+                val weather = card.ids.first().takeIf { card.isWeather && board == null }
+                AssistantCard(
+                    up = up,
+                    window = window,
+                    buttons = card.ids.count(::isInteractive),
+                    entered = entered == card.key,
+                    onEnter = { entered = card.key },
+                    onLeave = { entered = null },
+                ) { raised, firstButton, onButtonFocused ->
+                    if (weather != null) {
+                        WeatherReading(entities[weather], connection.hourly[weather], connection.daily[weather])
+                    } else {
+                        CardContent(card, connection, names, entered == card.key, raised, firstButton, onButtonFocused)
+                    }
+                }
+            }
+            if (sectionColumns) {
+                SectionColumns(cards, viewIndex, bottom, cardsUp) { card, up, columnWindow -> Card(card, up, columnWindow) }
+                return@BoxWithConstraints
+            }
+            // Scrolls only as much as a selected card needs, in whole pixels: TVs otherwise keep it at
+            // a fixed height on screen, which moved everything by a pixel back and forth with
+            // each update of a card (Kitchen TV, 2026-11-04)
+            CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
+                Row(
+                    modifier = Modifier
+                        .extendVertically(CardPeek, peekBelow)
+                        .fillMaxSize()
+                        .fadingEdges(scroll, bottom = bottom.fade)
+                        .verticalScroll(scroll)
+                        // Where the cards start and end once scrolled to either end: the usual margins
+                        .padding(start = EdgePadding, end = EdgePadding, top = CardPeek, bottom = bottom.end),
+                    horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
+                ) {
+                    columns.forEach { indices ->
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PanelItemSpacing)) {
+                            indices.forEachIndexed { position, index ->
+                                val card = cards[index]
+                                key(card.key) { Card(card, if (position == 0) cardsUp else null, window) }
                             }
                         }
                     }
@@ -328,6 +383,111 @@ fun HaAssistantTab(
     }
 }
 
+/**
+ * The cards one per column, as many columns as there are cards, scrolling sideways: three show
+ * whole with a tenth of the fourth at the right edge, and once scrolled, a twentieth of the
+ * columns before and after at each edge, until the last column, which ends at the margin. Each
+ * column scrolls up and down on its own. [card] draws a card, given where up goes from it and its
+ * column's window.
+ */
+@OptIn(ExperimentalFoundationApi::class) // LocalBringIntoViewSpec
+@Composable
+private fun BoxWithConstraintsScope.SectionColumns(
+    cards: List<SensorCard>,
+    viewIndex: Int,
+    bottom: CardsBottom,
+    up: FocusRequester,
+    card: @Composable (SensorCard, FocusRequester?, CardWindow) -> Unit,
+) {
+    val density = LocalDensity.current
+    val viewHeight = constraints.maxHeight
+    // A gap as wide as the margin: then a tenth of the fourth column shows at first, and a
+    // twentieth of each neighbour once scrolled, with the same column width
+    val gap = EdgePadding
+    val columnWidth = (maxWidth - EdgePadding - gap * 3) / (ColumnsShown + FirstPeek)
+    val sideways = rememberScrollState()
+    // The column on the left of those shown whole, and the one selected
+    var first by remember(viewIndex) { mutableIntStateOf(0) }
+    var selected by remember(viewIndex) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(viewIndex) { sideways.scrollTo(0) }
+    LaunchedEffect(selected) {
+        val index = selected ?: return@LaunchedEffect
+        first = when {
+            index < first -> index
+            index > first + ColumnsShown - 1 -> index - (ColumnsShown - 1)
+            else -> first
+        }
+        // Column [first] starts after a twentieth of the one before and a gap; the first one at the margin
+        val target = with(density) {
+            if (first == 0) 0 else ((columnWidth + gap) * first - columnWidth * SidePeek).roundToPx()
+        }
+        sideways.animateScrollTo(target.coerceIn(0, sideways.maxValue))
+    }
+    // Sideways, only [selected] scrolls; up and down, each column keeps its selected card in view
+    CompositionLocalProvider(LocalBringIntoViewSpec provides NoScroll) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .horizontalScroll(sideways)
+                .padding(horizontal = EdgePadding),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            cards.forEachIndexed { index, item ->
+                key(item.key) {
+                    val scroll = rememberScrollState()
+                    val window = with(density) {
+                        CardWindow(scroll, viewHeight + (CardPeek + bottom.peek).roundToPx(), CardFadeTop.roundToPx(), bottom.clearance.roundToPx(), CardPeek.roundToPx())
+                    }
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
+                        Column(
+                            Modifier
+                                .width(columnWidth)
+                                .extendVertically(CardPeek, bottom.peek)
+                                .fillMaxHeight()
+                                .onFocusChanged { if (it.hasFocus) selected = index }
+                                .fadingEdges(scroll, bottom = bottom.fade)
+                                .verticalScroll(scroll)
+                                .padding(top = CardPeek, bottom = bottom.end),
+                        ) {
+                            card(item, up, window)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Columns shown whole, and the share of the next one showing at first and of each neighbour once scrolled
+private const val ColumnsShown = 3
+private const val FirstPeek = 0.1f
+private const val SidePeek = 0.05f
+
+/** Never scrolls to bring something into view: for a scroll that's moved by hand */
+@OptIn(ExperimentalFoundationApi::class)
+private val NoScroll = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = 0f
+}
+
+/**
+ * Scrolls a selected card into view only when it isn't, and only as far as needed, in whole pixels
+ * (Android's own behaviour on phones)
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private val MinimalScroll = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val end = offset + size
+        val distance = when {
+            // In view already, or larger than the view and filling it
+            offset >= 0 && end <= containerSize -> 0f
+            offset < 0 && end > containerSize -> 0f
+            abs(offset) < abs(end - containerSize) -> offset
+            else -> end - containerSize
+        }
+        return round(distance)
+    }
+}
+
 /** Measured [top] and [bottom] taller than given, over what's above and below it, without moving what's around */
 private fun Modifier.extendVertically(top: Dp, bottom: Dp) = layout { measurable, constraints ->
     val above = top.roundToPx()
@@ -336,8 +496,15 @@ private fun Modifier.extendVertically(top: Dp, bottom: Dp) = layout { measurable
     layout(placeable.width, constraints.maxHeight) { placeable.place(0, -above) }
 }
 
-/** Fades out at the top and bottom, where [scroll] has more: to transparent, so what's behind shows */
-private fun Modifier.fadingEdges(scroll: ScrollState) = this
+/**
+ * How the cards end at the bottom: how far they show into the margin below ([peek]), the space
+ * under the last one once scrolled to the end, whether they [fade] out, and the room kept clear
+ * below a selected card
+ */
+private class CardsBottom(val peek: Dp, val end: Dp, val fade: Boolean, val clearance: Dp)
+
+/** Fades out at the top, and at the [bottom] if asked, where [scroll] has more: to transparent, so what's behind shows */
+private fun Modifier.fadingEdges(scroll: ScrollState, bottom: Boolean = true) = this
     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
     .drawWithContent {
         drawContent()
@@ -349,7 +516,7 @@ private fun Modifier.fadingEdges(scroll: ScrollState) = this
                 blendMode = BlendMode.DstIn,
             )
         }
-        if (scroll.value < scroll.maxValue) {
+        if (bottom && scroll.value < scroll.maxValue) {
             val fade = CardFadeBottom.toPx()
             drawRect(
                 Brush.verticalGradient(listOf(Color.Black, Color.Transparent), startY = size.height - fade, endY = size.height),
@@ -523,8 +690,9 @@ private val ArrowDirections = mapOf(
 private const val EnteredCardScale = 1.03f
 
 /**
- * A room's or a type's card: its title, then its sensors, with its actions as buttons among them,
- * a step lighter on a [raised] card, which is lighter itself
+ * A room's or a type's card, or a dashboard's block: its title, then its sensors, with its actions
+ * as buttons among them, a step lighter on a [raised] card, which is lighter itself. A dashboard's
+ * block can have headings within it, and weathers, shown with their forecast.
  */
 @Composable
 private fun CardContent(
@@ -540,21 +708,26 @@ private fun CardContent(
     // What the remote lands on once in the card, in order: buttons and switches
     val interactive = card.ids.filter(::isInteractive)
     // A dashboard's cards can have no title
-    if (card.title.isNotEmpty()) {
-        Text(
-            card.title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(bottom = 2.dp),
-        )
-    }
-    card.ids.forEach { id ->
+    if (card.title.isNotEmpty()) CardHeading(card.title)
+    card.ids.forEachIndexed { position, id ->
+        card.subtitles[position]?.let { CardHeading(it, Modifier.padding(top = 8.dp)) }
         val index = interactive.indexOf(id)
+        card.graphs[id]?.let { graph ->
+            HistoryGraph(connection, graph, names)
+            return@forEachIndexed
+        }
+        if (isHaWeather(id)) {
+            WeatherReading(connection.entities[id], connection.hourly[id], connection.daily[id])
+            return@forEachIndexed
+        }
         if (index < 0) {
-            SensorReading(id, connection.entities[id], names[id])
-            return@forEach
+            val gauge = card.gauges[id]
+            if (gauge != null) {
+                GaugeReading(id, connection.entities[id], names[id], gauge)
+            } else {
+                SensorReading(id, connection.entities[id], names[id])
+            }
+            return@forEachIndexed
         }
         val modifier = Modifier
             .then(if (index == 0) Modifier.focusRequester(firstButton) else Modifier)
@@ -563,14 +736,29 @@ private fun CardContent(
             .focusProperties { canFocus = entered }
         if (isHaToggle(id)) {
             ToggleRow(connection, id, names[id], modifier)
+        } else if (isHaSelect(id)) {
+            SelectRow(connection, id, names[id], modifier)
         } else {
             ActionButton(connection, id, name = names[id], raised = raised, modifier = modifier)
         }
     }
 }
 
-/** Buttons (scenes, scripts, buttons) and switches (lights, switches…): what OK acts on in a card */
-private fun isInteractive(id: String) = isHaAction(id) || isHaToggle(id)
+/** A card's title, or the title of a part of it */
+@Composable
+private fun CardHeading(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier.padding(bottom = 2.dp),
+    )
+}
+
+/** Buttons (scenes, scripts, buttons), switches (lights, switches, automations…) and selects: what OK acts on in a card */
+private fun isInteractive(id: String) = isHaAction(id) || isHaToggle(id) || isHaSelect(id)
 
 /**
  * A light, switch, fan or input boolean: a sensor row with a switch at its end, showing whether
@@ -584,11 +772,10 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
     val entity = connection.entities[id]
     val on = entity?.state == "on"
     val ready = connection.session != null
-    var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = { connection.toggle(id, scope, context) },
         // As wide as the card's padding allows, so its icon and text line up with the sensors' above and below
-        modifier = modifier.onFocusChanged { focused = it.isFocused }.widenBy(ToggleRowInset),
+        modifier = modifier.widenBy(ToggleRowInset),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
@@ -611,7 +798,84 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            SwitchMark(on, LocalContentColor.current, knob = if (focused) colors.onSurface else colors.surfaceVariant)
+            SwitchMark(on, LocalContentColor.current)
+        }
+    }
+}
+
+/**
+ * A select or input select: a sensor row with its option, and a mark that it opens a menu. OK
+ * opens the menu of its options, on the current one, and the one chosen is set; greyed out until
+ * connected.
+ */
+@Composable
+private fun SelectRow(connection: HaConnection, id: String, name: String?, modifier: Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val colors = MaterialTheme.colorScheme
+    val entity = connection.entities[id]
+    val options = entity?.attributes?.optJSONArray("options")?.let { list -> (0 until list.length()).map { list.optString(it) } }.orEmpty()
+    val ready = connection.session != null
+    var menuOpen by remember { mutableStateOf(false) }
+    // Back on the row once the menu closes
+    val row = remember { FocusRequester() }
+    var refocus by remember { mutableStateOf(false) }
+    LaunchedEffect(refocus) {
+        if (!refocus) return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { row.requestFocus() }
+        refocus = false
+    }
+    Surface(
+        onClick = { if (options.isNotEmpty()) menuOpen = true },
+        modifier = modifier.focusRequester(row).widenBy(ToggleRowInset),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            contentColor = if (ready) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
+            focusedContainerColor = colors.onSurface,
+            focusedContentColor = colors.inverseOnSurface,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = ToggleRowInset, end = ToggleRowInset - 4.dp, top = 4.dp, bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MdiIcon(entity?.icon ?: "", color = LocalContentColor.current)
+            Text(
+                name ?: entity?.name ?: id,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Text(
+                entity?.reading ?: "—",
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(1f),
+            )
+            MdiIcon("mdi:menu-down", color = LocalContentColor.current)
+        }
+        if (menuOpen) {
+            ContextMenu(
+                title = name ?: entity?.name ?: id,
+                actions = options.map { option ->
+                    MenuAction(if (option == entity?.state) "✓  $option" else option) {
+                        connection.select(id, option, scope, context)
+                    }
+                },
+                onDismiss = {
+                    menuOpen = false
+                    refocus = true
+                },
+                placement = MenuPlacement.Below,
+                initialIndex = options.indexOf(entity?.state).coerceAtLeast(0),
+            )
         }
     }
 }
@@ -634,18 +898,18 @@ private fun Modifier.widenBy(by: Dp) = layout { measurable, constraints ->
  * selected row, whose text is dark.
  */
 @Composable
-internal fun SwitchMark(on: Boolean, color: Color, knob: Color) {
+internal fun SwitchMark(on: Boolean, color: Color) {
     Box(
         modifier = Modifier
             .size(width = 36.dp, height = 20.dp)
-            .then(if (on) Modifier.background(color, CircleShape) else Modifier.border(2.dp, color.copy(alpha = 0.6f), CircleShape))
+            .then(if (on) Modifier.background(SwitchOn, CircleShape) else Modifier.border(2.dp, color.copy(alpha = 0.6f), CircleShape))
             .padding(3.dp),
         contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
         Box(
             Modifier
                 .size(14.dp)
-                .background(if (on) knob else color.copy(alpha = 0.6f), CircleShape),
+                .background(if (on) SwitchKnob else color.copy(alpha = 0.6f), CircleShape),
         )
     }
 }

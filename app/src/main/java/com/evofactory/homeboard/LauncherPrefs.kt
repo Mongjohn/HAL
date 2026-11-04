@@ -97,6 +97,20 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getString("ha_dashboard", null)
         set(value) = prefs.edit { if (value == null) remove("ha_dashboard") else putString("ha_dashboard", value) }
 
+    /** Whether the Assistant tab shows the bottom rows (alerts, apps, Continue Watching) like the other tabs; off by default, for its cards to take the whole height */
+    var haBottomRow: Boolean
+        get() = prefs.getBoolean("ha_bottom_row", false)
+        set(value) = prefs.edit {
+            putBoolean("ha_bottom_row", value)
+            // Its first version, which only hid the alerts row
+            remove("ha_alerts_row")
+        }
+
+    /** Whether the Assistant tab shows each card (section) in a column of its own, scrolling sideways; off by default */
+    var haSectionColumns: Boolean
+        get() = prefs.getBoolean("ha_section_columns", false)
+        set(value) = prefs.edit { putBoolean("ha_section_columns", value) }
+
     // Together: before the top bar was a choice of its own, the actions were in another list
     fun saveHaChoice(entities: List<String>, topBar: List<String>) {
         writeList("ha_entities", entities)

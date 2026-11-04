@@ -38,7 +38,6 @@ fun SettingsButton(
     onOpenCameras: () -> Unit,
     onOpenHomeAssistant: () -> Unit,
     onOpenFrigate: () -> Unit,
-    onOpenPing: () -> Unit,
     onOpenLauncherSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -68,7 +67,6 @@ fun SettingsButton(
                     MenuAction("Cameras", onOpenCameras),
                     MenuAction("Home Assistant", onOpenHomeAssistant),
                     MenuAction("Frigate", onOpenFrigate),
-                    MenuAction("Ping utility", onOpenPing),
                     showHiddenAction(showHidden, hiddenCount) { onShowHiddenChange(!showHidden) },
                 ),
                 onDismiss = { menuOpen = false },

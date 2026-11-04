@@ -35,6 +35,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -95,7 +96,7 @@ class HaConnection {
 
     /** Switches [id] on or off, if Home Assistant is connected; a failure shows as a toast. Its new state comes back with its updates. */
     fun toggle(id: String, scope: CoroutineScope, context: Context) {
-        val session = session ?: return
+        val session = session ?: return notConnected(context)
         scope.launch {
             try {
                 session.toggle(id)
@@ -105,9 +106,21 @@ class HaConnection {
         }
     }
 
+    /** Sets a select to [option], if Home Assistant is connected; a failure shows as a toast. Its new state comes back with its updates. */
+    fun select(id: String, option: String, scope: CoroutineScope, context: Context) {
+        val session = session ?: return notConnected(context)
+        scope.launch {
+            try {
+                session.selectOption(id, option)
+            } catch (e: HaException) {
+                Toast.makeText(context, e.message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     /** Runs a scene or script or presses a button, unless one is running or Home Assistant isn't connected; a failure shows as a toast */
     fun runAction(id: String, scope: CoroutineScope, context: Context) {
-        val session = session ?: return
+        val session = session ?: return notConnected(context)
         if (runningAction != null) return
         runningAction = id
         scope.launch {
@@ -122,6 +135,12 @@ class HaConnection {
     }
     var status by mutableStateOf(HaStatus.Connecting)
         internal set
+
+    /** Says why OK did nothing: what's on screen is only the last known state */
+    private fun notConnected(context: Context) {
+        val why = problem?.let { ": $it" } ?: if (status == HaStatus.Connecting) ": still connecting" else ""
+        Toast.makeText(context, "Not connected to Home Assistant$why", Toast.LENGTH_LONG).show()
+    }
 
     // For Network status
     var connectedAt by mutableStateOf<Long?>(null)
@@ -370,11 +389,11 @@ fun HaActionButtons(connection: HaConnection, actionIds: List<String>) {
     }
 }
 
-/** A sensor's icon, name (or the [name] given to it) and reading, on one line */
+/** A sensor's icon (in [iconColor], e.g. its line's in a graph), name (or the [name] given to it) and reading, on one line */
 @Composable
-fun SensorReading(id: String, entity: HaEntity?, name: String? = null) {
+fun SensorReading(id: String, entity: HaEntity?, name: String? = null, iconColor: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        MdiIcon(entity?.icon ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        MdiIcon(entity?.icon ?: "", color = iconColor)
         Text(
             name ?: entity?.name ?: id,
             style = MaterialTheme.typography.bodyMedium,

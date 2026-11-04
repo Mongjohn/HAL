@@ -16,7 +16,10 @@ class HaDashboardInfo(val urlPath: String?, val title: String) {
  */
 class HaDashboard(val views: List<DashboardView>, val names: Map<String, String>, val skipped: List<String>) {
     /** Every entity on it, to follow */
-    val entityIds get() = views.flatMap { view -> view.cards.flatMap { it.ids } }.distinct()
+    val entityIds
+        get() = views.flatMap { view ->
+            view.cards.flatMap { card -> card.ids.filterNot(::isGraphKey) + card.graphs.values.flatMap { graph -> graph.entities.map { it.id } } }
+        }.distinct()
     val cardCount get() = views.sumOf { it.cards.size }
 }
 
@@ -29,10 +32,12 @@ fun dashboardUrlPath(key: String): String? = key.ifEmpty { null }
  * Reads a dashboard's layout as Home Assistant stores it ([config]) into cards for the Assistant
  * tab. Null for a dashboard Home Assistant builds itself (a "strategy"): there's no layout to read.
  *
- * Each view's cards are read in order, stacks and grids flattened: a heading (or a titled card)
- * starts a new card with its title, untitled cards add their entities to the card being built, and
- * a weather forecast is a card of its own. Sections end a card. Cards it can't show are listed
- * in [HaDashboard.skipped].
+ * Each block of the dashboard becomes one card, as Home Assistant shows it: a section, in a view
+ * of sections, or else a card at the view's top level, stacks and grids flattened. A heading (or
+ * titled card) at a block's top titles the card, and later ones head their part of it (see
+ * [SensorCard.subtitles]). A weather forecast shows inside its block, or as a weather card when
+ * it's alone. A gauge shows as a bar, in its colors, and a history graph as charts and timelines. The badges are a card at the top. Cards it can't show are listed in
+ * [HaDashboard.skipped].
  */
 fun parseDashboard(config: JSONObject?): HaDashboard? {
     if (config == null || config.has("strategy")) return null
@@ -49,15 +54,15 @@ fun parseDashboard(config: JSONObject?): HaDashboard? {
             badges.items().forEach { cards.add(entityOf(it)) }
             cards.close()
         }
-        val sections = view.optJSONArray("sections")
-        if (sections != null) {
-            sections.objects().forEach { section ->
-                section.optJSONArray("cards").objects().forEach(cards::read)
-                cards.close()
-            }
+        // A section is one block, whatever it holds; so is each card of a view without sections
+        view.optJSONArray("sections").objects().forEach { section ->
+            section.optJSONArray("cards").objects().forEach(cards::read)
+            cards.close()
         }
-        view.optJSONArray("cards").objects().forEach(cards::read)
-        cards.close()
+        view.optJSONArray("cards").objects().forEach { card ->
+            cards.read(card)
+            cards.close()
+        }
         val title = view.string("title") ?: view.string("path") ?: "View ${index + 1}"
         DashboardView(title, cards.cards).takeIf { it.cards.isNotEmpty() }
     }
@@ -68,6 +73,9 @@ private class CardBuilder(private val prefix: String, private val names: Mutable
     val cards = mutableListOf<SensorCard>()
     private var title: String? = null
     private val ids = mutableListOf<String>()
+    private val subtitles = mutableMapOf<Int, String>()
+    private val gauges = mutableMapOf<String, HaGauge>()
+    private val graphs = mutableMapOf<String, HaGraph>()
 
     fun add(id: String?, name: String? = null) {
         if (id == null || !id.contains('.')) return
@@ -75,40 +83,55 @@ private class CardBuilder(private val prefix: String, private val names: Mutable
         if (name != null) names[id] = name
     }
 
-    /** Ends the card being built, if it has anything */
+    /** Ends the card being built, if it has anything; a heading with nothing after it is dropped */
     fun close() {
-        if (ids.isNotEmpty()) cards += SensorCard("$prefix-${cards.size}", title.orEmpty(), ids.toList())
+        if (ids.isNotEmpty()) {
+            cards += SensorCard("$prefix-${cards.size}", title.orEmpty(), ids.toList(), subtitles.filterKeys { it < ids.size }, gauges.toMap(), graphs.toMap())
+        }
         title = null
         ids.clear()
+        subtitles.clear()
+        gauges.clear()
+        graphs.clear()
     }
 
-    private fun startCard(newTitle: String?) {
-        close()
-        title = newTitle
+    /** A heading: the card's title at its top, otherwise the title of the part that follows */
+    private fun heading(text: String?) {
+        if (text == null) return
+        if (ids.isEmpty() && subtitles.isEmpty() && title == null) title = text else subtitles[ids.size] = text
     }
 
     fun read(card: JSONObject) {
         when (val type = card.optString("type")) {
             "heading" -> {
-                startCard(card.string("heading"))
+                heading(card.string("heading"))
                 card.optJSONArray("badges")?.items()?.forEach { add(entityOf(it)) }
             }
             in Stacks -> {
-                card.string("title")?.let(::startCard)
+                heading(card.string("title"))
                 card.optJSONArray("cards").objects().forEach(::read)
             }
             "conditional" -> card.optJSONObject("card")?.let(::read)
-            "weather-forecast" -> card.string("entity")?.let { id ->
-                close()
-                cards += SensorCard("$prefix-${cards.size}", card.string("name") ?: "", listOf(id))
-            }
+            "weather-forecast" -> add(card.string("entity"), card.string("name"))
             in ListCards -> {
-                val cardTitle = card.string("title")
-                if (cardTitle != null) startCard(cardTitle)
+                heading(card.string("title"))
                 card.optJSONArray("entities")?.items()?.forEach { row ->
                     add(entityOf(row), (row as? JSONObject)?.string("name"))
                 }
-                if (cardTitle != null) close()
+            }
+            "gauge" -> {
+                val id = card.string("entity")
+                add(id, card.string("name"))
+                if (id != null && id in ids) gauges[id] = parseGauge(card)
+            }
+            "history-graph" -> {
+                heading(card.string("title"))
+                val graph = parseGraph(card)
+                if (graph.entities.isEmpty()) return
+                // In the card's entities, in its place
+                val key = "graph:${graphs.size}"
+                ids += key
+                graphs[key] = graph
             }
             in EntityCards -> {
                 val id = card.string("entity")
@@ -128,7 +151,7 @@ private val ListCards = setOf("entities", "glance")
 // Cards showing one entity: shown as its reading, or a button for scenes, scripts and buttons
 private val EntityCards = setOf(
     "tile", "entity", "sensor", "button", "entity-button", "light", "thermostat", "humidifier",
-    "gauge", "alarm-panel", "media-control", "picture-entity", "plant-status",
+    "alarm-panel", "media-control", "picture-entity", "plant-status",
 )
 
 /** The entity of a row or badge: "light.kitchen", or { "entity": "light.kitchen" } */

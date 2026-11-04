@@ -5,9 +5,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,7 +56,8 @@ enum class MenuPlacement {
 
 /**
  * Small popup menu: a title, a divider, then the actions, or only the actions with no [title].
- * Choosing an action closes the menu ([onDismiss]) and then runs it. Back closes it too.
+ * The remote starts on the action at [initialIndex]. Choosing an action closes the menu
+ * ([onDismiss]) and then runs it. Back closes it too. A long list scrolls.
  */
 @Composable
 fun ContextMenu(
@@ -61,6 +65,7 @@ fun ContextMenu(
     actions: List<MenuAction>,
     onDismiss: () -> Unit,
     placement: MenuPlacement = MenuPlacement.Above,
+    initialIndex: Int = 0,
 ) {
     val rightMarginPx = with(LocalDensity.current) { EdgePadding.roundToPx() }
     Popup(
@@ -69,6 +74,7 @@ fun ContextMenu(
         properties = PopupProperties(focusable = true),
     ) {
         val firstItem = remember { FocusRequester() }
+        val start = initialIndex.coerceIn(0, (actions.size - 1).coerceAtLeast(0))
         // The OK press that opened the menu may still be held (long press): its auto-repeats and
         // its release would land on the first item and select it. Ignore OK until a fresh press.
         var waitingForFreshPress by remember { mutableStateOf(true) }
@@ -81,9 +87,10 @@ fun ContextMenu(
                 waitingForFreshPress
             },
             shape = RoundedCornerShape(12.dp),
-            colors = SurfaceDefaults.colors(containerColor = RaisedSurface),
+            // Its own text color: opened from a selected row, it would take that row's dark one
+            colors = SurfaceDefaults.colors(containerColor = RaisedSurface, contentColor = MaterialTheme.colorScheme.onSurface),
         ) {
-            Column(modifier = Modifier.width(300.dp).padding(8.dp)) {
+            Column(modifier = Modifier.width(300.dp).heightIn(max = MaxMenuHeight).verticalScroll(rememberScrollState()).padding(8.dp)) {
                 if (title != null) {
                     Text(
                         title,
@@ -102,7 +109,7 @@ fun ContextMenu(
                             action.onClick()
                         },
                         headlineContent = { Text(action.label) },
-                        modifier = if (index == 0) Modifier.focusRequester(firstItem) else Modifier,
+                        modifier = if (index == start) Modifier.focusRequester(firstItem) else Modifier,
                     )
                 }
             }
@@ -124,6 +131,9 @@ fun MenuDivider(modifier: Modifier = Modifier) {
 
 private val ConfirmKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
 
+// Taller, and it scrolls: about 8 items
+private val MaxMenuHeight = 480.dp
+
 /** Positions the menu next to its anchor, kept inside the screen. */
 private class AnchoredMenuPosition(
     private val placement: MenuPlacement,
@@ -141,9 +151,14 @@ private class AnchoredMenuPosition(
                 x = (anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2).coerceIn(GAP_PX, maxX),
                 y = (anchorBounds.top - popupContentSize.height - GAP_PX).coerceAtLeast(0),
             )
+            // Above the anchor if it doesn't fit below
             MenuPlacement.Below -> IntOffset(
                 x = (anchorBounds.right - popupContentSize.width).coerceIn(GAP_PX, maxX),
-                y = anchorBounds.bottom + GAP_PX / 2,
+                y = if (anchorBounds.bottom + GAP_PX / 2 + popupContentSize.height <= windowSize.height) {
+                    anchorBounds.bottom + GAP_PX / 2
+                } else {
+                    (anchorBounds.top - popupContentSize.height - GAP_PX / 2).coerceAtLeast(0)
+                },
             )
             MenuPlacement.BelowAtRightMargin -> IntOffset(
                 x = windowSize.width - popupContentSize.width - rightMarginPx,

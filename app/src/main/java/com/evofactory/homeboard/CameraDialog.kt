@@ -233,10 +233,9 @@ private fun StreamTitle(title: String, switches: @Composable () -> Unit) {
 @Composable
 private fun SwitchToggle(label: String, on: Boolean, onToggle: () -> Unit, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
-    var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = onToggle,
-        modifier = modifier.onFocusChanged { focused = it.isFocused },
+        modifier = modifier,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
@@ -252,7 +251,7 @@ private fun SwitchToggle(label: String, on: Boolean, onToggle: () -> Unit, modif
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
-            SwitchMark(on, LocalContentColor.current, knob = if (focused) colors.onSurface else colors.surfaceVariant)
+            SwitchMark(on, LocalContentColor.current)
         }
     }
 }

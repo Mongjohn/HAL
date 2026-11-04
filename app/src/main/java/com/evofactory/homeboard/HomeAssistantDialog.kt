@@ -68,8 +68,10 @@ fun HomeAssistantDialog(
     initialEntities: List<String>,
     initialTopBar: List<String>,
     initialDashboard: String?,
+    initialBottomRow: Boolean,
+    initialSectionColumns: Boolean,
     loginRejected: Boolean,
-    onSave: (server: HaServer, username: String, entities: List<String>, topBar: List<String>, dashboard: String?) -> Unit,
+    onSave: (server: HaServer, username: String, entities: List<String>, topBar: List<String>, dashboard: String?, bottomRow: Boolean, sectionColumns: Boolean) -> Unit,
     onLogOut: () -> Unit,
     onDiscardLogin: (HaServer) -> Unit,
     onDismiss: () -> Unit,
@@ -93,6 +95,10 @@ fun HomeAssistantDialog(
     // The dashboard the Assistant tab shows (see [HaDashboardInfo.key]), null for the choice above,
     // and Home Assistant's dashboards, each read if it can be
     var dashboard by remember { mutableStateOf(initialDashboard) }
+    // The alerts, apps and Continue Watching below the Assistant tab's cards
+    var bottomRow by remember { mutableStateOf(initialBottomRow) }
+    // Each section in a column of its own on the Assistant tab
+    var sectionColumns by remember { mutableStateOf(initialSectionColumns) }
     var boards by remember { mutableStateOf<List<Pair<HaDashboardInfo, HaDashboard?>>>(emptyList()) }
     // The connected Home Assistant and what can be picked on it; set = second step, choosing
     var connected by remember { mutableStateOf<HaServer?>(null) }
@@ -378,7 +384,7 @@ fun HomeAssistantDialog(
                 // Drops entities that no longer exist
                 val ids = entities.map { it.id }.toSet()
                 val chosen = selected.filter { it in ids }
-                onSave(server, if (server.refreshToken.isEmpty()) "" else loginUsername, chosen, topBar.filter { it in chosen }, dashboard)
+                onSave(server, if (server.refreshToken.isEmpty()) "" else loginUsername, chosen, topBar.filter { it in chosen }, dashboard, bottomRow, sectionColumns)
                 unsavedLogin = null
                 onDismiss()
             },
@@ -389,7 +395,7 @@ fun HomeAssistantDialog(
                 HaTab.Sensors -> sensorFocus.currentOrNull(keysOf(sensorSections)) ?: sensorSearch
                 HaTab.Actions -> actionFocus.currentOrNull(keysOf(actionSections)) ?: actionSearch
                 HaTab.Order -> orderFocus.currentOrNull(orderRows.filter { it.focusable }.map { it.key })
-                HaTab.Dashboard -> dashboardFocus.currentOrNull(listOf(MY_SELECTION) + boards.map { it.first.key })
+                HaTab.Dashboard -> dashboardFocus.currentOrNull(listOf(MY_SELECTION) + boards.map { it.first.key } + BOTTOM_ROW + SECTION_COLUMNS)
             }
         },
         searchFocus = {
@@ -408,7 +414,7 @@ fun HomeAssistantDialog(
                 movingKey != null -> "Up and down move it · OK keeps it there · Back cancels"
                 else -> "OK on a card's title moves the card, OK on an item moves it within its card"
             }
-            HaTab.Dashboard -> "OK chooses what the Assistant tab shows · the Home tab and the top bar keep your choice"
+            HaTab.Dashboard -> "OK chooses what the Assistant tab shows, or turns a switch on or off · the Home tab and the top bar keep your choice"
         },
     ) {
         when (tab) {
@@ -453,6 +459,10 @@ fun HomeAssistantDialog(
                 boards = boards,
                 chosen = dashboard,
                 onChoose = { dashboard = it },
+                bottomRow = bottomRow,
+                onBottomRowChange = { bottomRow = it },
+                sectionColumns = sectionColumns,
+                onSectionColumnsChange = { sectionColumns = it },
                 rowModifier = { key -> dashboardFocus.row(key).ringToTop() },
             )
             HaTab.Order -> SensorOrder(
@@ -616,13 +626,19 @@ private const val MY_SELECTION = "my selection"
 /**
  * The Dashboard tab: the sensors and actions chosen in the other tabs, or one of Home Assistant's
  * [boards], each with what it can show. OK [onChoose]s one, by its key (null for the selection).
- * Those with nothing the Assistant tab can show aren't offered, unless chosen already.
+ * Those with nothing the Assistant tab can show aren't offered, unless chosen already. Below
+ * them, switches for the [bottomRow] (alerts, apps, Continue Watching) below the Assistant tab's
+ * cards, and for [sectionColumns].
  */
 @Composable
 private fun DashboardChoice(
     boards: List<Pair<HaDashboardInfo, HaDashboard?>>,
     chosen: String?,
     onChoose: (String?) -> Unit,
+    bottomRow: Boolean,
+    onBottomRowChange: (Boolean) -> Unit,
+    sectionColumns: Boolean,
+    onSectionColumnsChange: (Boolean) -> Unit,
     rowModifier: (key: String) -> Modifier,
 ) {
     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 340.dp).padding(top = 4.dp)) {
@@ -647,12 +663,34 @@ private fun DashboardChoice(
             }
             ChoiceRow(info.title, detail, checked = chosen == info.key, modifier = rowModifier(info.key)) { onChoose(info.key) }
         }
+        item(key = BOTTOM_ROW) {
+            ChoiceRow(
+                "Show bottom row (Alerts / Apps / Continue watching)",
+                "Below the cards, as on the other tabs. Off: the cards take the whole height.",
+                checked = bottomRow,
+                switch = true,
+                modifier = rowModifier(BOTTOM_ROW).padding(top = 8.dp),
+            ) { onBottomRowChange(!bottomRow) }
+        }
+        item(key = SECTION_COLUMNS) {
+            ChoiceRow(
+                "Display sections as columns",
+                "Each section in a column of its own, scrolling sideways. Off: the sections fill as many columns as fit.",
+                checked = sectionColumns,
+                switch = true,
+                modifier = rowModifier(SECTION_COLUMNS),
+            ) { onSectionColumnsChange(!sectionColumns) }
+        }
     }
 }
 
-/** A row to choose, with a line saying more under its title, and a check mark when [checked] */
+// The HA Tab's row for the bottom row, after the dashboards
+private const val BOTTOM_ROW = "bottom_row"
+private const val SECTION_COLUMNS = "section_columns"
+
+/** A row to choose, with a line saying more under its title, and a check mark when [checked], or a [switch] on when it is */
 @Composable
-private fun ChoiceRow(title: String, detail: String, checked: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun ChoiceRow(title: String, detail: String, checked: Boolean, modifier: Modifier, switch: Boolean = false, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
@@ -680,7 +718,11 @@ private fun ChoiceRow(title: String, detail: String, checked: Boolean, modifier:
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(if (checked) "✓" else "", style = MaterialTheme.typography.bodyMedium)
+            if (switch) {
+                SwitchMark(checked, LocalContentColor.current)
+            } else {
+                Text(if (checked) "✓" else "", style = MaterialTheme.typography.bodyMedium)
+            }
         }
     }
 }

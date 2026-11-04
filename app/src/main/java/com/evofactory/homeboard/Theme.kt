@@ -24,5 +24,9 @@ val RaisedSurface = Color(0xFF3D3C42)
 /** A step above RaisedSurface: buttons on a raised card */
 val HigherSurface = Color(0xFF504E55)
 
+/** A switch that's on: its track, the blue of the remote's blue button, and its knob */
+val SwitchOn = Color(0xFF5A8FD9)
+val SwitchKnob = Color(0xFFEDEBF0)
+
 /** A step below onSurfaceVariant: figures that are only there if you look for them */
 val FaintText = Color(0xFF6E6C72)

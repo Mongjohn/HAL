@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -36,6 +38,8 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.tv.material3.MaterialTheme
@@ -44,6 +48,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import kotlin.math.roundToInt
 
 // The panel next to the camera (Home Assistant or the other cameras) is at least this wide; it
 // also gets whatever width the camera leaves
@@ -73,6 +78,8 @@ class MainActivity : ComponentActivity() {
     private var haTopBar by mutableStateOf(emptyList<String>())
     // The Home Assistant dashboard the Assistant tab shows instead, if any
     private var haDashboard by mutableStateOf<String?>(null)
+    private var haBottomRow by mutableStateOf(false)
+    private var haSectionColumns by mutableStateOf(false)
     private var frigate by mutableStateOf(FrigateServer())
     private var frigateOpen by mutableStateOf(false)
     private var launcherSettingsOpen by mutableStateOf(false)
@@ -107,6 +114,8 @@ class MainActivity : ComponentActivity() {
         haEntities = prefs.haEntities
         haTopBar = prefs.haTopBar
         haDashboard = prefs.haDashboard
+        haBottomRow = prefs.haBottomRow
+        haSectionColumns = prefs.haSectionColumns
         frigate = prefs.frigate
         hiddenWatching = prefs.hiddenWatching
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
@@ -132,11 +141,20 @@ class MainActivity : ComponentActivity() {
                     var homeTabSelected by remember { mutableStateOf(false) }
                     var firstTileSelected by remember { mutableStateOf(false) }
                     var goToFirstTile by remember { mutableIntStateOf(0) }
+                    // The alerts, apps and Continue Watching at the bottom: off on the Assistant tab
+                    // unless chosen in the Home Assistant dialog. Off, they slide in while the
+                    // selection is on them, reached with Down from the cards.
+                    val bottomRow = tab != HomeTab.Assistant || haBottomRow
+                    var bottomRevealed by remember { mutableStateOf(false) }
+                    val bottomShown = bottomRow || bottomRevealed
+                    val bottomFraction by animateFloatAsState(if (bottomShown) 1f else 0f, label = "bottom rows")
                     // Back never leaves the launcher, it moves the selection: the top bar to Home,
-                    // anything else to the first tile, and the first tile to the cog
+                    // anything else to the first tile, and the first tile to the cog. Without the
+                    // tiles, anything below the top bar goes to the Assistant tab.
                     BackHandler {
                         when {
                             topBarSelected && !homeTabSelected -> runCatching { homeTabFocus.requestFocus() }
+                            !bottomShown -> if (!topBarSelected) runCatching { assistantTabFocus.requestFocus() }
                             firstTileSelected -> runCatching { cogFocus.requestFocus() }
                             else -> goToFirstTile++
                         }
@@ -157,13 +175,14 @@ class MainActivity : ComponentActivity() {
                     val alertsRowFocus = remember { FocusRequester() }
                     // From reaching the row until the remote is back on the tiles, wherever it goes meanwhile
                     var alertsRowShown by remember { mutableStateOf(false) }
-                    val alertsRowFeed = frigateFeed?.takeIf { tab != HomeTab.Alerts }
+                    // Not on the Alerts tab, nor on the Assistant tab unless chosen in the Home Assistant dialog
+                    val alertsRowFeed = frigateFeed?.takeIf { tab != HomeTab.Alerts && bottomRow }
                     val hasAlertsRow = alertsRowFeed != null && alertsRowFeed.rowAlerts.isNotEmpty()
                     LaunchedEffect(hasAlertsRow) { if (!hasAlertsRow) alertsRowShown = false }
                     var tilesRowSelected by remember { mutableStateOf(false) }
                     var otherTileSelected by remember { mutableStateOf(false) }
                     var noAlertsSelected by remember { mutableStateOf(false) }
-                    val showNoAlertsTile = frigateFeed?.noRecentAlerts == true
+                    val showNoAlertsTile = frigateFeed?.noRecentAlerts == true && bottomRow
                     // Worked out before the tile is removed, when focus is still known to be on it
                     val lostNoAlertsTile = remember(showNoAlertsTile) { !showNoAlertsTile && noAlertsSelected }
                     val alertsExist = frigateFeed != null && frigateFeed.rowAlerts.isNotEmpty()
@@ -280,7 +299,6 @@ class MainActivity : ComponentActivity() {
                                 onOpenCameras = { camerasOpen = true },
                                 onOpenHomeAssistant = { haDialogOpen = true },
                                 onOpenFrigate = { frigateOpen = true },
-                                onOpenPing = { pingOpen = true },
                                 onOpenLauncherSettings = { launcherSettingsOpen = true },
                                 modifier = Modifier.focusRequester(cogFocus),
                             )
@@ -314,6 +332,8 @@ class MainActivity : ComponentActivity() {
                                 dashboard = haDashboard,
                                 tabFocus = assistantTabFocus,
                                 onSetUp = { haDialogOpen = true },
+                                sectionColumns = haSectionColumns,
+                                toScreenEdge = !bottomShown,
                                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
                             )
                         } else {
@@ -371,79 +391,92 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        // The tiles' grow room counts towards the margins above and below the row
-                        Spacer(Modifier.height(EdgePadding - TileGrowRoom))
-                        SlidingRows(
-                            revealed = continueActive,
-                            aboveRevealed = alertsRowShown && hasAlertsRow,
-                            above = {
-                                if (alertsRowFeed != null) {
-                                    FrigateAlertsRow(
-                                        feed = alertsRowFeed,
-                                        shown = alertsRowShown,
-                                        firstCardFocus = alertsRowFocus,
-                                        upFocus = ::aboveRows,
-                                        downFocus = appRowFocus,
-                                        onEnter = { alertsRowShown = true },
+                        // Hidden on the Assistant tab unless chosen or the selection is on them: its
+                        // cards then take the whole height. They slide up from the screen's edge,
+                        // placed below it while hidden, where only Down finds them.
+                        Column(
+                            Modifier
+                                .onFocusChanged { if (!bottomRow) bottomRevealed = it.hasFocus }
+                                .clipToBounds()
+                                .layout { measurable, constraints ->
+                                    val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+                                    layout(placeable.width, (placeable.height * bottomFraction).roundToInt()) { placeable.place(0, 0) }
+                                },
+                        ) {
+                            // The tiles' grow room counts towards the margins above and below the row
+                            Spacer(Modifier.height(EdgePadding - TileGrowRoom))
+                            SlidingRows(
+                                revealed = continueActive,
+                                aboveRevealed = alertsRowShown && hasAlertsRow,
+                                above = {
+                                    if (alertsRowFeed != null) {
+                                        FrigateAlertsRow(
+                                            feed = alertsRowFeed,
+                                            shown = alertsRowShown,
+                                            firstCardFocus = alertsRowFocus,
+                                            upFocus = ::aboveRows,
+                                            downFocus = appRowFocus,
+                                            onEnter = { alertsRowShown = true },
+                                            onLeave = { goToFirstTile++ },
+                                        )
+                                    }
+                                },
+                                first = {
+                                    AppRowSpace(Modifier.onFocusChanged { tilesRowSelected = it.hasFocus }) {
+                                        if (visible != null && hiddenApps != null) AppRow(
+                                            apps = visible,
+                                            hiddenApps = hiddenApps,
+                                            showHidden = showHidden,
+                                            onShowHiddenChange = { showHidden = it },
+                                            onHide = { app ->
+                                                // Hidden apps leave the row order and queue up at the end
+                                                saveOrder(visible.map { it.key } - app.key)
+                                                saveHidden(hidden + app.key)
+                                            },
+                                            onUnhide = { app ->
+                                                // Back at the end of the visible apps
+                                                saveOrder(visible.map { it.key } + app.key)
+                                                saveHidden(hidden - app.key)
+                                            },
+                                            onReorder = { list -> saveOrder(list.map { it.key }) },
+                                            upFocus = { slot ->
+                                                when {
+                                                    hasAlertsRow -> alertsRowFocus
+                                                    else -> aboveRows(slot)
+                                                }
+                                            },
+                                            downFocus = if (continueItems.isNotEmpty()) continueFocus else FocusRequester.Cancel,
+                                            rowFocus = appRowFocus,
+                                            goToFirstTile = goToFirstTile,
+                                            onFirstTileSelected = { firstTileSelected = it },
+                                            onOtherTileSelected = { otherTileSelected = it },
+                                            showNoAlertsTile = showNoAlertsTile,
+                                            onNoAlertsSelected = { noAlertsSelected = it },
+                                            onNoAlertsClick = {
+                                                tab = HomeTab.Alerts
+                                                runCatching { alertsTabFocus.requestFocus() }
+                                            },
+                                            modifier = Modifier.onFocusChanged { if (it.hasFocus) alertsRowShown = false },
+                                        ) else AppRowPlaceholder()
+                                    }
+                                },
+                                second = {
+                                    ContinueWatchingRow(
+                                        items = continueItems,
+                                        apps = all.orEmpty(),
+                                        firstCardFocus = continueFocus,
+                                        upFocus = appRowFocus,
+                                        onActiveChange = { continueActive = it },
+                                        onHide = {
+                                            hiddenWatching = hiddenWatching + it.hideKey
+                                            prefs.hiddenWatching = hiddenWatching
+                                        },
                                         onLeave = { goToFirstTile++ },
                                     )
-                                }
-                            },
-                            first = {
-                                AppRowSpace(Modifier.onFocusChanged { tilesRowSelected = it.hasFocus }) {
-                                    if (visible != null && hiddenApps != null) AppRow(
-                                        apps = visible,
-                                        hiddenApps = hiddenApps,
-                                        showHidden = showHidden,
-                                        onShowHiddenChange = { showHidden = it },
-                                        onHide = { app ->
-                                            // Hidden apps leave the row order and queue up at the end
-                                            saveOrder(visible.map { it.key } - app.key)
-                                            saveHidden(hidden + app.key)
-                                        },
-                                        onUnhide = { app ->
-                                            // Back at the end of the visible apps
-                                            saveOrder(visible.map { it.key } + app.key)
-                                            saveHidden(hidden - app.key)
-                                        },
-                                        onReorder = { list -> saveOrder(list.map { it.key }) },
-                                        upFocus = { slot ->
-                                            when {
-                                                hasAlertsRow -> alertsRowFocus
-                                                else -> aboveRows(slot)
-                                            }
-                                        },
-                                        downFocus = if (continueItems.isNotEmpty()) continueFocus else FocusRequester.Cancel,
-                                        rowFocus = appRowFocus,
-                                        goToFirstTile = goToFirstTile,
-                                        onFirstTileSelected = { firstTileSelected = it },
-                                        onOtherTileSelected = { otherTileSelected = it },
-                                        showNoAlertsTile = showNoAlertsTile,
-                                        onNoAlertsSelected = { noAlertsSelected = it },
-                                        onNoAlertsClick = {
-                                            tab = HomeTab.Alerts
-                                            runCatching { alertsTabFocus.requestFocus() }
-                                        },
-                                        modifier = Modifier.onFocusChanged { if (it.hasFocus) alertsRowShown = false },
-                                    ) else AppRowPlaceholder()
-                                }
-                            },
-                            second = {
-                                ContinueWatchingRow(
-                                    items = continueItems,
-                                    apps = all.orEmpty(),
-                                    firstCardFocus = continueFocus,
-                                    upFocus = appRowFocus,
-                                    onActiveChange = { continueActive = it },
-                                    onHide = {
-                                        hiddenWatching = hiddenWatching + it.hideKey
-                                        prefs.hiddenWatching = hiddenWatching
-                                    },
-                                    onLeave = { goToFirstTile++ },
-                                )
-                            },
-                        )
-                        Spacer(Modifier.height(EdgePadding - TileGrowRoom))
+                                },
+                            )
+                            Spacer(Modifier.height(EdgePadding - TileGrowRoom))
+                        }
                     }
                     frigateFeed?.let { FrigateClipPlayer(it, minimizeVideoStreams) }
                     fullScreenCamera?.let {
@@ -478,8 +511,10 @@ class MainActivity : ComponentActivity() {
                             initialEntities = haEntities,
                             initialTopBar = haTopBar,
                             initialDashboard = haDashboard,
+                            initialBottomRow = haBottomRow,
+                            initialSectionColumns = haSectionColumns,
                             loginRejected = haConnection.status == HaStatus.TokenRejected,
-                            onSave = { server, username, entities, topBar, dashboard ->
+                            onSave = { server, username, entities, topBar, dashboard, bottomRow, sectionColumns ->
                                 // A replaced username-and-password login is ended in Home Assistant
                                 if (haServer.refreshToken != server.refreshToken) revokeHaLogin(haServer)
                                 haServer = server
@@ -490,6 +525,10 @@ class MainActivity : ComponentActivity() {
                                 saveHaChoice(entities, topBar)
                                 haDashboard = dashboard
                                 prefs.haDashboard = dashboard
+                                haBottomRow = bottomRow
+                                prefs.haBottomRow = bottomRow
+                                haSectionColumns = sectionColumns
+                                prefs.haSectionColumns = sectionColumns
                             },
                             onLogOut = ::logOutOfHa,
                             onDiscardLogin = ::revokeHaLogin,
