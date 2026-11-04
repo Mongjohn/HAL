@@ -634,7 +634,7 @@ private fun Modifier.widenBy(by: Dp) = layout { measurable, constraints ->
  * selected row, whose text is dark.
  */
 @Composable
-private fun SwitchMark(on: Boolean, color: Color, knob: Color) {
+internal fun SwitchMark(on: Boolean, color: Color, knob: Color) {
     Box(
         modifier = Modifier
             .size(width = 36.dp, height = 20.dp)

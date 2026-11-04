@@ -96,8 +96,7 @@ class CameraScreensaver : DreamService(), LifecycleOwner, SavedStateRegistryOwne
                 setViewTreeLifecycleOwner(this@CameraScreensaver)
                 setViewTreeSavedStateRegistryOwner(this@CameraScreensaver)
                 setContent {
-                    // Black surface: the picture's rounded corners are painted in it, unseen on black
-                    MaterialTheme(colorScheme = AppColorScheme.copy(surface = Color.Black)) {
+                    MaterialTheme(colorScheme = AppColorScheme) {
                         CameraRotation(cameras, seconds, minimizeStreams, showProgress)
                     }
                 }
@@ -154,6 +153,7 @@ private fun CameraRotation(cameras: List<Camera>, seconds: Int, minimizeStreams:
             waitForOtherPlayers = minimizeStreams,
             onLiveChange = { live = it },
             showProgress = showProgress,
+            rounded = false,
         )
         Text(
             camera.name,

@@ -86,20 +86,34 @@ data class Camera(
     val useTcp: Boolean = true,
     // A lighter stream of the same camera, if it has one: plays live in the Cameras tab
     val substreamUrl: String = "",
+    // Each stream's audio tracks; off, the player never sees them. Sound plays in full screen, from the main stream.
+    val useAudio: Boolean = true,
+    val useSubstreamAudio: Boolean = true,
 ) {
     /** Address without the login, for display: e.g. 192.168.1.10 */
     val host: String get() = Uri.parse(url).host.orEmpty()
 }
 
 fun camerasToJson(cameras: List<Camera>): String = JSONArray(
-    cameras.map { JSONObject().put("id", it.id).put("name", it.name).put("url", it.url).put("tcp", it.useTcp).put("sub", it.substreamUrl) },
+    cameras.map {
+        JSONObject().put("id", it.id).put("name", it.name).put("url", it.url).put("tcp", it.useTcp).put("sub", it.substreamUrl)
+            .put("audio", it.useAudio).put("subAudio", it.useSubstreamAudio)
+    },
 ).toString()
 
 fun camerasFromJson(json: String): List<Camera> {
     val array = JSONArray(json)
     return List(array.length()) { i ->
         array.getJSONObject(i).let {
-            Camera(it.getString("id"), it.getString("name"), it.getString("url"), it.optBoolean("tcp", true), it.optString("sub"))
+            Camera(
+                it.getString("id"),
+                it.getString("name"),
+                it.getString("url"),
+                it.optBoolean("tcp", true),
+                it.optString("sub"),
+                it.optBoolean("audio", true),
+                it.optBoolean("subAudio", true),
+            )
         }
     }
 }
@@ -164,6 +178,8 @@ fun MainCamera(
             useTcp = camera.useTcp,
             modifier = Modifier.fillMaxSize(),
             minimizeStreams = minimizeStreams,
+            useAudio = camera.useAudio,
+            fullScreenSound = true,
             fullScreen = fullScreen,
             onCloseFullScreen = { fullScreen = false },
             onCameraButton = { index -> cameras.getOrNull(index)?.let(onSelect) },
@@ -207,6 +223,7 @@ fun FullScreenCamera(camera: Camera, minimizeStreams: Boolean, onCameraButton: (
         url = camera.url,
         useTcp = camera.useTcp,
         minimizeStreams = minimizeStreams,
+        useAudio = camera.useAudio,
         fullScreen = true,
         onCloseFullScreen = onClose,
         onCameraButton = onCameraButton,
@@ -283,6 +300,7 @@ fun CameraGrid(
                     compact = true,
                     fallbackPictureUrl = camera.url,
                     minimizeStreams = minimizeStreams,
+                    useAudio = camera.useSubstreamAudio,
                     onLiveChange = { playing = it },
                 )
             } else {

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,6 +59,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
@@ -79,6 +81,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
 import java.net.ConnectException
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -113,6 +116,9 @@ private const val UNREACHABLE_RETRY_INTERVAL_MS = 1_000L
 
 // The camera answered but streaming failed (wrong login, no stream…): retrying sooner wouldn't help
 private const val RETRY_DELAY_MS = 3_000L
+
+// The camera's description of its stream won't change by itself: no point asking often
+private const val DESCRIPTION_RETRY_DELAY_MS = 30_000L
 
 // Picture stuck this long = camera gone, even without an error
 private const val FROZEN_TIMEOUT_MS = 5_000L
@@ -235,6 +241,10 @@ fun NotLiveMark(modifier: Modifier = Modifier, size: Dp = 24.dp) {
  * 0-based index. With [waitForOtherPlayers], it only connects once every other player has released,
  * for TVs that refuse a decoder until then; with [minimizeStreams], once those already stopping have.
  *
+ * [useAudio] off takes the stream's audio tracks out of the camera's description, so the player never
+ * sees them. Otherwise its sound plays in full screen. With [fullScreenSound], the audio plays muted
+ * until then: a player can't add audio to a stream that's playing, the camera refuses it.
+ *
  * [showProgress] off leaves out the status while it's only connecting: it shows once something fails.
  */
 @Composable
@@ -245,12 +255,16 @@ fun CameraView(
     compact: Boolean = false,
     fallbackPictureUrl: String? = null,
     minimizeStreams: Boolean = false,
+    useAudio: Boolean = true,
+    fullScreenSound: Boolean = false,
     fullScreen: Boolean = false,
     onCloseFullScreen: () -> Unit = {},
     onCameraButton: (Int) -> Unit = {},
     waitForOtherPlayers: Boolean = false,
     onLiveChange: (Boolean) -> Unit = {},
     showProgress: Boolean = true,
+    // Off when the picture fills the screen
+    rounded: Boolean = true,
 ) {
     val context = LocalContext.current
     val status = remember(url) { ConnectionStatus(Uri.parse(url).host.orEmpty()) }
@@ -272,12 +286,24 @@ fun CameraView(
     LaunchedEffect(snapshots) { snapshots.load() }
 
     var mayConnect by remember(url) { mutableStateOf(!waitForOtherPlayers && !minimizeStreams) }
+    val withAudio = useAudio && (fullScreenSound || fullScreen)
+    // Heard in full screen only
+    val audible = withAudio && fullScreen
+    val current = remember { mutableStateOf<CameraConnection?>(null) }
     if (mayConnect) {
-        LifecycleStartEffect(url, useTcp, minimizeStreams) {
+        LifecycleStartEffect(url, useTcp, useAudio, withAudio, minimizeStreams) {
             val snapshotInterval = if (compact) COMPACT_SNAPSHOT_INTERVAL_MS else SNAPSHOT_INTERVAL_MS
-            val connection = CameraConnection(context, url, useTcp, video, frame, status, snapshots, snapshotInterval, minimizeStreams)
-            onStopOrDispose { connection.release() }
+            val connection = CameraConnection(
+                context, url, useTcp, useAudio, withAudio, audible, video, frame, status, snapshots, snapshotInterval, minimizeStreams,
+            )
+            current.value = connection
+            onStopOrDispose {
+                connection.release()
+                current.value = null
+            }
         }
+        // Without restarting the stream
+        SideEffect { current.value?.audible = audible }
     } else {
         LaunchedEffect(url) {
             val label = "Player ${Integer.toHexString(url.hashCode()).takeLast(4)}"
@@ -344,7 +370,7 @@ fun CameraView(
     if (fullScreen) {
         FullScreenWindow(onClose = onCloseFullScreen, onCameraButton = onCameraButton) { Picture(Modifier.fillMaxSize(), rounded = false) }
     } else {
-        Picture(modifier, rounded = true)
+        Picture(modifier, rounded = rounded)
     }
 }
 
@@ -411,6 +437,11 @@ private class CameraConnection(
     private val context: Context,
     private val url: String,
     private val useTcp: Boolean,
+    // Off, its audio tracks are taken out of the camera's description, so the player never sees them
+    private val useAudio: Boolean,
+    // Plays the audio track, muted unless [audible]
+    private val withAudio: Boolean,
+    audible: Boolean,
     private val video: SurfaceView,
     private val frame: AspectRatioFrameLayout,
     private val status: ConnectionStatus,
@@ -434,6 +465,21 @@ private class CameraConnection(
     private var needsNewPlayer = false
     private var replacingPlayer = false
 
+    // What the camera last described, from the player's thread
+    @Volatile
+    private var tracks: List<SdpTrack>? = null
+
+    // The camera describes audio but sends none: the player would wait for it forever
+    private var silentAudio = false
+
+    /** Sound on, e.g. in full screen. Changes on the same stream, without starting over. */
+    var audible = audible
+        set(value) {
+            if (field == value) return
+            field = value
+            player.applyAudio()
+        }
+
     private var player = createPlayer()
 
     private fun createPlayer() = ExoPlayer.Builder(context, if (decodersTakeTurns) OneAtATimeRenderers(context) else DefaultRenderersFactory(context))
@@ -444,14 +490,11 @@ private class CameraConnection(
         )
         .build()
         .apply {
-            // No audio: nothing to hear, and video then plays on its own clock without waiting for it
-            trackSelectionParameters = trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
-                .build()
+            applyAudio()
             setMediaSource(
                 RtspMediaSource.Factory()
                     .setForceUseRtpTcp(useTcp)
-                    .setSocketFactory(QuickConnectSocketFactory)
+                    .setSocketFactory(CameraSocketFactory(::onDescription))
                     // Debug builds log the RTSP exchange with the camera (logcat tag RtspClient)
                     .setDebugLoggingEnabled(context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
                     .createMediaSource(MediaItem.fromUri(url)),
@@ -477,6 +520,28 @@ private class CameraConnection(
             })
             playWhenReady = true
         }
+
+    // Without the audio track, video plays on its own clock, without waiting for it
+    private fun ExoPlayer.applyAudio() {
+        val playing = withAudio && !silentAudio
+        trackSelectionParameters = trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !playing)
+            .build()
+        volume = if (audible) 1f else 0f
+        // Other apps' sound pauses only while this one is heard
+        setAudioAttributes(CAMERA_AUDIO, playing && audible)
+    }
+
+    // On the player's thread: logs what the camera describes, and takes out its audio if unused
+    private fun onDescription(sdp: String): String {
+        val described = sdpTracks(sdp)
+        val takeOut = !useAudio && described.any { it.media == "audio" }
+        if (described != tracks) {
+            AppLog.i(TAG, "Player $logId tracks: ${described.joinToString()}" + if (takeOut) ", audio taken out" else "")
+        }
+        tracks = described
+        return if (takeOut) sdpWithoutAudio(sdp) else sdp
+    }
 
     private val attempt = Runnable { attempt() }
 
@@ -627,6 +692,10 @@ private class CameraConnection(
             handler.postDelayed(attempt, QUIET_RETRY_DELAY_MS)
             return
         }
+        if (refusedDescription(error)) {
+            lose(describeMissingFormat(tracks, useAudio), unreachable = false, retryDelay = DESCRIPTION_RETRY_DELAY_MS)
+            return
+        }
         val unreachable = generateSequence<Throwable>(error) { it.cause }
             .any { it is SocketTimeoutException || it is ConnectException || it is NoRouteToHostException }
         lose(describe(error), unreachable)
@@ -634,9 +703,9 @@ private class CameraConnection(
 
     /**
      * [unreachable]: the camera couldn't be reached, so try again soon. [stalledFor]: how long the
-     * picture had already been stuck when this was noticed.
+     * picture had already been stuck when this was noticed. [retryDelay] overrides the usual delays.
      */
-    private fun lose(reason: String, unreachable: Boolean, stalledFor: Long = 0) {
+    private fun lose(reason: String, unreachable: Boolean, stalledFor: Long = 0, retryDelay: Long? = null) {
         if (status.phase != Phase.Live && status.phase != Phase.Connecting) return
         val now = SystemClock.elapsedRealtime()
         // It reached the camera and still lost the picture. Otherwise, the next try can use it again
@@ -651,11 +720,19 @@ private class CameraConnection(
             status.lost(System.currentTimeMillis() - (now - attemptStartedAt))
         }
         status.lastError = reason
+        // Video came, but the audio it waits for didn't
+        val audioCame = (player.audioDecoderCounters?.queuedInputBufferCount ?: 0) > 0
+        val videoCame = (player.videoDecoderCounters?.queuedInputBufferCount ?: 0) > 0
+        if (withAudio && !silentAudio && videoCame && !audioCame) {
+            AppLog.i(TAG, "Player $logId: the camera sends no audio, going on without it")
+            silentAudio = true
+            player.applyAudio()
+        }
         player.stop()
-        val delay = if (unreachable) {
-            (UNREACHABLE_RETRY_INTERVAL_MS - (now - attemptStartedAt)).coerceAtLeast(0)
-        } else {
-            RETRY_DELAY_MS
+        val delay = when {
+            retryDelay != null -> retryDelay
+            unreachable -> (UNREACHABLE_RETRY_INTERVAL_MS - (now - attemptStartedAt)).coerceAtLeast(0)
+            else -> RETRY_DELAY_MS
         }
         AppLog.i(TAG, "Player $logId no picture: $reason. Retries so far: ${status.retries}, next in $delay ms")
         status.phase = Phase.RetryScheduled
@@ -758,6 +835,32 @@ private fun describe(error: PlaybackException): String {
     return reason.replace(Regex("""(rtsps?://)[^/@\s]*@"""), "$1***@").take(140)
 }
 
+/** Media3 refused the camera's description of its stream, e.g. "missing attribute fmtp" */
+private fun refusedDescription(error: PlaybackException) = generateSequence<Throwable>(error) { it.cause }
+    .any { cause -> cause.message.orEmpty().let { "missing attribute fmtp" in it || "sprop" in it } }
+
+/** Which track the camera left without its format, and what to do about it */
+private fun describeMissingFormat(tracks: List<SdpTrack>?, useAudio: Boolean): String {
+    val video = tracks?.firstOrNull { it.media == "video" && !it.described }
+    val audio = tracks?.firstOrNull { it.media == "audio" && !it.described }
+    return when {
+        video != null -> {
+            val codec = when (video.encoding) {
+                "H264" -> "H.264"
+                "H265" -> "H.265"
+                else -> video.encoding
+            }
+            "The camera leaves out its $codec video's format, which this player needs. A restream " +
+                "(e.g. Frigate's, or the go2rtc add-on for Home Assistant) can add it for you"
+        }
+        audio != null && useAudio ->
+            "The camera leaves out its audio track's format, so the stream can't play. Turn off \"Use audio track\" in the camera's settings"
+        else -> "The camera's description of its stream is incomplete, so it can't play"
+    }
+}
+
+private val CAMERA_AUDIO = AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build()
+
 /** The camera's RTSP answer, e.g. "SETUP 401", in plain words */
 private fun describeRtsp(causes: List<Throwable>): String? {
     val message = causes.firstOrNull { it is RtspMediaSource.RtspPlaybackException }?.message ?: return null
@@ -782,21 +885,33 @@ private fun describeVideo(format: Format): String {
     return if (format.width > 0 && format.height > 0) "$codec ${format.width}×${format.height}" else codec
 }
 
-/** Gives up connecting after a couple of seconds instead of the system's minutes (see SOCKET_CONNECT_TIMEOUT_MS) */
-private object QuickConnectSocketFactory : SocketFactory() {
+/**
+ * Gives up connecting after a couple of seconds instead of the system's minutes (see
+ * SOCKET_CONNECT_TIMEOUT_MS), and shows the camera's stream description to [onDescription], which
+ * may change it before the player reads it.
+ */
+private class CameraSocketFactory(private val onDescription: (String) -> String) : SocketFactory() {
     private fun connect(address: InetSocketAddress, local: InetSocketAddress? = null) =
-        Socket().apply {
+        createSocket().apply {
             if (local != null) bind(local)
             connect(address, SOCKET_CONNECT_TIMEOUT_MS)
         }
 
-    override fun createSocket() = Socket()
+    override fun createSocket(): Socket = DescribedSocket(onDescription)
     override fun createSocket(host: String, port: Int) = connect(InetSocketAddress(host, port))
     override fun createSocket(host: InetAddress, port: Int) = connect(InetSocketAddress(host, port))
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int) =
         connect(InetSocketAddress(host, port), InetSocketAddress(localHost, localPort))
     override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int) =
         connect(InetSocketAddress(address, port), InetSocketAddress(localAddress, localPort))
+}
+
+private class DescribedSocket(private val onDescription: (String) -> String) : Socket() {
+    private val filtered by lazy { SdpFilterStream(rawInput(), onDescription) }
+
+    private fun rawInput(): InputStream = super.getInputStream()
+
+    override fun getInputStream(): InputStream = filtered
 }
 
 class Snapshot(val bitmap: Bitmap, val takenAt: Long) {
