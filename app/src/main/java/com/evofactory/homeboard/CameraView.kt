@@ -267,6 +267,8 @@ fun CameraView(
     fullScreen: Boolean = false,
     onCloseFullScreen: () -> Unit = {},
     onCameraButton: (Int) -> Unit = {},
+    // Full screen: the remote's channel up (1) or down (-1)
+    onChannel: (Int) -> Unit = {},
     waitForOtherPlayers: Boolean = false,
     onLiveChange: (Boolean) -> Unit = {},
     showProgress: Boolean = true,
@@ -379,7 +381,7 @@ fun CameraView(
     }
 
     if (fullScreen) {
-        FullScreenWindow(onClose = onCloseFullScreen, onCameraButton = onCameraButton) { Picture(Modifier.fillMaxSize(), rounded = false) }
+        FullScreenWindow(onClose = onCloseFullScreen, onCameraButton = onCameraButton, onChannel = onChannel) { Picture(Modifier.fillMaxSize(), rounded = false) }
     } else {
         Picture(modifier, rounded = rounded)
     }
@@ -390,7 +392,7 @@ fun CameraView(
  * A window of its own, so it handles the number buttons itself.
  */
 @Composable
-private fun FullScreenWindow(onClose: () -> Unit, onCameraButton: (Int) -> Unit, content: @Composable () -> Unit) {
+private fun FullScreenWindow(onClose: () -> Unit, onCameraButton: (Int) -> Unit, onChannel: (Int) -> Unit, content: @Composable () -> Unit) {
     val focus = remember { FocusRequester() }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         LaunchedEffect(Unit) { focus.requestFocus() }
@@ -402,6 +404,10 @@ private fun FullScreenWindow(onClose: () -> Unit, onCameraButton: (Int) -> Unit,
                 .onPreviewKeyEvent { event ->
                     cameraButtonIndex(event)?.let { index ->
                         if (event.type == KeyEventType.KeyDown) onCameraButton(index)
+                        return@onPreviewKeyEvent true
+                    }
+                    channelStep(event)?.let { step ->
+                        if (event.type == KeyEventType.KeyDown) onChannel(step)
                         return@onPreviewKeyEvent true
                     }
                     when (event.key) {

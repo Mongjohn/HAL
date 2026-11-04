@@ -2,6 +2,7 @@ package com.evofactory.homeboard
 
 import android.media.MediaCodecList
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -14,6 +15,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -127,10 +129,18 @@ fun camerasFromJson(json: String): List<Camera> {
 // How long a camera's name shows over the picture after switching to it
 private const val NAME_SHOWN_MS = 2_000L
 
+// The channel up and down reminder: how long it shows, and how often at most
+private const val CHANNEL_HINT_SHOWN_MS = 3_000L
+private const val CHANNEL_HINT_INTERVAL_MS = 60 * 60_000L
+
+// When it last showed, for as long as the app runs
+private var lastChannelHint = 0L
+
 /**
- * The camera shown on the home screen. Once selected, left and right switch to the previous or
- * next camera, and the new camera's name shows briefly over the picture. OK shows it full screen,
- * with the same player and stream, where the number buttons pick a camera.
+ * The camera shown on the home screen. The remote's channel up and down switch to the next or
+ * previous camera, wherever the selection is (see MainActivity), and the new camera's name shows
+ * briefly over the picture. OK shows it full screen, with the same player and stream, where the
+ * number buttons and channel up and down switch cameras too.
  */
 @Composable
 fun MainCamera(
@@ -144,6 +154,20 @@ fun MainCamera(
     var nameShown by remember { mutableStateOf(false) }
     var firstCamera by remember { mutableStateOf(true) }
     var fullScreen by remember { mutableStateOf(false) }
+
+    // The reminder that channel up and down switch cameras: as the selection lands on the camera,
+    // for a few seconds, and at most once an hour
+    var channelHint by remember { mutableStateOf(false) }
+    LaunchedEffect(focused) {
+        channelHint = false
+        if (!focused || cameras.size < 2) return@LaunchedEffect
+        val now = SystemClock.elapsedRealtime()
+        if (lastChannelHint != 0L && now - lastChannelHint < CHANNEL_HINT_INTERVAL_MS) return@LaunchedEffect
+        lastChannelHint = now
+        channelHint = true
+        delay(CHANNEL_HINT_SHOWN_MS)
+        channelHint = false
+    }
 
     LaunchedEffect(camera.id) {
         // Only when switching, not when the home screen opens
@@ -165,17 +189,7 @@ fun MainCamera(
                     if (event.type == KeyEventType.KeyUp) fullScreen = true
                     return@onPreviewKeyEvent true
                 }
-                if (cameras.size < 2) return@onPreviewKeyEvent false
-                val step = when (event.key) {
-                    Key.DirectionLeft -> -1
-                    Key.DirectionRight -> 1
-                    else -> return@onPreviewKeyEvent false
-                }
-                if (event.type == KeyEventType.KeyDown) {
-                    val index = cameras.indexOfFirst { it.id == camera.id }
-                    onSelect(cameras[(index + step).mod(cameras.size)])
-                }
-                true
+                false
             }
             .focusable(),
     ) {
@@ -190,6 +204,7 @@ fun MainCamera(
             fullScreen = fullScreen,
             onCloseFullScreen = { fullScreen = false },
             onCameraButton = { index -> cameras.getOrNull(index)?.let(onSelect) },
+            onChannel = { step -> steppedCamera(cameras, camera.id, step)?.let(onSelect) },
         )
         AnimatedVisibility(
             visible = nameShown,
@@ -206,13 +221,14 @@ fun MainCamera(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
-        // Selected: left and right switch cameras
-        if (focused) {
-            Box(Modifier.matchParentSize().border(3.dp, MaterialTheme.colorScheme.border, CameraShape))
-            if (cameras.size > 1) {
-                SwitchChevron("mdi:chevron-left", Modifier.align(Alignment.CenterStart))
-                SwitchChevron("mdi:chevron-right", Modifier.align(Alignment.CenterEnd))
-            }
+        if (focused) Box(Modifier.matchParentSize().border(3.dp, MaterialTheme.colorScheme.border, CameraShape))
+        AnimatedVisibility(
+            visible = channelHint,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
+        ) {
+            ChannelMark(Modifier)
         }
     }
 }
@@ -225,7 +241,7 @@ private val OkKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
  * them to let go of their decoders.
  */
 @Composable
-fun FullScreenCamera(camera: Camera, minimizeStreams: Boolean, onCameraButton: (Int) -> Unit, onClose: () -> Unit) {
+fun FullScreenCamera(camera: Camera, minimizeStreams: Boolean, onCameraButton: (Int) -> Unit, onChannel: (Int) -> Unit, onClose: () -> Unit) {
     CameraView(
         url = camera.url,
         useTcp = camera.useTcp,
@@ -235,8 +251,24 @@ fun FullScreenCamera(camera: Camera, minimizeStreams: Boolean, onCameraButton: (
         fullScreen = true,
         onCloseFullScreen = onClose,
         onCameraButton = onCameraButton,
+        onChannel = onChannel,
         waitForOtherPlayers = minimizeStreams,
     )
+}
+
+/** Only shows that the remote's channel up and down switch cameras, like its CH rocker; the remote never lands on it */
+@Composable
+private fun ChannelMark(modifier: Modifier) {
+    Column(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        MdiIcon("mdi:chevron-up", size = 28.dp, color = Color.White)
+        Text("CH", style = MaterialTheme.typography.labelMedium, color = Color.White)
+        MdiIcon("mdi:chevron-down", size = 28.dp, color = Color.White)
+    }
 }
 
 /** Only shows that left and right switch to another camera or alert; the remote never lands on it. A dark copy behind keeps it readable over any picture. */
@@ -268,6 +300,8 @@ fun CameraGrid(
     // Moves the selection to the camera with this id, then calls [onCameraSelected]
     selectCamera: String? = null,
     onCameraSelected: () -> Unit = {},
+    // The camera the selection is on, as it moves
+    onCameraFocused: (String) -> Unit = {},
 ) {
     if (cameras.isEmpty()) {
         SettingsPrompt(null, "Set up cameras", onSetUp, modifier)
@@ -288,7 +322,10 @@ fun CameraGrid(
         modifier = modifier,
         selectKey = selectCamera,
         onSelected = onCameraSelected,
-        onFocus = { selectedId = it.id },
+        onFocus = {
+            selectedId = it.id
+            onCameraFocused(it.id)
+        },
     ) { camera ->
         val live = playSubstreams && camera.substreamUrl.isNotEmpty()
         var playing by remember(camera.id) { mutableStateOf(false) }

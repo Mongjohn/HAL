@@ -226,6 +226,8 @@ class MainActivity : ComponentActivity() {
                     }
                     // A number button on the Cameras tab: the selection goes to that camera
                     var gridCameraDue by remember { mutableStateOf<String?>(null) }
+                    // The Cameras tab's camera the selection was last on: channel up and down go on from it
+                    var gridFocusedCamera by remember { mutableStateOf<String?>(null) }
                     // The colour buttons open the tabs, with the selection on the tab. A number button picks
                     // a camera: selected on the Cameras tab, as the Home tab's camera everywhere else. The
                     // dot button selects the cog.
@@ -244,6 +246,19 @@ class MainActivity : ComponentActivity() {
                                     HomeTab.Assistant -> assistantTabFocus
                                 }
                                 runCatching { tabFocus.requestFocus() }
+                            }
+                            return true
+                        }
+                        // Channel up and down: the next or previous camera, on the Home tab wherever the
+                        // selection is, and on the Cameras tab the selection moves to it
+                        channelStep(event)?.let { step ->
+                            if (tab != HomeTab.Home && tab != HomeTab.Cameras) return false
+                            if (event.type == KeyEventType.KeyDown) {
+                                if (tab == HomeTab.Cameras) {
+                                    steppedCamera(cameras, gridFocusedCamera, step)?.let { gridCameraDue = it.id }
+                                } else {
+                                    steppedCamera(cameras, camera?.id, step)?.let(::selectCamera)
+                                }
                             }
                             return true
                         }
@@ -318,6 +333,7 @@ class MainActivity : ComponentActivity() {
                                 onSetUp = { camerasOpen = true },
                                 selectCamera = gridCameraDue,
                                 onCameraSelected = { gridCameraDue = null },
+                                onCameraFocused = { gridFocusedCamera = it },
                                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
                             )
                         } else if (tab == HomeTab.Alerts) {
@@ -533,6 +549,7 @@ class MainActivity : ComponentActivity() {
                             it,
                             minimizeVideoStreams,
                             onCameraButton = { index -> cameras.getOrNull(index)?.let { picked -> fullScreenCamera = picked } },
+                            onChannel = { step -> steppedCamera(cameras, it.id, step)?.let { picked -> fullScreenCamera = picked } },
                             onClose = { fullScreenCamera = null },
                         )
                     }
