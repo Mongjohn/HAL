@@ -10,9 +10,11 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.Gravity
 import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -286,7 +288,14 @@ fun CameraView(
     val frame = remember { AspectRatioFrameLayout(context).apply { resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT } }
     val video = remember {
         SurfaceView(context).also {
-            frame.addView(it, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            // Centred: the frame itself is laid out over the whole space, only the picture takes the stream's shape
+            frame.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+            // The picture's layer only follows the view when the window draws again, and Compose may lay the view
+            // out after this frame's drawing started: on a still screen, like full screen, the layer kept the last
+            // camera's size and place, squeezing the picture and showing the launcher around it (Kitchen TV, 2026-11-05)
+            it.addOnLayoutChangeListener { view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                if (left != oldLeft || top != oldTop || right != oldRight || bottom != oldBottom) view.postOnAnimation { frame.invalidate() }
+            }
         }
     }
 
