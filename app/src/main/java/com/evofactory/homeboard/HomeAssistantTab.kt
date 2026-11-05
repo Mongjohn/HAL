@@ -337,7 +337,7 @@ fun HaAssistantTab(
             }
             // One card, selected as a whole, with its buttons once gone into
             @Composable
-            fun Card(card: SensorCard, up: FocusRequester?, window: CardWindow?, maxHeight: Dp? = null) {
+            fun Card(card: SensorCard, up: FocusRequester?, window: CardWindow?, minHeight: Dp? = null, maxHeight: Dp? = null) {
                 // Selection's weather cards have the weather's name as title, which its reading says already
                 val weather = card.ids.first().takeIf { card.isWeather && board == null }
                 AssistantCard(
@@ -347,6 +347,7 @@ fun HaAssistantTab(
                     entered = entered == card.key,
                     onEnter = { entered = card.key },
                     onLeave = { entered = null },
+                    minHeight = minHeight,
                     maxHeight = maxHeight,
                 ) { raised, firstButton, onButtonFocused ->
                     if (weather != null) {
@@ -357,8 +358,8 @@ fun HaAssistantTab(
                 }
             }
             if (sectionColumns) {
-                SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus) { card, up, columnWindow, maxHeight ->
-                    Card(card, up, columnWindow, maxHeight)
+                SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus) { card, up, columnWindow, minHeight, maxHeight ->
+                    Card(card, up, columnWindow, minHeight, maxHeight)
                 }
                 return@BoxWithConstraints
             }
@@ -418,7 +419,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
     up: FocusRequester,
     leading: LeadingItem?,
     columnsFocus: FocusRequester?,
-    card: @Composable (SensorCard, FocusRequester?, CardWindow?, Dp?) -> Unit,
+    card: @Composable (SensorCard, FocusRequester?, CardWindow?, Dp?, Dp?) -> Unit,
 ) {
     val density = LocalDensity.current
     val viewHeight = constraints.maxHeight
@@ -427,9 +428,15 @@ private fun BoxWithConstraintsScope.SectionColumns(
     val gap = if (inset > 0.dp) inset else PanelItemSpacing
     // What comes before the columns, with its gap
     val lead = leading?.let { it.width + gap } ?: 0.dp
-    // Beside it, the first column with a tenth of the next at the edge
+    // On the tab, as many as fit with a tenth of the next at the edge. Beside what comes first,
+    // one column, with only the next one's edge showing: its rounded corners and padding, none of
+    // what's inside it. Alone, it ends at the inset.
     val shown = if (leading != null) 1 else ((maxWidth - inset + gap) / (MinCardWidth + gap)).toInt().coerceAtLeast(1)
-    val columnWidth = (maxWidth - inset - lead - gap * shown) / (shown + FirstPeek)
+    val columnWidth = when {
+        leading == null -> (maxWidth - inset - lead - gap * shown) / (shown + FirstPeek)
+        cards.size > 1 -> maxWidth - inset - lead - gap - CardSidePadding
+        else -> maxWidth - inset * 2 - lead
+    }
     // What shows of each neighbour once scrolled: what's left, shared between the two edges
     val sidePeek = ((maxWidth - columnWidth * shown - gap * (shown + 1)) / 2).coerceAtLeast(0.dp)
     val sideways = rememberScrollState()
@@ -446,7 +453,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
                 if (index <= 0) {
                     0
                 } else {
-                    val peek = columnWidth * 0.05f
+                    val peek = CardSidePadding
                     val left = inset + lead + (columnWidth + gap) * index
                     val right = left + columnWidth
                     val end = right + if (index < cards.size - 1) gap + peek else inset
@@ -490,7 +497,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
                 horizontalArrangement = Arrangement.spacedBy(gap),
             ) {
             cards.forEachIndexed { index, item ->
-                // Beside the camera: no taller than it, what doesn't fit scrolling inside the card
+                // Beside the camera: as tall as it, what doesn't fit scrolling inside the card
                 if (leading != null) {
                     key(item.key) {
                         Box(
@@ -500,7 +507,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
                                 .padding(horizontal = sideRoom)
                                 .onFocusChanged { if (it.hasFocus) selected = index },
                         ) {
-                            card(item, up, null, leading.height)
+                            card(item, up, null, leading.height, leading.height)
                         }
                     }
                     return@forEachIndexed
@@ -510,6 +517,8 @@ private fun BoxWithConstraintsScope.SectionColumns(
                     val window = with(density) {
                         CardWindow(scroll, viewHeight + (CardPeek + bottom.peek).roundToPx(), CardFadeTop.roundToPx(), bottom.clearance.roundToPx(), CardPeek.roundToPx())
                     }
+                    // At least the column's whole height, down to where the cards end once scrolled
+                    val fullHeight = with(density) { viewHeight.toDp() } + bottom.peek - bottom.end
                     CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
                         Column(
                             Modifier
@@ -522,7 +531,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
                                 .verticalScroll(scroll)
                                 .padding(start = sideRoom, end = sideRoom, top = CardPeek, bottom = bottom.end),
                         ) {
-                            card(item, up, window, null)
+                            card(item, up, window, fullHeight, null)
                         }
                     }
                 }
@@ -540,6 +549,9 @@ class LeadingItem(val width: Dp, val height: Dp, val content: @Composable () -> 
 
 // The share of the next column showing at first
 private const val FirstPeek = 0.1f
+
+// Between a card's edge and what's inside it
+private val CardSidePadding = 16.dp
 
 /** Never scrolls to bring something into view: for a scroll that's moved by hand */
 @OptIn(ExperimentalFoundationApi::class)
@@ -653,7 +665,8 @@ private fun Modifier.scrollsThrough(window: CardWindow, active: Boolean): Modifi
  * that way. [content] gets whether the card is raised, its first button, and what to
  * call when a button is selected, with its index. A card taller than the screen scrolls through,
  * see [scrollsThrough]. With a [maxHeight] instead of a [window], the card is no taller, and what
- * doesn't fit scrolls inside it, fading out at its edges (see [scrollsInside]).
+ * doesn't fit scrolls inside it, fading out at its edges (see [scrollsInside]). It's at least
+ * [minHeight] high, e.g. to fill a column.
  */
 @OptIn(ExperimentalFoundationApi::class) // BringIntoViewRequester, LocalBringIntoViewSpec
 @Composable
@@ -664,6 +677,7 @@ private fun AssistantCard(
     entered: Boolean,
     onEnter: () -> Unit,
     onLeave: () -> Unit,
+    minHeight: Dp? = null,
     maxHeight: Dp? = null,
     content: @Composable (raised: Boolean, firstButton: FocusRequester, onButtonFocused: (Int) -> Unit) -> Unit,
 ) {
@@ -759,9 +773,9 @@ private fun AssistantCard(
                     else -> Modifier
                 },
             )
-            .then(if (maxHeight != null) Modifier.heightIn(max = maxHeight) else Modifier)
+            .heightIn(min = minHeight ?: Dp.Unspecified, max = maxHeight ?: Dp.Unspecified)
             .background(if (entered) RaisedSurface else colors.surfaceVariant, shape)
-            .padding(horizontal = 16.dp, vertical = if (maxHeight != null) 0.dp else 12.dp),
+            .padding(horizontal = CardSidePadding, vertical = if (maxHeight != null) 0.dp else 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (maxHeight == null) {
