@@ -1,6 +1,8 @@
 package com.evofactory.homeboard
 
+import android.media.MediaCodec
 import android.media.MediaCodecList
+import android.media.MediaFormat
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
@@ -37,8 +39,10 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.util.ParsableBitArray
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.container.NalUnitUtil
+import androidx.media3.extractor.AacUtil
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.Dispatchers
@@ -57,8 +61,12 @@ import java.net.NoRouteToHostException
 import java.net.Socket
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
+import kotlin.math.abs
+import kotlin.math.log10
 import kotlin.random.Random
 
 private const val TAG = "CameraTest"
@@ -507,6 +515,7 @@ private fun decoderLine(mime: String, width: Int, height: Int): Pair<String, Mar
 // What a few seconds of one track brought
 private class TrackSample(val track: TestTrack) {
     var packets = 0
+    var padded = 0
     var bytes = 0L
     var lost = 0
     private var lastSeq = -1
@@ -520,6 +529,7 @@ private class TrackSample(val track: TestTrack) {
     val nalTypes = mutableSetOf<Int>()
     val keyframes = mutableListOf<Long>()
     var inBandSps: ByteArray? = null
+    val aac = if (track.encoding == "MPEG4-GENERIC") AacFraming(track) else null
 
     fun add(packet: ByteArray, now: Long) {
         if (packet.size < 12 || packet[0].toInt() and 0xC0 != 0x80) return
@@ -541,10 +551,12 @@ private class TrackSample(val track: TestTrack) {
         lastTs = ts
         var offset = 12 + (packet[0].toInt() and 0x0F) * 4
         if (packet[0].toInt() and 0x10 != 0 && packet.size >= offset + 4) offset += 4 + u16(packet, offset + 2) * 4
+        if (packet[0].toInt() and 0x20 != 0) padded += 1
         val end = packet.size - if (packet[0].toInt() and 0x20 != 0) packet.last().toInt() and 0xFF else 0
         if (offset >= end) return
         bytes += end - offset
         val payload = packet.copyOfRange(offset, end)
+        aac?.add(payload, marker = packet[1].toInt() and 0x80 != 0)
         when (track.encoding) {
             "H264" -> h264Units(payload)
             "H265" -> h265Units(payload)
@@ -587,6 +599,224 @@ private class TrackSample(val track: TestTrack) {
         return units
     }
 }
+
+/**
+ * An AAC track's packets (RFC 3640): how the camera frames them, and the frames cut two ways. As
+ * Media3 1.11 cuts them: AU headers of 13 + 3 bits (6 + 2 in AAC-lbr) whatever the description says,
+ * and with one AU header the last AU-size bytes once the marker bit is set. As the AU headers place
+ * them: each AU's size, one after another past the headers.
+ */
+@OptIn(UnstableApi::class)
+private class AacFraming(track: TestTrack) {
+    private val lowBitrate = track.parameters["mode"].equals("AAC-lbr", ignoreCase = true)
+    private val sizeBits = track.parameters["sizelength"]?.toIntOrNull() ?: if (lowBitrate) 6 else 13
+    private val indexBits = track.parameters["indexlength"]?.toIntOrNull() ?: if (lowBitrate) 2 else 3
+    private val deltaBits = track.parameters["indexdeltalength"]?.toIntOrNull() ?: indexBits
+    private val media3SizeBits = if (lowBitrate) 6 else 13
+    private val media3HeaderBits = media3SizeBits + if (lowBitrate) 2 else 3
+
+    var packets = 0
+    var markers = 0
+    // AU headers in a packet → packets
+    val auCounts = sortedMapOf<Int, Int>()
+    // Bytes past the AU headers minus the AU sizes → packets
+    val leftovers = sortedMapOf<Int, Int>()
+    val firstPayloads = mutableListOf<String>()
+    val media3Frames = mutableListOf<ByteArray>()
+    val headerFrames = mutableListOf<ByteArray>()
+
+    // What Media3 writes to its sample queue: a sample is the last AU-size bytes written
+    private val written = ByteArrayOutputStream()
+
+    fun add(payload: ByteArray, marker: Boolean) {
+        if (payload.size < 2) return
+        packets += 1
+        if (marker) markers += 1
+        if (firstPayloads.size < 3) firstPayloads += hex(payload, 12)
+        val headersBits = u16(payload, 0)
+        val dataStart = 2 + (headersBits + 7) / 8
+        if (dataStart > payload.size) return
+        val bits = ParsableBitArray(payload)
+
+        bits.setPosition(16)
+        val sizes = mutableListOf<Int>()
+        var used = 0
+        while (used + sizeBits + (if (sizes.isEmpty()) indexBits else deltaBits) <= headersBits) {
+            sizes += bits.readBits(sizeBits)
+            val index = if (sizes.size == 1) indexBits else deltaBits
+            bits.skipBits(index)
+            used += sizeBits + index
+        }
+        auCounts.merge(sizes.size, 1, Int::plus)
+        leftovers.merge(payload.size - dataStart - sizes.sum(), 1, Int::plus)
+        var at = dataStart
+        sizes.forEach { size ->
+            if (at + size <= payload.size) headerFrames += payload.copyOfRange(at, at + size)
+            at += size
+        }
+
+        bits.setPosition(16)
+        val count = headersBits / media3HeaderBits
+        if (count == 1) {
+            val size = bits.readBits(media3SizeBits)
+            written.write(payload, 2, payload.size - 2)
+            if (marker) {
+                val all = written.toByteArray()
+                if (size <= all.size) media3Frames += all.copyOfRange(all.size - size, all.size)
+            }
+        } else {
+            var from = dataStart
+            repeat(count) {
+                val size = bits.readBits(media3SizeBits)
+                bits.skipBits(media3HeaderBits - media3SizeBits)
+                if (from + size <= payload.size) media3Frames += payload.copyOfRange(from, from + size)
+                from += size
+            }
+        }
+    }
+}
+
+private fun hex(bytes: ByteArray, count: Int) = bytes.take(count).joinToString(" ") { "%02X".format(it) } + if (bytes.size > count) " …" else ""
+
+// Starts with an ADTS header, the framing of .aac files, which RTP's AAC leaves out
+private fun isAdts(frame: ByteArray) = frame.size > 7 && frame[0] == 0xFF.toByte() && frame[1].toInt() and 0xF6 == 0xF0
+
+private fun withoutAdts(frame: ByteArray) = if (isAdts(frame)) frame.copyOfRange(if (frame[1].toInt() and 1 == 1) 7 else 9, frame.size) else frame
+
+private class DecodeResult(val frames: Int, val outputs: Int, val silent: Int, val peak: Int)
+
+/**
+ * Decodes AAC frames on this TV's decoder with the AudioSpecificConfig [config]. Its software decoder
+ * puts silence in place of a frame it rejects, so all-zero output means rejected frames (or a camera
+ * sending pure silence).
+ */
+private fun decodeAac(frames: List<ByteArray>, config: ByteArray, rate: Int, channels: Int): DecodeResult? {
+    if (frames.isEmpty() || rate <= 0) return null
+    val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, rate, channels).apply {
+        setByteBuffer("csd-0", ByteBuffer.wrap(config))
+    }
+    val codec = runCatching { MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_AAC) }.getOrNull() ?: return null
+    var outputs = 0
+    var silent = 0
+    var peak = 0
+    try {
+        codec.configure(format, null, null, 0)
+        codec.start()
+        val info = MediaCodec.BufferInfo()
+        var queued = 0
+        var ended = false
+        val frameUs = 1_024_000_000L / rate
+        val deadline = SystemClock.elapsedRealtime() + 3_000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (!ended) {
+                val input = codec.dequeueInputBuffer(10_000)
+                if (input >= 0) {
+                    if (queued < frames.size) {
+                        val frame = frames[queued]
+                        codec.getInputBuffer(input)?.apply { clear(); put(frame) }
+                        codec.queueInputBuffer(input, 0, frame.size, queued * frameUs, 0)
+                        queued += 1
+                    } else {
+                        codec.queueInputBuffer(input, 0, 0, queued * frameUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                        ended = true
+                    }
+                }
+            }
+            val output = codec.dequeueOutputBuffer(info, 10_000)
+            if (output < 0) continue
+            if (info.size > 0) {
+                outputs += 1
+                val pcm = codec.getOutputBuffer(output)?.apply { position(info.offset); limit(info.offset + info.size) }
+                    ?.order(ByteOrder.nativeOrder())?.asShortBuffer()
+                var loudest = 0
+                while (pcm != null && pcm.hasRemaining()) loudest = maxOf(loudest, abs(pcm.get().toInt()))
+                if (loudest == 0) silent += 1
+                peak = maxOf(peak, loudest)
+            }
+            codec.releaseOutputBuffer(output, false)
+            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+        }
+    } catch (e: Exception) {
+        AppLog.w(TAG, "AAC decode test failed", e)
+        return null
+    } finally {
+        runCatching { codec.stop() }
+        codec.release()
+    }
+    return DecodeResult(frames.size, outputs, silent, peak)
+}
+
+private suspend fun reportDecode(r: Reporter, label: String, result: DecodeResult?) {
+    if (result == null) {
+        r.line(label, "couldn't run this TV's AAC decoder", Mark.Warn, indent = true)
+        return
+    }
+    val level = if (result.peak > 0) " · peak %.0f dBFS".format(20 * log10(result.peak / 32768.0)) else ""
+    val sound = result.outputs - result.silent
+    r.line(
+        label,
+        "${result.frames} frames in, ${result.outputs} out · " + when {
+            result.outputs == 0 -> "no sound came out"
+            result.silent == 0 -> "all with sound$level"
+            sound == 0 -> "all silent: this TV's decoder rejects them"
+            else -> "$sound with sound, ${result.silent} silent$level"
+        },
+        when {
+            result.outputs > 0 && result.silent == 0 -> Mark.Good
+            sound > result.silent -> Mark.Warn
+            else -> Mark.Bad
+        },
+        indent = true,
+    )
+}
+
+@OptIn(UnstableApi::class)
+private suspend fun reportAac(r: Reporter, track: TestTrack, aac: AacFraming) {
+    if (aac.packets == 0) return
+    fun counts(map: Map<Int, Int>, name: (Int) -> String) = map.entries.joinToString(", ") { (key, packets) ->
+        name(key) + if (map.size > 1) " in $packets" else ""
+    }
+    r.line("AU headers", counts(aac.auCounts) { if (it == 1) "1 frame per packet" else "$it frames per packet" }, if (0 in aac.auCounts) Mark.Bad else Mark.Info, indent = true)
+    val leftover = counts(aac.leftovers) { bytes ->
+        when {
+            bytes == 0 -> "sizes match the packets"
+            bytes > 0 -> "$bytes bytes more than the sizes say"
+            else -> "${-bytes} bytes fewer than the sizes say"
+        }
+    }
+    r.line("AU sizes", leftover, if (aac.leftovers.keys == setOf(0)) Mark.Info else Mark.Warn, indent = true)
+    r.line(
+        "Marker bit",
+        if (aac.markers == aac.packets) "on every packet" else "on ${aac.markers} of ${aac.packets} packets: Media3 only takes a frame from a marked one",
+        if (aac.markers == aac.packets) Mark.Info else Mark.Warn,
+        indent = true,
+    )
+    aac.firstPayloads.forEachIndexed { i, bytes -> r.line(if (i == 0) "First packets" else "", bytes, indent = true) }
+    val adts = aac.headerFrames.count(::isAdts)
+    if (adts > 0) r.line("ADTS", "$adts of ${aac.headerFrames.size} frames start with an ADTS header, which RTP leaves out", Mark.Warn, indent = true)
+    aac.media3Frames.take(3).forEachIndexed { i, frame ->
+        r.line(if (i == 0) "Frames as Media3" else "", "${frame.size} bytes · ${hex(frame, 10)}", indent = true)
+    }
+
+    val channels = track.channels.coerceAtLeast(1)
+    // Media3 builds its own AAC-LC config from the clock rate and channels, ignoring the camera's
+    val media3Config = AacUtil.buildAacLcAudioSpecificConfig(track.clockRate, channels)
+    reportDecode(r, "Decoded here", decodeAac(aac.media3Frames, media3Config, track.clockRate, channels))
+    val sameCut = aac.headerFrames.size == aac.media3Frames.size && aac.headerFrames.indices.all { aac.headerFrames[it].contentEquals(aac.media3Frames[it]) }
+    if (!sameCut) {
+        aac.headerFrames.take(3).forEachIndexed { i, frame ->
+            r.line(if (i == 0) "Frames by headers" else "", "${frame.size} bytes · ${hex(frame, 10)}", indent = true)
+        }
+        reportDecode(r, "Cut by headers", decodeAac(aac.headerFrames, media3Config, track.clockRate, channels))
+    }
+    if (adts > 0) reportDecode(r, "Without ADTS", decodeAac(aac.headerFrames.map(::withoutAdts), media3Config, track.clockRate, channels))
+    val cameraConfig = track.parameters["config"]?.let { hexBytes(it) }
+    if (cameraConfig != null && !cameraConfig.contentEquals(media3Config)) {
+        reportDecode(r, "Camera's config", decodeAac(aac.headerFrames.map(::withoutAdts), cameraConfig, track.clockRate, channels))
+    }
+}
+
+private fun hexBytes(text: String) = text.takeIf { it.length % 2 == 0 }?.chunked(2)?.map { it.toIntOrNull(16)?.toByte() ?: return null }?.toByteArray()
 
 private fun u16(b: ByteArray, i: Int) = ((b[i].toInt() and 0xFF) shl 8) or (b[i + 1].toInt() and 0xFF)
 
@@ -652,6 +882,15 @@ private suspend fun sample(r: Reporter, rtsp: RtspTalk, tracks: List<TestTrack>,
         val bitrate = if (rate >= 1_000_000) "%.2f Mbit/s".format(rate / 1_000_000) else "%.0f kbit/s".format(rate / 1000)
         r.line(label, "${s.packets} packets · $bitrate · first after ${s.firstAt - playedAt} ms", Mark.Good)
         if (s.lost > 0) r.line("Lost", "${s.lost} packets (sequence gaps)", Mark.Warn, indent = true)
+        if (s.padded > 0) {
+            r.line(
+                "Padding",
+                "on ${s.padded} of ${s.packets} packets: the app takes it out over TCP only, so this camera needs TCP",
+                Mark.Warn,
+                indent = true,
+            )
+        }
+        s.aac?.let { reportAac(r, track, it) }
         if (track.media != "video" || track.clockRate <= 0) return@forEach
         val span = (s.lastTs - s.firstTs).toDouble() / track.clockRate
         if (s.frames > 1 && span > 0) r.line("Frame rate", "%.1f fps (%d frames in %.2f s of stream time)".format((s.frames - 1) / span, s.frames, span), indent = true)

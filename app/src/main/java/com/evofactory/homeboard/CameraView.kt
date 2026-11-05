@@ -941,7 +941,7 @@ private class CameraSocketFactory(private val onDescription: (String) -> String)
 }
 
 private class DescribedSocket(private val onDescription: (String) -> String) : Socket() {
-    private val filtered by lazy { SdpFilterStream(rawInput(), onDescription) }
+    private val filtered by lazy { RtspFilterStream(rawInput(), onDescription) }
 
     private fun rawInput(): InputStream = super.getInputStream()
 

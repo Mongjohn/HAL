@@ -57,74 +57,126 @@ internal fun attributeValue(line: String, name: String, payload: String): String
 private const val MAX_HEADERS_BYTES = 64 * 1024
 
 /**
- * Hands the camera's RTSP answers to the player, after [rewrite] has seen, and may change, the first
- * stream description (SDP) among them. From then on, everything, video included, passes as it comes.
+ * Hands the camera's RTSP connection to the player with two fixes. [rewrite] sees, and may change,
+ * each stream description (SDP). RTP packets interleaved on the connection (RTP over TCP) lose their
+ * padding: Media3 1.11 keeps it as payload, and its AAC reader takes a frame as the last AU-size bytes
+ * of the packet, so every padded frame reached the decoder shifted, which rejected it as silence
+ * (a camera that pads its audio to 4 bytes, 2026-11-05). Over UDP the player reads the packets
+ * itself, so their padding stays.
  */
-internal class SdpFilterStream(raw: InputStream, private val rewrite: (String) -> String) : InputStream() {
+internal class RtspFilterStream(raw: InputStream, private val rewrite: (String) -> String) : InputStream() {
     private val input = BufferedInputStream(raw)
     private var pending = ByteArray(0)
     private var next = 0
+    private var end = 0
+
+    // Lost track of where messages start: everything passes as it comes
     private var passThrough = false
 
     override fun read(): Int {
+        if (next < end) return pending[next++].toInt() and 0xff
         val one = ByteArray(1)
         return if (read(one, 0, 1) == -1) -1 else one[0].toInt() and 0xff
     }
 
     override fun read(b: ByteArray, off: Int, len: Int): Int {
         if (len == 0) return 0
-        if (next == pending.size) {
+        if (next == end) {
             if (passThrough) return input.read(b, off, len)
-            pending = nextAnswer() ?: return -1
+            pending = nextMessage() ?: return -1
             next = 0
+            end = pending.size
         }
-        val count = minOf(len, pending.size - next)
+        val count = minOf(len, end - next)
         System.arraycopy(pending, next, b, off, count)
         next += count
         return count
     }
 
-    override fun available() = pending.size - next + if (passThrough) input.available() else 0
+    override fun available() = end - next + if (passThrough) input.available() else 0
 
     override fun close() = input.close()
 
-    /** One answer: its headers, then a body as long as their Content-Length. Null at the end of the stream. */
-    private fun nextAnswer(): ByteArray? {
+    /** One interleaved packet or one answer, null at the end of the stream */
+    private fun nextMessage(): ByteArray? {
+        val first = input.read()
+        if (first == -1) return null
+        return if (first == '$'.code) interleaved() else answer(first)
+    }
+
+    /** '$', the channel, the packet's 16-bit length, then the packet, without its RTP padding */
+    private fun interleaved(): ByteArray {
+        val head = byteArrayOf('$'.code.toByte(), 0, 0, 0)
+        val got = readInto(head, 1, 3)
+        if (got < 3) return head.copyOf(1 + got)
+        val length = ((head[2].toInt() and 0xff) shl 8) or (head[3].toInt() and 0xff)
+        val frame = head.copyOf(4 + length)
+        val read = readInto(frame, 4, length)
+        if (read < length) return frame.copyOf(4 + read)
+        val padding = rtpPadding(frame, 4, length)
+        if (padding == 0) return frame
+        val kept = length - padding
+        frame[2] = (kept shr 8).toByte()
+        frame[3] = kept.toByte()
+        frame[4] = (frame[4].toInt() and 0xDF).toByte()
+        return frame.copyOf(4 + kept)
+    }
+
+    /** One answer: its headers, then a body as long as their Content-Length */
+    private fun answer(first: Int): ByteArray {
         val head = ByteArrayOutputStream()
-        var last4 = 0
-        while (true) {
+        head.write(first)
+        var last4 = first
+        while (last4 != 0x0D0A0D0A && last4 and 0xFFFF != 0x0A0A) {
             val c = input.read()
-            if (c == -1) return head.toByteArray().takeIf { it.isNotEmpty() }
+            if (c == -1) return head.toByteArray()
             head.write(c)
-            // Interleaved media before any description, or something else: nothing to change
-            if ((head.size() == 1 && c == '$'.code) || head.size() > MAX_HEADERS_BYTES) {
+            // Not an answer after all
+            if (head.size() > MAX_HEADERS_BYTES) {
                 passThrough = true
                 return head.toByteArray()
             }
             last4 = (last4 shl 8) or c
-            if (last4 == 0x0D0A0D0A || last4 and 0xFFFF == 0x0A0A) break
         }
         val headers = head.toString(Charsets.ISO_8859_1.name())
         val length = Regex("""(?im)^content-length:\s*(\d+)""").find(headers)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        val body = readBody(length)
-        if (!Regex("""(?im)^content-type:\s*application/sdp""").containsMatchIn(headers) || body.size < length) {
-            return head.toByteArray() + body
+        val body = ByteArray(length)
+        val read = readInto(body, 0, length)
+        if (read < length || !Regex("""(?im)^content-type:\s*application/sdp""").containsMatchIn(headers)) {
+            return head.toByteArray() + body.copyOf(read)
         }
-        passThrough = true
         val sdp = rewrite(String(body, Charsets.UTF_8)).toByteArray(Charsets.UTF_8)
         val newHeaders = headers.replace(Regex("""(?im)^(content-length:\s*)\d+"""), "$1${sdp.size}")
         return newHeaders.toByteArray(Charsets.ISO_8859_1) + sdp
     }
 
-    // Shorter only if the stream ended first
-    private fun readBody(length: Int): ByteArray {
-        val body = ByteArray(length)
+    // How many bytes it read, fewer only if the stream ended first
+    private fun readInto(buffer: ByteArray, offset: Int, length: Int): Int {
         var read = 0
         while (read < length) {
-            val count = input.read(body, read, length - read)
-            if (count == -1) return body.copyOf(read)
+            val count = input.read(buffer, offset + read, length - read)
+            if (count == -1) break
             read += count
         }
-        return body
+        return read
     }
+}
+
+/**
+ * The padding at the end of the RTP packet at [start], 0 if it has none or isn't RTP. RTCP keeps its
+ * own: its packet types (192 to 223) read as RTP payload types 64 to 95 with the marker, which RTP
+ * leaves unused for that reason.
+ */
+internal fun rtpPadding(packet: ByteArray, start: Int, length: Int): Int {
+    if (length < 12) return 0
+    val first = packet[start].toInt() and 0xff
+    if (first and 0xC0 != 0x80 || first and 0x20 == 0) return 0
+    if ((packet[start + 1].toInt() and 0xff) in 192..223) return 0
+    var header = 12 + (first and 0x0F) * 4
+    if (first and 0x10 != 0) {
+        if (length < header + 4) return 0
+        header += 4 + (((packet[start + header + 2].toInt() and 0xff) shl 8) or (packet[start + header + 3].toInt() and 0xff)) * 4
+    }
+    val padding = packet[start + length - 1].toInt() and 0xff
+    return if (padding in 1..length - header) padding else 0
 }

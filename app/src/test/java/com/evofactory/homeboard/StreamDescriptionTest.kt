@@ -45,12 +45,46 @@ class StreamDescriptionTest {
         val options = "RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: DESCRIBE, SETUP, PLAY\r\n\r\n"
         val describe = "RTSP/1.0 200 OK\r\nCSeq: 2\r\nContent-Type: application/sdp\r\nContent-Length: ${sdp.length}\r\n\r\n$sdp"
         val media = byteArrayOf('$'.code.toByte(), 0, 0, 2, 1, 2)
-        val stream = SdpFilterStream(ByteArrayInputStream((options + describe).toByteArray() + media), ::sdpWithoutAudio)
+        val stream = RtspFilterStream(ByteArrayInputStream((options + describe).toByteArray() + media), ::sdpWithoutAudio)
         val trimmed = session + video
         assertEquals(
             options + "RTSP/1.0 200 OK\r\nCSeq: 2\r\nContent-Type: application/sdp\r\nContent-Length: ${trimmed.length}\r\n\r\n$trimmed",
             String(stream.readNBytes(options.length + describe.length - bareAudio.length)),
         )
         assertEquals(media.toList(), stream.readAllBytes().toList())
+    }
+
+    // RTP header: version 2, padding bit as given, payload type 104 with the marker
+    private fun rtp(payload: List<Int>, padding: Int = 0): List<Int> {
+        val header = listOf(if (padding > 0) 0xA0 else 0x80, 0x80 or 104, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3)
+        return header + payload + List(padding) { if (it == padding - 1) padding else 0 }
+    }
+
+    private fun interleaved(channel: Int, packet: List<Int>) = listOf('$'.code, channel, packet.size shr 8, packet.size and 0xff) + packet
+
+    private fun bytes(values: List<Int>) = ByteArray(values.size) { values[it].toByte() }
+
+    @Test
+    fun rtpPaddingTakenOut() {
+        val aac = listOf(0x00, 0x10, 0x00, 0x18, 0x01, 0x1A, 0x15)
+        val answer = "RTSP/1.0 200 OK\r\nCSeq: 5\r\n\r\n".map { it.code }
+        val stream = RtspFilterStream(ByteArrayInputStream(bytes(interleaved(2, rtp(aac, padding = 3)) + answer)), { it })
+        val expected = interleaved(2, rtp(aac)) + answer
+        assertEquals(expected.map { it.toByte() }, stream.readAllBytes().toList())
+    }
+
+    @Test
+    fun unpaddedAndRtcpUnchanged() {
+        val plain = interleaved(0, rtp(listOf(0x40, 0x01, 0x0C)))
+        // RTCP sender report with a padding bit: RTCP keeps it
+        val rtcp = interleaved(1, listOf(0xA0, 200, 0, 6) + List(20) { 0 } + listOf(0, 0, 0, 4))
+        val stream = RtspFilterStream(ByteArrayInputStream(bytes(plain + rtcp)), { it })
+        assertEquals((plain + rtcp).map { it.toByte() }, stream.readAllBytes().toList())
+    }
+
+    @Test
+    fun paddingNeverEatsTheHeader() {
+        val packet = rtp(listOf(1, 2)).toMutableList().apply { this[0] = 0xA0; this[lastIndex] = 40 }
+        assertEquals(0, rtpPadding(bytes(packet), 0, packet.size))
     }
 }
