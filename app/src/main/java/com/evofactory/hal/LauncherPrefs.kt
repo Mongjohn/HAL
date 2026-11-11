@@ -42,8 +42,8 @@ class LauncherPrefs(context: Context) {
         get() = prefs.getBoolean("show_all_apps_tile", true)
         set(value) = prefs.edit { putBoolean("show_all_apps_tile", value) }
 
-    /** Shows hidden from Continue watching, see [WatchItem.hideKey] */
-    var hiddenWatching: List<String>
+    /** Cards hidden from the recommendations row, including previously hidden channel cards. */
+    var hiddenRecommendations: List<String>
         get() = readList("hidden_watching")
         set(value) = writeList("hidden_watching", value)
 

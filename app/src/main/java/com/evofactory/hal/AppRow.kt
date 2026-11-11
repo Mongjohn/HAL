@@ -58,6 +58,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -187,8 +189,9 @@ fun AppRow(
     onReorder: (List<String>) -> Unit,
     // Where up goes from the tile on screen in this 0-based slot
     upFocus: (slot: Int) -> FocusRequester,
-    // Where down goes from any tile
-    downFocus: FocusRequester,
+    recommendationApps: Set<String>,
+    recommendationsFocus: FocusRequester,
+    onRecommendationSource: (String?, FocusRequester?) -> Unit,
     // Focuses the tile that was left
     rowFocus: FocusRequester,
     // Each time this goes up, the selection goes to the first tile
@@ -369,10 +372,13 @@ fun AppRow(
                             width = tileWidth,
                             onClick = onNoAlertsClick,
                             modifier = Modifier
-                                .onFocusChanged { onNoAlertsSelected(it.hasFocus) }
+                                .onFocusChanged {
+                                    onNoAlertsSelected(it.hasFocus)
+                                    if (it.hasFocus) onRecommendationSource(null, null)
+                                }
                                 .focusProperties {
                                     up = upFocus(listState.slotOnScreen(NO_ALERTS_TILE_KEY))
-                                    down = downFocus
+                                    down = FocusRequester.Cancel
                                     left = FocusRequester.Cancel
                                 },
                         )
@@ -380,9 +386,15 @@ fun AppRow(
                 }
                 items(shown, key = { it }) { key ->
                     val requester = focusRequesters.getOrPut(key) { FocusRequester() }
+                    val moving = key == movingKey
+                    val hasRecommendations = !moving && key in recommendationApps
                     val tileFocus = Modifier
                         .onFocusChanged {
-                            if (it.hasFocus) selectedKey = key else if (selectedKey == key) selectedKey = null
+                            if (it.hasFocus) {
+                                selectedKey = key
+                                if (key == ALL_APPS_TILE_KEY) onRecommendationSource(null, null)
+                                else onRecommendationSource(key, requester)
+                            } else if (selectedKey == key) selectedKey = null
                         }
                         .focusRequester(requester)
                         .then(
@@ -395,7 +407,7 @@ fun AppRow(
                         )
                         .focusProperties {
                             up = upFocus(listState.slotOnScreen(key))
-                            down = downFocus
+                            down = if (hasRecommendations) recommendationsFocus else FocusRequester.Cancel
                             if (key == shown.first() && !showNoAlertsTile) left = FocusRequester.Cancel
                             if (key == shown.last()) right = FocusRequester.Cancel
                         }
@@ -410,7 +422,6 @@ fun AppRow(
                         return@items
                     }
                     val app = appsByKey[key] ?: return@items
-                    val moving = key == movingKey
                     AppTile(
                         app = app,
                         moving = moving,
@@ -423,8 +434,18 @@ fun AppRow(
                         modifier = Modifier
                             .width(tileWidth)
                             .then(tileFocus)
+                            .then(if (hasRecommendations) Modifier.semantics { stateDescription = "Recommendations below" } else Modifier)
                             .then(if (moving) Modifier.onPreviewKeyEvent(::onMoveKey) else Modifier),
                     ) {
+                        if (hasRecommendations && selectedKey == key) {
+                            MdiIcon(
+                                "mdi:chevron-down",
+                                modifier = Modifier.align(Alignment.BottomCenter)
+                                    .padding(bottom = 4.dp)
+                                    .background(Color.Black.copy(alpha = 0.8f), CircleShape),
+                                color = Color.White,
+                            )
+                        }
                         if (menuFor == app.key) {
                             ContextMenu(
                                 title = app.label,
@@ -476,7 +497,7 @@ private fun AppTile(
     moving: Boolean = false,
     hidden: Boolean = false,
     onLongClick: (() -> Unit)? = null,
-    overlay: @Composable () -> Unit = {},
+    overlay: @Composable BoxScope.() -> Unit = {},
 ) {
     val context = LocalContext.current
     val image by produceState(initialValue = cachedTileImage(app), app.key) {
