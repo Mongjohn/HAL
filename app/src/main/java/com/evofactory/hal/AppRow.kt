@@ -76,13 +76,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-// The one margin used everywhere: screen edges, between the top bar, the camera, the side panel
-// and the app row, and between app tiles
+// Screen edges and gaps around the top bar, camera, side panel and app row.
 val EdgePadding = 24.dp
 
 // Top of the top bar and its cog; windows with inputs open at this height, clear of the on-screen keyboard
 val TopPadding = EdgePadding
 internal val TileSpacing = EdgePadding
+private val DockTileSpacing = TileSpacing / 2
 
 // Between items inside a panel (Home Assistant readings, camera thumbnails)
 val PanelItemSpacing = 12.dp
@@ -142,7 +142,7 @@ fun AppRowPlaceholder() {
         val width = tileWidth(maxWidth)
         LazyRow(
             contentPadding = PaddingValues(horizontal = EdgePadding, vertical = TileGrowRoom),
-            horizontalArrangement = Arrangement.spacedBy(TileSpacing),
+            horizontalArrangement = Arrangement.spacedBy(DockTileSpacing),
         ) {
             items(VisibleTiles.toInt() + 1) { index ->
                 Card(
@@ -351,8 +351,8 @@ fun AppRow(
         val tileWidth = tileWidth(maxWidth)
         // Only scrolls when the selection leaves its slots; at either end of the row the list can't
         // scroll further, so the selection moves towards the edge instead
-        val firstPositionPx = with(LocalDensity.current) { (EdgePadding + (tileWidth + TileSpacing) * FocusSlot).toPx() }
-        val lastPositionPx = with(LocalDensity.current) { (EdgePadding + (tileWidth + TileSpacing) * LastFocusSlot).toPx() }
+        val firstPositionPx = with(LocalDensity.current) { (EdgePadding + (tileWidth + DockTileSpacing) * FocusSlot).toPx() }
+        val lastPositionPx = with(LocalDensity.current) { (EdgePadding + (tileWidth + DockTileSpacing) * LastFocusSlot).toPx() }
         val scrollSpec = remember(firstPositionPx, lastPositionPx) { scrollOutsideOf(firstPositionPx, lastPositionPx) }
 
         CompositionLocalProvider(LocalBringIntoViewSpec provides scrollSpec) {
@@ -362,7 +362,7 @@ fun AppRow(
                 modifier = Modifier.focusRequester(rowFocus).focusRestorer(),
                 // Vertical padding leaves room for the focused tile to grow without being clipped
                 contentPadding = PaddingValues(horizontal = EdgePadding, vertical = TileGrowRoom),
-                horizontalArrangement = Arrangement.spacedBy(TileSpacing),
+                horizontalArrangement = Arrangement.spacedBy(DockTileSpacing),
             ) {
                 if (showNoAlertsTile) {
                     item(key = NO_ALERTS_TILE_KEY) {
