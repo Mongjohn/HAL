@@ -348,6 +348,7 @@ class MainActivity : ComponentActivity() {
                                 homeAssistantSet = haServer.isSet,
                                 entityIds = haEntities,
                                 dashboard = haDisplay.dashboard,
+                                layout = haDisplay.layout,
                                 tabFocus = assistantTabFocus,
                                 onSetUp = { haDialogOpen = true },
                                 sectionColumns = haDisplay.sectionColumns,
@@ -379,6 +380,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             val homeEntities = remember(haEntities) { haEntities.filterNot(::isHaAction) }
+                            val sidePanelWidth = if (haDisplay.homeLayout.twoPerRow) TwoEntityCardWidth else SidePanelWidth
                             if (homeStrip) {
                                 // A dashboard in columns: the camera and the columns in one row that
                                 // scrolls sideways to the screen's right edge, the camera leaving on
@@ -391,12 +393,14 @@ class MainActivity : ComponentActivity() {
                                         .onFocusChanged { middleSelected = it.hasFocus },
                                 ) {
                                     // As large as when next to the panel
-                                    val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - EdgePadding * 3 - SidePanelWidth)
+                                    val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - EdgePadding * 3 - sidePanelWidth)
+                                        .coerceAtLeast(0.dp)
                                     HaAssistantTab(
                                         connection = haConnection,
                                         homeAssistantSet = haServer.isSet,
                                         entityIds = homeEntities,
                                         dashboard = haDisplay.homeDashboard,
+                                        layout = haDisplay.homeLayout,
                                         // The button next to the cog
                                         tabFocus = networkFocus,
                                         onSetUp = { haDialogOpen = true },
@@ -418,8 +422,8 @@ class MainActivity : ComponentActivity() {
                                 ) {
                                     val cameraWidth = minOf(
                                         maxHeight * 16f / 9f,
-                                        if (sideContent) maxWidth - SidePanelWidth - EdgePadding else maxWidth,
-                                    )
+                                        if (sideContent) maxWidth - sidePanelWidth - EdgePadding else maxWidth,
+                                    ).coerceAtLeast(0.dp)
                                     Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
                                         CameraBox(cameraWidth)
                                         if (sideContent && haDisplay.homeDashboard != null) {
@@ -429,6 +433,7 @@ class MainActivity : ComponentActivity() {
                                                 homeAssistantSet = haServer.isSet,
                                                 entityIds = homeEntities,
                                                 dashboard = haDisplay.homeDashboard,
+                                                layout = haDisplay.homeLayout,
                                                 // The button next to the cog
                                                 tabFocus = networkFocus,
                                                 onSetUp = { haDialogOpen = true },
@@ -440,6 +445,7 @@ class MainActivity : ComponentActivity() {
                                                 HomeAssistantPanel(
                                                     connection = haConnection,
                                                     entityIds = homeEntities,
+                                                    layout = haDisplay.homeLayout,
                                                     sensorsFocus = haSensorsFocus,
                                                     // The button next to the cog
                                                     upFocus = networkFocus,

@@ -47,7 +47,7 @@ import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
 
 /** The tabs once connected: the dashboard first, as it decides what the others are for, then choosing sensors and actions, and their order */
-private enum class HaTab(val label: String) { Home("Home Tab"), Dashboard("HA Tab"), Sensors("Sensors"), Actions("Actions"), Order("Order") }
+private enum class HaTab(val label: String) { Home("Home Tab"), Dashboard("HA Tab"), Entities("Entities"), Actions("Actions"), Order("Order") }
 
 /**
  * Home Assistant settings, in two steps: the address and how to log in (username and password, or
@@ -100,6 +100,8 @@ fun HomeAssistantDialog(
     // The same for the Home tab's panel, next to the camera
     var homeDashboard by remember { mutableStateOf(initialDisplay.homeDashboard) }
     var homeColumns by remember { mutableStateOf(initialDisplay.homeColumns) }
+    var layout by remember { mutableStateOf(initialDisplay.layout) }
+    var homeLayout by remember { mutableStateOf(initialDisplay.homeLayout) }
     var boards by remember { mutableStateOf<List<Pair<HaDashboardInfo, HaDashboard?>>>(emptyList()) }
     // The connected Home Assistant and what can be picked on it; set = second step, choosing
     var connected by remember { mutableStateOf<HaServer?>(null) }
@@ -181,9 +183,7 @@ fun HomeAssistantDialog(
                     getStates() to dashboards().map { it to parseDashboard(dashboardConfig(it.urlPath)) }
                 }
                 boards = found
-                available = states
-                    .filter { it.isPickable }
-                    .sortedBy { it.name.lowercase() }
+                available = states.sortedBy { it.name.lowercase() }
                 connected = server
                 status = null
             } catch (e: HaException) {
@@ -373,7 +373,7 @@ fun HomeAssistantDialog(
     // now: items would jump around while choosing
     val sensorSections = pickerSections(entities.filterNot { it.isAction }, sensorQuery, initialEntities)
     val actionSections = pickerSections(entities.filter { it.isAction }, actionQuery, initialEntities)
-    val orderRows = orderRows(selected, topBar, byId)
+    val orderRows = orderRows(selected, topBar, byId, layout.grouping)
     fun keysOf(sections: List<Pair<String, List<HaEntity>>>) = sections.flatMap { (_, items) -> items.map { it.id } }
 
     TopDialog(
@@ -389,7 +389,7 @@ fun HomeAssistantDialog(
                 val ids = entities.map { it.id }.toSet()
                 val chosen = selected.filter { it in ids }
                 onSave(server, if (server.refreshToken.isEmpty()) "" else loginUsername, chosen, topBar.filter { it in chosen },
-                    HaDisplay(dashboard, bottomRow, sectionColumns, homeDashboard, homeColumns),
+                    HaDisplay(dashboard, bottomRow, sectionColumns, homeDashboard, homeColumns, layout, homeLayout),
                 )
                 unsavedLogin = null
                 onDismiss()
@@ -398,22 +398,22 @@ fun HomeAssistantDialog(
         // The item last on, if still listed; otherwise the first in the order shown, or the search
         contentFocus = {
             when (tab) {
-                HaTab.Sensors -> sensorFocus.currentOrNull(keysOf(sensorSections)) ?: sensorSearch
+                HaTab.Entities -> sensorFocus.currentOrNull(keysOf(sensorSections)) ?: sensorSearch
                 HaTab.Actions -> actionFocus.currentOrNull(keysOf(actionSections)) ?: actionSearch
                 HaTab.Order -> orderFocus.currentOrNull(orderRows.filter { it.focusable }.map { it.key })
-                HaTab.Dashboard -> dashboardFocus.currentOrNull(listOf(MY_SELECTION) + boards.map { it.first.key } + BOTTOM_ROW + SECTION_COLUMNS)
-                HaTab.Home -> homeFocus.currentOrNull(listOf(MY_SELECTION) + boards.map { it.first.key } + SECTION_COLUMNS)
+                HaTab.Dashboard -> dashboardFocus.currentOrNull(dashboardChoiceKeys(boards, dashboard, showBottomRow = true))
+                HaTab.Home -> homeFocus.currentOrNull(dashboardChoiceKeys(boards, homeDashboard, showBottomRow = false))
             }
         },
         searchFocus = {
             when (tab) {
-                HaTab.Sensors -> sensorSearch
+                HaTab.Entities -> sensorSearch
                 HaTab.Actions -> actionSearch
                 HaTab.Order, HaTab.Dashboard, HaTab.Home -> null
             }
         },
         hint = when (tab) {
-            HaTab.Sensors -> "OK selects · ${selected.count { !isHaAction(it) }} chosen"
+            HaTab.Entities -> "OK selects · ${selected.count { !isHaAction(it) }} chosen"
             HaTab.Actions -> "OK: top bar → chosen → off · ${selected.count(::isHaAction)} chosen · " +
                 "${topBar.size} of $MAX_HA_ACTIONS in the top bar"
             HaTab.Order -> when {
@@ -426,7 +426,7 @@ fun HomeAssistantDialog(
         },
     ) {
         when (tab) {
-            HaTab.Sensors -> EntityPicker(
+            HaTab.Entities -> EntityPicker(
                 sections = sensorSections,
                 query = sensorQuery,
                 onQueryChange = { sensorQuery = it },
@@ -467,7 +467,9 @@ fun HomeAssistantDialog(
                 boards = boards,
                 chosen = dashboard,
                 onChoose = { dashboard = it },
-                selectionDetail = "The sensors and actions chosen in the other tabs, in the Order tab's order, by room",
+                selectionDetail = "Show the items chosen in Entities and Actions",
+                layout = layout,
+                onLayoutChange = { layout = it },
                 bottomRow = bottomRow,
                 onBottomRowChange = { bottomRow = it },
                 sectionColumns = sectionColumns,
@@ -478,7 +480,9 @@ fun HomeAssistantDialog(
                 boards = boards,
                 chosen = homeDashboard,
                 onChoose = { homeDashboard = it },
-                selectionDetail = "The weather and sensors chosen in the other tabs; OK on them opens the Assistant tab",
+                selectionDetail = "Show the items chosen in Entities. OK on the panel opens the Assistant tab.",
+                layout = homeLayout,
+                onLayoutChange = { homeLayout = it },
                 bottomRow = null,
                 onBottomRowChange = {},
                 sectionColumns = homeColumns,
@@ -492,9 +496,9 @@ fun HomeAssistantDialog(
                 onMovingChange = { movingKey = it },
                 onMove = { key, by ->
                     selected = if (key.startsWith(CARD_ROW)) {
-                        moveSensorCard(selected, byId, key.removePrefix(CARD_ROW), by)
+                        moveSensorCard(selected, byId, key.removePrefix(CARD_ROW), by, layout.grouping)
                     } else {
-                        moveSensor(selected, byId, key, by)
+                        moveSensor(selected, byId, key, by, layout.grouping)
                     }
                 },
                 onCancel = { selected = it },
@@ -538,7 +542,7 @@ private fun pickerSections(entities: List<HaEntity>, query: String, first: List<
 // Types without a room, in this order; any other after them
 private val TypeOrder = listOf("sensor", "binary_sensor", "scene", "script", "button")
 
-/** The Sensors or Actions tab: a search, then [sections] of entities, each with its [mark] at the end. What OK does is the dialog's hint. */
+/** The Entities or Actions tab: a search, then [sections] of entities, each with its [mark] at the end. */
 @Composable
 private fun TopDialogScope.EntityPicker(
     sections: List<Pair<String, List<HaEntity>>>,
@@ -656,6 +660,8 @@ private fun DashboardChoice(
     chosen: String?,
     onChoose: (String?) -> Unit,
     selectionDetail: String,
+    layout: HaCardLayout,
+    onLayoutChange: (HaCardLayout) -> Unit,
     bottomRow: Boolean?,
     onBottomRowChange: (Boolean) -> Unit,
     sectionColumns: Boolean,
@@ -671,7 +677,7 @@ private fun DashboardChoice(
                 modifier = rowModifier(MY_SELECTION),
             ) { onChoose(null) }
         }
-        val shown = boards.filter { (info, board) -> (board != null && board.views.isNotEmpty()) || info.key == chosen }
+        val shown = dashboardChoices(boards, chosen)
         items(shown, key = { it.first.key }) { (info, board) ->
             val detail = when {
                 board == null -> "Built by Home Assistant itself, with nothing to read: your selection shows instead"
@@ -682,7 +688,39 @@ private fun DashboardChoice(
                     board.skipped.takeIf { it.isNotEmpty() }?.let { "not shown: ${it.joinToString(", ")}" },
                 ).joinToString(" · ")
             }
-            ChoiceRow(info.title, detail, checked = chosen == info.key, modifier = rowModifier(info.key)) { onChoose(info.key) }
+            val title = info.urlPath?.let { "${info.title} (/$it)" } ?: info.title
+            ChoiceRow(title, detail, checked = chosen == info.key, modifier = rowModifier(info.key)) { onChoose(info.key) }
+        }
+        if (chosen == null) {
+            item(key = CARD_GROUPING) {
+                ChoiceRow(
+                    "Card grouping · ${layout.grouping.label}",
+                    "OK switches between area or room, entity type, and one card.",
+                    checked = false,
+                    modifier = rowModifier(CARD_GROUPING).padding(top = 8.dp),
+                ) {
+                    val groups = HaCardGrouping.entries
+                    onLayoutChange(layout.copy(grouping = groups[(layout.grouping.ordinal + 1) % groups.size]))
+                }
+            }
+            item(key = CARD_SORT) {
+                ChoiceRow(
+                    "Sort cards A–Z",
+                    "Off uses the manual order. The Order tab sets the Assistant tab's manual order.",
+                    checked = layout.alphabetical,
+                    modifier = rowModifier(CARD_SORT),
+                    switch = true,
+                ) { onLayoutChange(layout.copy(alphabetical = !layout.alphabetical)) }
+            }
+        }
+        item(key = ENTITY_ROWS) {
+            ChoiceRow(
+                "Two entities per row",
+                "Show two readings or controls side by side. Weather, graphs and gauges keep their own row.",
+                checked = layout.twoPerRow,
+                modifier = rowModifier(ENTITY_ROWS),
+                switch = true,
+            ) { onLayoutChange(layout.copy(twoPerRow = !layout.twoPerRow)) }
         }
         if (bottomRow != null) {
             item(key = BOTTOM_ROW) {
@@ -695,7 +733,7 @@ private fun DashboardChoice(
                 ) { onBottomRowChange(!bottomRow) }
             }
         }
-        item(key = SECTION_COLUMNS) {
+        if (bottomRow != null || chosen != null) item(key = SECTION_COLUMNS) {
             ChoiceRow(
                 "Display sections as columns",
                 "Each section in a column of its own, scrolling sideways. Off: the sections fill as many columns as fit.",
@@ -706,6 +744,26 @@ private fun DashboardChoice(
         }
     }
 }
+
+private fun dashboardChoices(boards: List<Pair<HaDashboardInfo, HaDashboard?>>, chosen: String?) =
+    boards.filter { (info, board) -> board?.views?.isNotEmpty() == true || info.key == chosen }
+
+private fun dashboardChoiceKeys(
+    boards: List<Pair<HaDashboardInfo, HaDashboard?>>,
+    chosen: String?,
+    showBottomRow: Boolean,
+) = buildList {
+    add(MY_SELECTION)
+    addAll(dashboardChoices(boards, chosen).map { it.first.key })
+    if (chosen == null) addAll(listOf(CARD_GROUPING, CARD_SORT))
+    add(ENTITY_ROWS)
+    if (showBottomRow) add(BOTTOM_ROW)
+    if (showBottomRow || chosen != null) add(SECTION_COLUMNS)
+}
+
+private const val CARD_GROUPING = "card_grouping"
+private const val CARD_SORT = "card_sort"
+private const val ENTITY_ROWS = "entity_rows"
 
 // The rows of the switches, after the dashboards
 private const val BOTTOM_ROW = "bottom_row"
@@ -768,8 +826,8 @@ private class OrderRow(
 }
 
 /** The cards of the Assistant tab, each title followed by its entities; a weather card is only its title */
-private fun orderRows(ids: List<String>, topBar: List<String>, entities: Map<String, HaEntity>): List<OrderRow> = buildList {
-    val cards = sensorCards(ids, entities)
+private fun orderRows(ids: List<String>, topBar: List<String>, entities: Map<String, HaEntity>, grouping: HaCardGrouping): List<OrderRow> = buildList {
+    val cards = sensorCards(ids, entities, grouping)
     cards.forEach { card ->
         val weather = card.ids.singleOrNull()?.takeIf(::isHaWeather)
         add(

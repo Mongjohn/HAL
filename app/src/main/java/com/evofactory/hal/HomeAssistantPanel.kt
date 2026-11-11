@@ -243,6 +243,7 @@ fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboards: 
 fun HomeAssistantPanel(
     connection: HaConnection,
     entityIds: List<String>,
+    layout: HaCardLayout,
     sensorsFocus: FocusRequester,
     upFocus: FocusRequester,
     onLogIn: () -> Unit,
@@ -261,7 +262,7 @@ fun HomeAssistantPanel(
     }
     val entities = connection.entities
     // The weather has its own tiles, above
-    val cards = sensorCards(entityIds.filterNot(::isHaWeather), entities)
+    val cards = layout.selectionCards(entityIds.filterNot(::isHaWeather), entities)
     val weatherIds = entityIds.filter(::isHaWeather)
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         weatherIds.forEachIndexed { index, id ->
@@ -307,7 +308,12 @@ fun HomeAssistantPanel(
                             modifier = Modifier.padding(top = if (index > 0) 4.dp else 0.dp),
                         )
                     }
-                    card.ids.forEach { id -> SensorReading(id, entities[id]) }
+                    card.entityRows(layout.twoPerRow).forEach { row ->
+                        HaEntityRow(row) { position ->
+                            val id = card.ids[position]
+                            SensorReading(id, entities[id])
+                        }
+                    }
                 }
             }
             Box(

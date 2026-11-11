@@ -209,9 +209,6 @@ class HaEntity(
     /** Scenes, scripts and buttons: shown as buttons that run them */
     val isAction get() = domain in ActionDomains
 
-    /** What can be shown above the app row: actions, weather, sensors and binary sensors (doors, motion…) */
-    val isPickable get() = isAction || domain in setOf("weather", "sensor", "binary_sensor")
-
     /** Weather: the current temperature, in [temperatureUnit] */
     val temperature: Double? get() = attributes.optDouble("temperature").takeUnless { it.isNaN() }
     val temperatureUnit: String? get() = attributes.string("temperature_unit")
@@ -515,9 +512,9 @@ class HaSession internal constructor(private val socket: WebSocket) {
         false
     }
 
-    /** The dashboards: Home Assistant's default one, Overview, then the ones added to it */
+    /** The default dashboard route, followed by explicitly named dashboards. */
     suspend fun dashboards(): List<HaDashboardInfo> =
-        listOf(HaDashboardInfo(null, "Overview")) +
+        listOf(HaDashboardInfo(null, "Home Assistant default dashboard")) +
             (optionalCommand("lovelace/dashboards/list") as? JSONArray).objects().mapNotNull { board ->
                 val path = board.string("url_path") ?: return@mapNotNull null
                 HaDashboardInfo(path, board.string("title") ?: path)

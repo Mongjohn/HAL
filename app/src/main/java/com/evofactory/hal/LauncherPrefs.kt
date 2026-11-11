@@ -102,6 +102,8 @@ class LauncherPrefs(context: Context) {
             sectionColumns = prefs.getBoolean("ha_section_columns", false),
             homeDashboard = prefs.getString("ha_home_dashboard", null),
             homeColumns = prefs.getBoolean("ha_home_columns", true),
+            layout = readHaLayout("ha_layout"),
+            homeLayout = readHaLayout("ha_home_layout"),
         )
         set(value) = prefs.edit {
             if (value.dashboard == null) remove("ha_dashboard") else putString("ha_dashboard", value.dashboard)
@@ -109,9 +111,24 @@ class LauncherPrefs(context: Context) {
             putBoolean("ha_section_columns", value.sectionColumns)
             if (value.homeDashboard == null) remove("ha_home_dashboard") else putString("ha_home_dashboard", value.homeDashboard)
             putBoolean("ha_home_columns", value.homeColumns)
+            putHaLayout("ha_layout", value.layout)
+            putHaLayout("ha_home_layout", value.homeLayout)
             // The bottom row's first version, which only hid the alerts row
             remove("ha_alerts_row")
         }
+
+    private fun readHaLayout(key: String) = HaCardLayout(
+        grouping = HaCardGrouping.entries.firstOrNull { it.name == prefs.getString("${key}_grouping", null) }
+            ?: HaCardGrouping.Area,
+        alphabetical = prefs.getBoolean("${key}_alphabetical", false),
+        twoPerRow = prefs.getBoolean("${key}_two_per_row", false),
+    )
+
+    private fun SharedPreferences.Editor.putHaLayout(key: String, layout: HaCardLayout) {
+        putString("${key}_grouping", layout.grouping.name)
+        putBoolean("${key}_alphabetical", layout.alphabetical)
+        putBoolean("${key}_two_per_row", layout.twoPerRow)
+    }
 
     // Together: before the top bar was a choice of its own, the actions were in another list
     fun saveHaChoice(entities: List<String>, topBar: List<String>) {

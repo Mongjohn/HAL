@@ -25,6 +25,18 @@ class HaDashboard(val views: List<DashboardView>, val names: Map<String, String>
 
 class DashboardView(val title: String, val cards: List<SensorCard>)
 
+enum class HaCardGrouping(val label: String) {
+    Area("Area / room"),
+    Type("Entity type"),
+    None("One card"),
+}
+
+data class HaCardLayout(
+    val grouping: HaCardGrouping = HaCardGrouping.Area,
+    val alphabetical: Boolean = false,
+    val twoPerRow: Boolean = false,
+)
+
 /**
  * What the Assistant tab and the Home tab's panel show of Home Assistant: each a [dashboard] (its
  * key, see [HaDashboardInfo.key]) or, if null, the sensors and actions chosen; the Assistant tab
@@ -36,6 +48,8 @@ data class HaDisplay(
     val sectionColumns: Boolean = false,
     val homeDashboard: String? = null,
     val homeColumns: Boolean = true,
+    val layout: HaCardLayout = HaCardLayout(),
+    val homeLayout: HaCardLayout = HaCardLayout(),
 ) {
     /** The dashboards to read, each once */
     val dashboards get() = listOfNotNull(dashboard, homeDashboard).distinct()

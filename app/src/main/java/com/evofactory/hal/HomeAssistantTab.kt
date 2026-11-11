@@ -103,6 +103,20 @@ class SensorCard(
 ) {
     /** A weather alone: shown as a weather card, with its forecast */
     val isWeather get() = ids.size == 1 && isHaWeather(ids.first()) && subtitles.isEmpty()
+
+    fun entityRows(twoPerRow: Boolean): List<IntRange> = buildList {
+        var first = 0
+        while (first < ids.size) {
+            val second = first + 1
+            val pair = twoPerRow && second < ids.size && second !in subtitles &&
+                !isFullWidth(ids[first]) && !isFullWidth(ids[second])
+            val last = if (pair) second else first
+            add(first..last)
+            first = last + 1
+        }
+    }
+
+    private fun isFullWidth(id: String) = isHaWeather(id) || id in gauges || id in graphs
 }
 
 /**
@@ -112,12 +126,18 @@ class SensorCard(
  * there, so one list of ids holds both orders. Rooms are known once connected: until then, an
  * entity is under its type.
  */
-fun sensorCards(ids: List<String>, entities: Map<String, HaEntity>): List<SensorCard> {
-    val anyRoom = ids.any { !isHaWeather(it) && entities[it]?.area != null }
+fun sensorCards(
+    ids: List<String>,
+    entities: Map<String, HaEntity>,
+    grouping: HaCardGrouping = HaCardGrouping.Area,
+): List<SensorCard> {
+    val anyRoom = grouping == HaCardGrouping.Area && ids.any { !isHaWeather(it) && entities[it]?.area != null }
     return ids
         .groupBy { id ->
             when {
                 isHaWeather(id) -> "weather:$id"
+                grouping == HaCardGrouping.None -> "entities"
+                grouping == HaCardGrouping.Type -> "type:${haEntityType(id)}"
                 else -> entities[id]?.area?.let { "room:$it" } ?: "type:${haEntityType(id)}"
             }
         }
@@ -125,10 +145,17 @@ fun sensorCards(ids: List<String>, entities: Map<String, HaEntity>): List<Sensor
             val first = cardIds.first()
             val title = when {
                 isHaWeather(first) -> entities[first]?.name ?: "Weather"
-                else -> entities[first]?.area ?: sensorTypeTitle(haEntityType(first), anyRoom)
+                key == "entities" -> "Entities"
+                key.startsWith("room:") -> key.removePrefix("room:")
+                else -> sensorTypeTitle(haEntityType(first), anyRoom)
             }
             SensorCard(key, title, cardIds)
         }
+}
+
+fun HaCardLayout.selectionCards(ids: List<String>, entities: Map<String, HaEntity>): List<SensorCard> {
+    val cards = sensorCards(ids, entities, grouping)
+    return if (alphabetical) cards.sortedBy { it.title.lowercase() } else cards
 }
 
 /** Title of the entities of a [domain] without a room: "Other …" when some have one */
@@ -139,14 +166,14 @@ fun sensorTypeTitle(domain: String, anyRoom: Boolean): String {
         "scene" -> "scenes"
         "script" -> "scripts"
         "button" -> "buttons"
-        else -> domain
+        else -> domain.replace('_', ' ')
     }
     return if (anyRoom) "Other $type" else type.replaceFirstChar { it.uppercase() }
 }
 
 /** [ids] with the card [key] moved [by] cards (-1 up, 1 down) */
-fun moveSensorCard(ids: List<String>, entities: Map<String, HaEntity>, key: String, by: Int): List<String> {
-    val cards = sensorCards(ids, entities).toMutableList()
+fun moveSensorCard(ids: List<String>, entities: Map<String, HaEntity>, key: String, by: Int, grouping: HaCardGrouping): List<String> {
+    val cards = sensorCards(ids, entities, grouping).toMutableList()
     val from = cards.indexOfFirst { it.key == key }
     if (from < 0 || from + by !in cards.indices) return ids
     cards.add(from + by, cards.removeAt(from))
@@ -154,8 +181,8 @@ fun moveSensorCard(ids: List<String>, entities: Map<String, HaEntity>, key: Stri
 }
 
 /** [ids] with [id] moved [by] places within its card, by swapping with its neighbour */
-fun moveSensor(ids: List<String>, entities: Map<String, HaEntity>, id: String, by: Int): List<String> {
-    val group = sensorCards(ids, entities).firstOrNull { id in it.ids }?.ids
+fun moveSensor(ids: List<String>, entities: Map<String, HaEntity>, id: String, by: Int, grouping: HaCardGrouping): List<String> {
+    val group = sensorCards(ids, entities, grouping).firstOrNull { id in it.ids }?.ids
     val other = group?.getOrNull(group.indexOf(id) + by) ?: return ids
     // Swapped in place: the card's first sensor stays where it was, so the cards keep their order
     return ids.map {
@@ -189,6 +216,7 @@ private val ViewRowHeight = 32.dp
 
 // Narrower and the names get cut: about 3 columns on a TV
 private val MinCardWidth = 280.dp
+internal val TwoEntityCardWidth = 400.dp
 
 /**
  * The Assistant tab: everything chosen ([entityIds]: weather, sensors, scenes, scripts and buttons), in
@@ -215,6 +243,7 @@ fun HaAssistantTab(
     dashboard: String?,
     tabFocus: FocusRequester,
     onSetUp: () -> Unit,
+    layout: HaCardLayout = HaCardLayout(),
     modifier: Modifier = Modifier,
     // Each card (a dashboard's section, or a room) in a column of its own, scrolling sideways
     sectionColumns: Boolean = false,
@@ -234,7 +263,7 @@ fun HaAssistantTab(
         !homeAssistantSet -> null to "Set up Home Assistant"
         connection.status == HaStatus.TokenRejected -> "Home Assistant rejected the login" to "Log in again"
         board == null && !reading && entityIds.isEmpty() ->
-            (if (missing) "This dashboard is built by Home Assistant itself, with nothing to read" else null) to "Choose sensors"
+            (if (missing) "This dashboard is built by Home Assistant itself, with nothing to read" else null) to "Choose entities"
         else -> null
     }
     if (prompt != null) {
@@ -258,13 +287,15 @@ fun HaAssistantTab(
         if (leading != null && all.size > 1) listOf(DashboardView(all.first().title, all.flatMap { it.cards })) else all
     }
     val viewTabs = remember(views.size) { List(views.size) { FocusRequester() } }
-    val cards = if (board != null) views.getOrNull(viewIndex)?.cards.orEmpty() else sensorCards(entityIds, entities)
+    val cards = if (board != null) views.getOrNull(viewIndex)?.cards.orEmpty() else layout.selectionCards(entityIds, entities)
+    val rowsByCard = cards.associate { it.key to it.entityRows(layout.twoPerRow) }
+    val minCardWidth = if (layout.twoPerRow) TwoEntityCardWidth else MinCardWidth
     val names = board?.names.orEmpty()
     // Up from the top cards: to the views, if there are several, else to the tab
     val cardsUp = viewTabs.getOrNull(viewIndex)?.takeIf { views.size > 1 } ?: tabFocus
     // Roughly in rows of sensors: a weather takes about 5, with its next hours, and a heading 1
     val heights = cards.map { card ->
-        if (card.isWeather) 5 else card.ids.size + 1 + card.subtitles.size + card.gauges.size + 4 * card.ids.count(::isHaWeather) +
+        if (card.isWeather) 5 else rowsByCard.getValue(card.key).size + 1 + card.subtitles.size + card.gauges.size + 4 * card.ids.count(::isHaWeather) +
             card.graphs.values.sumOf { 2 + it.entities.size }
     }
     val scroll = rememberScrollState()
@@ -326,7 +357,7 @@ fun HaAssistantTab(
                 CardWindow(scroll, constraints.maxHeight + (CardPeek + peekBelow).roundToPx(), CardFadeTop.roundToPx(), bottom.clearance.roundToPx(), CardPeek.roundToPx())
             }
             val width = maxWidth - inset * 2
-            val columnCount = ((width + PanelItemSpacing) / (MinCardWidth + PanelItemSpacing)).toInt().coerceAtLeast(1)
+            val columnCount = ((width + PanelItemSpacing) / (minCardWidth + PanelItemSpacing)).toInt().coerceAtLeast(1)
             // Each card to the shortest column so far, the leftmost if equal
             val columns = List(columnCount) { mutableListOf<Int>() }
             val columnHeights = IntArray(columnCount)
@@ -340,10 +371,14 @@ fun HaAssistantTab(
             fun Card(card: SensorCard, up: FocusRequester?, window: CardWindow?, minHeight: Dp? = null, maxHeight: Dp? = null) {
                 // Selection's weather cards have the weather's name as title, which its reading says already
                 val weather = card.ids.first().takeIf { card.isWeather && board == null }
+                val rows = rowsByCard.getValue(card.key)
+                val buttonRows = rows.flatMapIndexed { row, positions ->
+                    positions.filter { isInteractive(card.ids[it]) }.map { row }
+                }
                 AssistantCard(
                     up = up,
                     window = window,
-                    buttons = card.ids.count(::isInteractive),
+                    buttonRows = buttonRows,
                     entered = entered == card.key,
                     onEnter = { entered = card.key },
                     onLeave = { entered = null },
@@ -353,12 +388,12 @@ fun HaAssistantTab(
                     if (weather != null) {
                         WeatherReading(entities[weather], connection.hourly[weather], connection.daily[weather])
                     } else {
-                        CardContent(card, connection, names, entered == card.key, raised, firstButton, onButtonFocused)
+                        CardContent(card, rows, connection, names, entered == card.key, raised, firstButton, onButtonFocused)
                     }
                 }
             }
             if (sectionColumns) {
-                SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus) { card, up, columnWindow, minHeight, maxHeight ->
+                SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus, minCardWidth) { card, up, columnWindow, minHeight, maxHeight ->
                     Card(card, up, columnWindow, minHeight, maxHeight)
                 }
                 return@BoxWithConstraints
@@ -419,6 +454,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
     up: FocusRequester,
     leading: LeadingItem?,
     columnsFocus: FocusRequester?,
+    minCardWidth: Dp,
     card: @Composable (SensorCard, FocusRequester?, CardWindow?, Dp?, Dp?) -> Unit,
 ) {
     val density = LocalDensity.current
@@ -431,7 +467,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
     // On the tab, as many as fit with a tenth of the next at the edge. Beside what comes first,
     // one column, with only the next one's edge showing: its rounded corners and padding, none of
     // what's inside it. Alone, it ends at the inset.
-    val shown = if (leading != null) 1 else ((maxWidth - inset + gap) / (MinCardWidth + gap)).toInt().coerceAtLeast(1)
+    val shown = if (leading != null) 1 else ((maxWidth - inset + gap) / (minCardWidth + gap)).toInt().coerceAtLeast(1)
     val columnWidth = when {
         leading == null -> (maxWidth - inset - lead - gap * shown) / (shown + FirstPeek)
         cards.size > 1 -> maxWidth - inset - lead - gap - CardSidePadding
@@ -659,7 +695,7 @@ private fun Modifier.scrollsThrough(window: CardWindow, active: Boolean): Modifi
 
 /**
  * A card on the Assistant tab, which the remote selects as a whole, outlined; [up] is where up
- * goes from it. If it has [buttons], OK [onEnter]s it: it's then raised and a little larger, the
+ * goes from it. If [buttonRows] lists any controls, OK [onEnter]s it: it's then raised and a little larger, the
  * remote moves between its buttons, from the first one, and Back [onLeave]s it, back on the card.
  * An arrow past its edge (from the first or last button, or sideways) leaves it for the next card
  * that way. [content] gets whether the card is raised, its first button, and what to
@@ -673,7 +709,7 @@ private fun Modifier.scrollsThrough(window: CardWindow, active: Boolean): Modifi
 private fun AssistantCard(
     up: FocusRequester?,
     window: CardWindow?,
-    buttons: Int,
+    buttonRows: List<Int>,
     entered: Boolean,
     onEnter: () -> Unit,
     onLeave: () -> Unit,
@@ -718,9 +754,12 @@ private fun AssistantCard(
                 when {
                     // Past the edge: on to the next card that way, if there's one
                     entered && direction != null -> {
+                        val row = buttonRows.getOrNull(focusedButton)
                         val edge = when (event.key) {
-                            Key.DirectionUp -> focusedButton == 0
-                            Key.DirectionDown -> focusedButton == buttons - 1
+                            Key.DirectionUp -> row == buttonRows.firstOrNull()
+                            Key.DirectionDown -> row == buttonRows.lastOrNull()
+                            Key.DirectionLeft -> buttonRows.getOrNull(focusedButton - 1) != row
+                            Key.DirectionRight -> buttonRows.getOrNull(focusedButton + 1) != row
                             else -> true
                         }
                         if (!edge) return@onPreviewKeyEvent false
@@ -734,7 +773,7 @@ private fun AssistantCard(
                         }
                         true
                     }
-                    !entered && focused && buttons > 0 && event.key in OkKeys -> {
+                    !entered && focused && buttonRows.isNotEmpty() && event.key in OkKeys -> {
                         if (release) {
                             onEnter()
                             moveFocus = true
@@ -835,6 +874,7 @@ private const val EnteredCardScale = 1.03f
 @Composable
 private fun CardContent(
     card: SensorCard,
+    rows: List<IntRange>,
     connection: HaConnection,
     // The names a dashboard's cards give entities, in place of their own
     names: Map<String, String>,
@@ -845,18 +885,16 @@ private fun CardContent(
 ) {
     // What the remote lands on once in the card, in order: buttons and switches
     val interactive = card.ids.filter(::isInteractive)
-    // A dashboard's cards can have no title
-    if (card.title.isNotEmpty()) CardHeading(card.title)
-    card.ids.forEachIndexed { position, id ->
-        card.subtitles[position]?.let { CardHeading(it, Modifier.padding(top = 8.dp)) }
+    @Composable
+    fun Entity(id: String) {
         val index = interactive.indexOf(id)
         card.graphs[id]?.let { graph ->
             HistoryGraph(connection, graph, names)
-            return@forEachIndexed
+            return
         }
         if (isHaWeather(id)) {
             WeatherReading(connection.entities[id], connection.hourly[id], connection.daily[id])
-            return@forEachIndexed
+            return
         }
         if (index < 0) {
             val gauge = card.gauges[id]
@@ -865,7 +903,7 @@ private fun CardContent(
             } else {
                 SensorReading(id, connection.entities[id], names[id])
             }
-            return@forEachIndexed
+            return
         }
         val modifier = Modifier
             .then(if (index == 0) Modifier.focusRequester(firstButton) else Modifier)
@@ -878,6 +916,24 @@ private fun CardContent(
             SelectRow(connection, id, names[id], modifier)
         } else {
             ActionButton(connection, id, name = names[id], raised = raised, modifier = modifier)
+        }
+    }
+    if (card.title.isNotEmpty()) CardHeading(card.title)
+    for (row in rows) {
+        card.subtitles[row.first]?.let { CardHeading(it, Modifier.padding(top = 8.dp)) }
+        HaEntityRow(row) { Entity(card.ids[it]) }
+    }
+}
+
+@Composable
+internal fun HaEntityRow(positions: IntRange, content: @Composable (Int) -> Unit) {
+    if (positions.first == positions.last) {
+        content(positions.first)
+    } else {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            for (position in positions) {
+                Box(Modifier.weight(1f)) { content(position) }
+            }
         }
     }
 }
