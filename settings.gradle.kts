@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HomeBoard"
+rootProject.name = "HAL"
 include(":app")

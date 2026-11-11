@@ -6,15 +6,15 @@ plugins {
 // Signing keys stay outside the repo and their passwords in the Mac keychain. Builds for our own TVs use the everyday
 // key; public builds (-PpublicRelease) use the release key, whose keychain item asks before every read.
 // Without the key the release build comes out unsigned
-val signingName = if (hasProperty("publicRelease")) "homeboard-release" else "homeboard-everyday"
-val signingKey = file("${System.getProperty("user.home")}/.homeboard/$signingName.jks")
+val signingName = if (hasProperty("publicRelease")) "hal-release" else "hal-everyday"
+val signingKey = file("${System.getProperty("user.home")}/.hal/$signingName.jks")
 
 android {
-    namespace = "com.evofactory.homeboard"
+    namespace = "com.evofactory.hal"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.evofactory.homeboard"
+        applicationId = "com.evofactory.hal"
         minSdk = 28 // Android 9
         targetSdk = 36
         versionCode = 17
@@ -25,12 +25,12 @@ android {
     signingConfigs {
         if (signingKey.exists()) {
             val password = providers.exec {
-                commandLine("security", "find-generic-password", "-a", "homeboard", "-s", signingName, "-w")
+                commandLine("security", "find-generic-password", "-a", "hal", "-s", signingName, "-w")
             }.standardOutput.asText.get().trim()
             create("release") {
                 storeFile = signingKey
                 storePassword = password
-                keyAlias = "homeboard"
+                keyAlias = "hal"
                 keyPassword = password
             }
         }
