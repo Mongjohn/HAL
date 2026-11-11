@@ -70,6 +70,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -964,12 +966,21 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
     val entity = connection.entities[id]
-    val on = entity?.state == "on"
+    val state = entity?.state
+    val on = state == "on"
+    val hasSwitchState = on || state == "off"
     val ready = connection.session != null
     Surface(
         onClick = { connection.toggle(id, scope, context) },
         // As wide as the card's padding allows, so its icon and text line up with the sensors' above and below
-        modifier = modifier.widenBy(ToggleRowInset),
+        modifier = modifier.widenBy(ToggleRowInset).semantics {
+            stateDescription = when (state) {
+                "on" -> "On"
+                "off" -> "Off"
+                "unavailable" -> "Unavailable"
+                else -> "Unknown"
+            }
+        },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
@@ -984,7 +995,9 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            MdiIcon(entity?.icon ?: "", color = LocalContentColor.current)
+            val domain = id.substringBefore('.')
+            val defaultIcon = defaultHaIcon(domain, entity?.deviceClass, state.orEmpty())
+            MdiIcon(entity?.icon ?: defaultIcon, color = LocalContentColor.current, fallback = defaultIcon)
             Text(
                 name ?: entity?.name ?: id,
                 style = MaterialTheme.typography.bodyMedium,
@@ -992,7 +1005,14 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            SwitchMark(on, LocalContentColor.current)
+            if (hasSwitchState) {
+                SwitchMark(on, LocalContentColor.current)
+            } else {
+                Box(Modifier.width(36.dp), contentAlignment = Alignment.Center) {
+                    val icon = if (state == "unavailable") "cloud-off-outline" else "help-circle-outline"
+                    MdiIcon(icon, color = LocalContentColor.current)
+                }
+            }
         }
     }
 }
@@ -1037,7 +1057,8 @@ private fun SelectRow(connection: HaConnection, id: String, name: String?, modif
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            MdiIcon(entity?.icon ?: "", color = LocalContentColor.current)
+            val cue = haStateCue(id.substringBefore('.'), entity?.deviceClass, entity?.state)
+            MdiIcon(cue?.icon ?: entity?.icon ?: "format-list-bulleted", color = LocalContentColor.current, fallback = "format-list-bulleted")
             Text(
                 name ?: entity?.name ?: id,
                 style = MaterialTheme.typography.bodyMedium,
@@ -1134,7 +1155,9 @@ private fun ActionButton(connection: HaConnection, id: String, name: String?, ra
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            MdiIcon(entity?.icon ?: domainIcon, fallback = domainIcon, color = LocalContentColor.current)
+            val running = connection.runningAction == id
+            val icon = if (running) "progress-clock" else entity?.icon ?: domainIcon
+            MdiIcon(icon, fallback = domainIcon, color = LocalContentColor.current)
             Text(
                 name ?: entity?.name ?: id,
                 style = MaterialTheme.typography.bodyMedium,
@@ -1142,7 +1165,7 @@ private fun ActionButton(connection: HaConnection, id: String, name: String?, ra
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (connection.runningAction == id) Text("Running…", style = MaterialTheme.typography.bodySmall)
+            if (running) Text("Running…", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
