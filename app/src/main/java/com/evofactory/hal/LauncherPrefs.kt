@@ -17,15 +17,17 @@ class LauncherPrefs(context: Context) {
         set(value) = writeList("order", value)
 
     /** Package names of hidden apps, in the order they were hidden */
-    var hidden: List<String>
+    val hidden: List<String>
         get() = readList("hidden_list").ifEmpty {
             // Earlier versions stored an unordered set
             prefs.getStringSet("hidden", null)?.sorted() ?: emptyList()
         }
-        set(value) = prefs.edit {
-            putString("hidden_list", value.joinToString("\n"))
-            remove("hidden")
-        }
+
+    fun saveDockLayout(order: List<String>, hidden: List<String>) = prefs.edit {
+        putString("order", order.joinToString("\n"))
+        putString("hidden_list", hidden.joinToString("\n"))
+        remove("hidden")
+    }
 
     /** Shows hidden from Continue watching, see [WatchItem.hideKey] */
     var hiddenWatching: List<String>

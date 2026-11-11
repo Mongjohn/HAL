@@ -17,8 +17,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -48,6 +51,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Date
 
+private enum class LauncherSettingsTab(val label: String) {
+    Launcher("Launcher"),
+    Dock("Dock"),
+    Advanced("Advanced"),
+}
+
 /**
  * HAL settings: optionally take over from the TV's home screen, in either way, both or neither.
  * Either needs the accessibility service turned on in the TV's settings too.
@@ -58,6 +67,10 @@ fun LauncherSettingsDialog(
     reopenAfterHome: Boolean,
     autoTurnedOff: Boolean,
     showFreeMemory: Boolean,
+    dockApps: List<InstalledApp>,
+    hiddenDockApps: List<InstalledApp>,
+    onDockReorder: (List<InstalledApp>) -> Unit,
+    onDockVisibilityChange: (InstalledApp, Boolean) -> Unit,
     onCatchHomeKeyChange: (Boolean) -> Unit,
     onReopenAfterHomeChange: (Boolean) -> Unit,
     onShowFreeMemoryChange: (Boolean) -> Unit,
@@ -69,12 +82,16 @@ fun LauncherSettingsDialog(
     val context = LocalContext.current
     val serviceName = stringResource(R.string.home_override_label)
     val serviceOn = rememberHomeOverrideServiceOn()
-    var advanced by remember { mutableStateOf(false) }
+    var tab by remember { mutableStateOf(LauncherSettingsTab.Launcher) }
     val advancedOption = remember { FocusRequester() }
     val toggle = remember { FocusRequester() }
     // The item last on, to come back to from the top row
-    val items = remember { ListFocus() }
-    val itemKeys = if (advanced) listOf("hours-", "hours+", "memory") else listOf("catch", "reopen", "accessibility", "export", "import")
+    val items = remember(tab) { ListFocus() }
+    val itemKeys = when (tab) {
+        LauncherSettingsTab.Launcher -> listOf("catch", "reopen", "accessibility", "export", "import")
+        LauncherSettingsTab.Dock -> (dockApps + hiddenDockApps).map { it.key }
+        LauncherSettingsTab.Advanced -> listOf("hours-", "hours+", "memory")
+    }
     val prefs = remember { LauncherPrefs(context) }
     // An option turned on, once its explanation is accepted
     var pendingOption by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -106,15 +123,21 @@ fun LauncherSettingsDialog(
     TopDialog(
         title = "HAL settings",
         onDismiss = onDismiss,
-        tabs = listOf(
-            DialogTab("Launcher", selected = !advanced) { advanced = false },
-            DialogTab("Advanced", selected = advanced) { advanced = true },
-        ),
+        tabs = LauncherSettingsTab.entries.map { entry ->
+            DialogTab(entry.label, selected = entry == tab) { tab = entry }
+        },
         buttons = listOf(DialogButton("Restart app") { context.restartApp() }),
-        contentFocus = { items.current(itemKeys) },
+        contentFocus = { items.currentOrNull(itemKeys) },
+        hint = "OK opens app options".takeIf { tab == LauncherSettingsTab.Dock && itemKeys.isNotEmpty() },
     ) {
         LaunchedEffect(Unit) { toggle.requestFocus() }
-        if (advanced) {
+        if (tab == LauncherSettingsTab.Dock) {
+            DockSettings(dockApps, hiddenDockApps, onDockReorder, onDockVisibilityChange) { key ->
+                items.row(key).ringToTop()
+            }
+            return@TopDialog
+        }
+        if (tab == LauncherSettingsTab.Advanced) {
             LauncherAdvancedSettings(
                 showFreeMemory = showFreeMemory,
                 onShowFreeMemoryChange = onShowFreeMemoryChange,
@@ -189,6 +212,56 @@ fun LauncherSettingsDialog(
             },
             onDecline = { pendingOption = null },
         )
+    }
+}
+
+@Composable
+private fun DockSettings(
+    apps: List<InstalledApp>,
+    hiddenApps: List<InstalledApp>,
+    onReorder: (List<InstalledApp>) -> Unit,
+    onVisibilityChange: (InstalledApp, Boolean) -> Unit,
+    rowModifier: (String) -> Modifier,
+) {
+    var menuKey by remember { mutableStateOf<String?>(null) }
+    val allApps = apps + hiddenApps
+    if (allApps.isEmpty()) {
+        Text("No apps to configure", modifier = Modifier.padding(12.dp))
+        return
+    }
+
+    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 340.dp).padding(top = 4.dp)) {
+        itemsIndexed(allApps, key = { _, app -> app.key }) { index, app ->
+            val visible = index < apps.size
+            Box {
+                ListItem(
+                    selected = false,
+                    onClick = { menuKey = app.key },
+                    headlineContent = { Text(app.label) },
+                    trailingContent = { Text(if (visible) "Shown" else "Hidden") },
+                    modifier = rowModifier(app.key),
+                )
+                if (menuKey == app.key) {
+                    fun moveTo(destination: Int) {
+                        val reordered = apps.toMutableList()
+                        reordered.add(destination, reordered.removeAt(index))
+                        onReorder(reordered)
+                    }
+                    ContextMenu(
+                        title = app.label,
+                        actions = buildList {
+                            if (visible && index > 0) add(MenuAction("Move up") { moveTo(index - 1) })
+                            if (index < apps.lastIndex) add(MenuAction("Move down") { moveTo(index + 1) })
+                            add(MenuAction(if (visible) "Hide from dock" else "Show in dock") {
+                                onVisibilityChange(app, !visible)
+                            })
+                        },
+                        onDismiss = { menuKey = null },
+                        placement = MenuPlacement.Below,
+                    )
+                }
+            }
+        }
     }
 }
 

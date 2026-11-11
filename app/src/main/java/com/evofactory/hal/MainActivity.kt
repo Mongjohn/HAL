@@ -493,17 +493,9 @@ class MainActivity : ComponentActivity() {
                                             hiddenApps = hiddenApps,
                                             showHidden = showHidden,
                                             onShowHiddenChange = { showHidden = it },
-                                            onHide = { app ->
-                                                // Hidden apps leave the row order and queue up at the end
-                                                saveOrder(visible.map { it.key } - app.key)
-                                                saveHidden(hidden + app.key)
-                                            },
-                                            onUnhide = { app ->
-                                                // Back at the end of the visible apps
-                                                saveOrder(visible.map { it.key } + app.key)
-                                                saveHidden(hidden - app.key)
-                                            },
-                                            onReorder = { list -> saveOrder(list.map { it.key }) },
+                                            onHide = { app -> setDockAppVisible(app, false) },
+                                            onUnhide = { app -> setDockAppVisible(app, true) },
+                                            onReorder = ::saveDockOrder,
                                             upFocus = { slot ->
                                                 when {
                                                     hasAlertsRow -> alertsRowFocus
@@ -616,6 +608,10 @@ class MainActivity : ComponentActivity() {
                                 homeOverrideChanged()
                             },
                             showFreeMemory = showFreeMemory,
+                            dockApps = visible.orEmpty(),
+                            hiddenDockApps = hiddenApps.orEmpty(),
+                            onDockReorder = ::saveDockOrder,
+                            onDockVisibilityChange = ::setDockAppVisible,
                             onShowFreeMemoryChange = { on ->
                                 prefs.showFreeMemory = on
                                 showFreeMemory = on
@@ -724,8 +720,7 @@ class MainActivity : ComponentActivity() {
         val apps = installed.orEmpty().map { it.key }
         val shown = file.appTiles.map { it.id }.filter { it in apps }
         if (shown.isNotEmpty()) {
-            saveOrder(shown)
-            saveHidden((hidden + apps).distinct() - shown.toSet())
+            saveDockLayout(shown, (hidden + apps).distinct() - shown.toSet())
         }
         Toast.makeText(this, "Settings imported", Toast.LENGTH_SHORT).show()
     }
@@ -752,14 +747,27 @@ class MainActivity : ComponentActivity() {
         pruneCameraSnapshots(this, value.flatMap { listOf(it.url, it.substreamUrl) })
     }
 
+    private fun saveDockOrder(apps: List<InstalledApp>) = saveOrder(apps.map { it.key })
+
+    private fun setDockAppVisible(app: InstalledApp, visible: Boolean) {
+        val appKeys = arrange(installed.orEmpty(), order, hidden).map { it.key }
+        if (visible) {
+            // Unhidden apps return at the end of the visible dock.
+            saveDockLayout((appKeys - app.key) + app.key, hidden - app.key)
+        } else {
+            saveDockLayout(appKeys - app.key, (hidden - app.key) + app.key)
+        }
+    }
+
     private fun saveOrder(value: List<String>) {
         order = value
         prefs.order = value
     }
 
-    private fun saveHidden(value: List<String>) {
-        hidden = value
-        prefs.hidden = value
+    private fun saveDockLayout(visibleKeys: List<String>, hiddenKeys: List<String>) {
+        order = visibleKeys
+        hidden = hiddenKeys
+        prefs.saveDockLayout(visibleKeys, hiddenKeys)
     }
 
     private fun homeOverrideChanged() {
