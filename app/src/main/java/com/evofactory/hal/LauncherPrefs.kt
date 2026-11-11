@@ -176,6 +176,10 @@ class LauncherPrefs(context: Context) {
         reopenAfterHome = false
     }
 
+    var showHomeCamera: Boolean
+        get() = prefs.getBoolean("show_home_camera", true)
+        set(value) = prefs.edit { putBoolean("show_home_camera", value) }
+
     /** The Cameras tab plays substreams live; otherwise it shows still pictures */
     var cameraGridLive: Boolean
         get() = prefs.getBoolean("camera_grid_live", true)

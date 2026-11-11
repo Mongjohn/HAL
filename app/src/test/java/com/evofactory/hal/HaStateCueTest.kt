@@ -12,7 +12,12 @@ class HaStateCueTest {
             val on = requireNotNull(haStateCue(domain, null, "on"))
             val off = requireNotNull(haStateCue(domain, null, "off"))
             assertNotEquals(domain, on.icon, off.icon)
-            assertEquals(domain, HaStateTone.Active, on.tone)
+            val expectedTone = when (domain) {
+                "fan" -> HaStateTone.Cyan
+                "humidifier" -> HaStateTone.Blue
+                else -> HaStateTone.Active
+            }
+            assertEquals(domain, expectedTone, on.tone)
             assertEquals(domain, HaStateTone.Neutral, off.tone)
         }
     }

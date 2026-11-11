@@ -970,10 +970,11 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
     val on = state == "on"
     val hasSwitchState = on || state == "off"
     val ready = connection.session != null
+    var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = { connection.toggle(id, scope, context) },
         // As wide as the card's padding allows, so its icon and text line up with the sensors' above and below
-        modifier = modifier.widenBy(ToggleRowInset).semantics {
+        modifier = modifier.onFocusChanged { focused = it.isFocused }.widenBy(ToggleRowInset).semantics {
             stateDescription = when (state) {
                 "on" -> "On"
                 "off" -> "Off"
@@ -997,8 +998,14 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
         ) {
             val domain = id.substringBefore('.')
             val defaultIcon = defaultHaIcon(domain, entity?.deviceClass, state.orEmpty())
-            val stateIcon = if (hasSwitchState) haStateCue(domain, entity.deviceClass, state)?.icon else null
-            MdiIcon(stateIcon ?: entity?.icon ?: defaultIcon, color = LocalContentColor.current, fallback = defaultIcon)
+            val cue = haStateCue(domain, entity?.deviceClass, state)
+            val neutral = LocalContentColor.current
+            val stateColor = if (ready || focused) (cue?.tone ?: HaStateTone.Neutral).color(neutral, focused) else neutral
+            MdiIcon(
+                if (hasSwitchState) cue?.icon ?: defaultIcon else entity?.icon ?: defaultIcon,
+                color = stateColor,
+                fallback = defaultIcon,
+            )
             Text(
                 name ?: entity?.name ?: id,
                 style = MaterialTheme.typography.bodyMedium,
@@ -1007,7 +1014,7 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
                 modifier = Modifier.weight(1f),
             )
             if (hasSwitchState) {
-                SwitchMark(on, LocalContentColor.current)
+                SwitchMark(on, neutral, activeColor = stateColor, activeKnob = if (focused) SwitchKnob else colors.inverseOnSurface)
             } else {
                 Box(Modifier.width(36.dp), contentAlignment = Alignment.Center) {
                     val icon = if (state == "unavailable") "cloud-off-outline" else "help-circle-outline"
@@ -1114,18 +1121,18 @@ private fun Modifier.widenBy(by: Dp) = layout { measurable, constraints ->
  * selected row, whose text is dark.
  */
 @Composable
-internal fun SwitchMark(on: Boolean, color: Color) {
+internal fun SwitchMark(on: Boolean, color: Color, activeColor: Color = SwitchOn, activeKnob: Color = SwitchKnob) {
     Box(
         modifier = Modifier
             .size(width = 36.dp, height = 20.dp)
-            .then(if (on) Modifier.background(SwitchOn, CircleShape) else Modifier.border(2.dp, color.copy(alpha = 0.6f), CircleShape))
+            .then(if (on) Modifier.background(activeColor, CircleShape) else Modifier.border(2.dp, color.copy(alpha = 0.6f), CircleShape))
             .padding(3.dp),
         contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
         Box(
             Modifier
                 .size(14.dp)
-                .background(if (on) SwitchKnob else color.copy(alpha = 0.6f), CircleShape),
+                .background(if (on) activeKnob else color.copy(alpha = 0.6f), CircleShape),
         )
     }
 }

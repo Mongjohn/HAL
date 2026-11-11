@@ -526,6 +526,8 @@ fun <T> TwoRowGrid(
 fun CamerasDialog(
     cameras: List<Camera>,
     onChange: (List<Camera>) -> Unit,
+    showHomeCamera: Boolean,
+    onShowHomeCameraChange: (Boolean) -> Unit,
     playSubstreams: Boolean,
     onPlaySubstreamsChange: (Boolean) -> Unit,
     minimizeStreams: Boolean,
@@ -560,7 +562,7 @@ fun CamerasDialog(
     fun currentItem() = when (tab) {
         CamerasTab.List -> rows.currentOrNull(cameras.map { it.id })
         CamerasTab.Screensaver -> advancedItems.current(listOf("shorter", "longer") + cameras.map { "screensaver:${it.id}" } + "progress")
-        CamerasTab.Advanced -> advancedItems.current(listOf("substreams", "minimize"))
+        CamerasTab.Advanced -> advancedItems.current(listOf("home", "substreams", "minimize"))
     }
 
     LaunchedEffect(focusOn, cameras) {
@@ -617,6 +619,13 @@ fun CamerasDialog(
         closeFocus = closeButton,
     ) {
         if (advanced) {
+            HomeOption(
+                title = "Show camera on Home",
+                description = "Turn off to give the Home dashboard the full width.",
+                checked = showHomeCamera,
+                onClick = { onShowHomeCameraChange(!showHomeCamera) },
+                modifier = advancedItems.row("home").ringToTop().padding(top = 8.dp),
+            )
             CameraAdvancedSettings(
                 playSubstreams = playSubstreams,
                 onPlaySubstreamsChange = onPlaySubstreamsChange,

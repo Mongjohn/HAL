@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
     private var camerasOpen by mutableStateOf(false)
     private var cameras by mutableStateOf(emptyList<Camera>())
     private var cameraGridLive by mutableStateOf(true)
+    private var showHomeCamera by mutableStateOf(true)
     private var minimizeVideoStreams by mutableStateOf(false)
     private var selectedCamera by mutableStateOf("")
     private var tab by mutableStateOf(HomeTab.Home)
@@ -108,6 +109,7 @@ class MainActivity : ComponentActivity() {
         hidden = prefs.hidden
         cameras = prefs.cameras
         cameraGridLive = prefs.cameraGridLive
+        showHomeCamera = prefs.showHomeCamera
         minimizeVideoStreams = prefs.minimizeVideoStreams
         selectedCamera = prefs.selectedCamera
         haServer = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
@@ -126,7 +128,7 @@ class MainActivity : ComponentActivity() {
                     val hiddenApps = remember(all, hidden) {
                         all?.let { apps -> hidden.mapNotNull { key -> apps.find { it.key == key } } }
                     }
-                    val camera = cameras.find { it.id == selectedCamera } ?: cameras.firstOrNull()
+                    val camera = if (showHomeCamera) cameras.find { it.id == selectedCamera } ?: cameras.firstOrNull() else null
                     val mainCameraFocus = remember { FocusRequester() }
                     val haSensorsFocus = remember { FocusRequester() }
                     val networkFocus = remember { FocusRequester() }
@@ -212,7 +214,7 @@ class MainActivity : ComponentActivity() {
                     fun aboveRows(slot: Int) = when {
                         // What's above moves sideways: the nearest card or the camera
                         tab == HomeTab.Home && homeStrip -> FocusRequester.Default
-                        slot >= FIRST_SLOT_UNDER_PANEL && tab == HomeTab.Home && haServer.isSet -> haSensorsFocus
+                        tab == HomeTab.Home && sideContent && (camera == null || slot >= FIRST_SLOT_UNDER_PANEL) -> haSensorsFocus
                         slot < FIRST_SLOT_UNDER_PANEL && tab == HomeTab.Home && camera != null -> mainCameraFocus
                         else -> FocusRequester.Default
                     }
@@ -253,6 +255,7 @@ class MainActivity : ComponentActivity() {
                         // selection is, and on the Cameras tab the selection moves to it
                         channelStep(event)?.let { step ->
                             if (tab != HomeTab.Home && tab != HomeTab.Cameras) return false
+                            if (tab == HomeTab.Home && camera == null) return false
                             if (event.type == KeyEventType.KeyDown) {
                                 if (tab == HomeTab.Cameras) {
                                     steppedCamera(cameras, gridFocusedCamera, step)?.let { gridCameraDue = it.id }
@@ -269,7 +272,7 @@ class MainActivity : ComponentActivity() {
                                 gridCameraDue = picked.id
                             } else {
                                 selectCamera(picked)
-                                if (tab != HomeTab.Home) {
+                                if (showHomeCamera && tab != HomeTab.Home) {
                                     tab = HomeTab.Home
                                     mainCameraDue = true
                                 }
@@ -405,7 +408,9 @@ class MainActivity : ComponentActivity() {
                                         tabFocus = networkFocus,
                                         onSetUp = { haDialogOpen = true },
                                         sectionColumns = true,
-                                        leading = LeadingItem(cameraWidth, cameraWidth * 9f / 16f) { CameraBox(cameraWidth) },
+                                        leading = camera?.let {
+                                            LeadingItem(cameraWidth, cameraWidth * 9f / 16f) { CameraBox(cameraWidth) }
+                                        },
                                         columnsFocus = haSensorsFocus,
                                         modifier = Modifier.fillMaxSize(),
                                     )
@@ -425,7 +430,7 @@ class MainActivity : ComponentActivity() {
                                         if (sideContent) maxWidth - sidePanelWidth - EdgePadding else maxWidth,
                                     ).coerceAtLeast(0.dp)
                                     Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
-                                        CameraBox(cameraWidth)
+                                        if (camera != null) CameraBox(cameraWidth)
                                         if (sideContent && haDisplay.homeDashboard != null) {
                                             // A dashboard chosen for the Home tab: its sections, card by card
                                             HaAssistantTab(
@@ -556,6 +561,11 @@ class MainActivity : ComponentActivity() {
                             cameras = cameras,
                             onChange = ::saveCameras,
                             playSubstreams = cameraGridLive,
+                            showHomeCamera = showHomeCamera,
+                            onShowHomeCameraChange = {
+                                showHomeCamera = it
+                                prefs.showHomeCamera = it
+                            },
                             onPlaySubstreamsChange = {
                                 cameraGridLive = it
                                 prefs.cameraGridLive = it

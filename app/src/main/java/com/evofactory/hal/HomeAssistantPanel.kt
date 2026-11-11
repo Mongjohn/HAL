@@ -417,13 +417,8 @@ fun SensorReading(id: String, entity: HaEntity?, name: String? = null, iconColor
     val state = entity?.state
     val cue = haStateCue(domain, entity?.deviceClass, state)
     val defaultIcon = defaultHaIcon(domain, entity?.deviceClass, state.orEmpty())
-    val color = if (iconColor != Color.Unspecified) iconColor else when (cue?.tone) {
-        HaStateTone.Good -> Color(0xFF8DBD9B)
-        HaStateTone.Alert -> Color(0xFFE39491)
-        HaStateTone.Caution -> Color(0xFFD9B57C)
-        HaStateTone.Active -> Color(0xFF92B2DC)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val color = if (iconColor != Color.Unspecified) iconColor else
+        (cue?.tone ?: HaStateTone.Neutral).color(MaterialTheme.colorScheme.onSurfaceVariant)
     val iconOnly = cue?.iconOnly == true && iconColor == Color.Unspecified
     val reading = entity?.reading ?: "—"
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
