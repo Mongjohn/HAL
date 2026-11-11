@@ -997,7 +997,8 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
         ) {
             val domain = id.substringBefore('.')
             val defaultIcon = defaultHaIcon(domain, entity?.deviceClass, state.orEmpty())
-            MdiIcon(entity?.icon ?: defaultIcon, color = LocalContentColor.current, fallback = defaultIcon)
+            val stateIcon = if (hasSwitchState) haStateCue(domain, entity.deviceClass, state)?.icon else null
+            MdiIcon(stateIcon ?: entity?.icon ?: defaultIcon, color = LocalContentColor.current, fallback = defaultIcon)
             Text(
                 name ?: entity?.name ?: id,
                 style = MaterialTheme.typography.bodyMedium,

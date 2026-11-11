@@ -7,6 +7,17 @@ import org.junit.Test
 
 class HaStateCueTest {
     @Test
+    fun booleansHaveDistinctOnAndOffShapes() {
+        for (domain in listOf("light", "switch", "input_boolean", "fan", "automation", "humidifier")) {
+            val on = requireNotNull(haStateCue(domain, null, "on"))
+            val off = requireNotNull(haStateCue(domain, null, "off"))
+            assertNotEquals(domain, on.icon, off.icon)
+            assertEquals(domain, HaStateTone.Active, on.tone)
+            assertEquals(domain, HaStateTone.Neutral, off.tone)
+        }
+    }
+
+    @Test
     fun locksAndLockSensorsUseTheSameCues() {
         val locked = HaStateCue("lock", HaStateTone.Good, iconOnly = true)
         val unlocked = HaStateCue("lock-open", HaStateTone.Alert, iconOnly = true)

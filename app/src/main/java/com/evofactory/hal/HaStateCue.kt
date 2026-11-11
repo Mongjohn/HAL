@@ -61,7 +61,14 @@ internal fun haStateCue(domain: String, deviceClass: String?, state: String?): H
         else -> null
     }
     return specific ?: when (state) {
-        "on", "off" -> HaStateCue(defaultHaIcon(domain, deviceClass, state), if (state == "on") HaStateTone.Active else HaStateTone.Neutral)
+        "on", "off" -> {
+            val on = state == "on"
+            val icon = when (domain) {
+                "light", "switch", "input_boolean", "fan" -> defaultHaIcon(domain, deviceClass, state)
+                else -> if (on) "checkbox-marked-circle-outline" else "circle-outline"
+            }
+            HaStateCue(icon, if (on) HaStateTone.Active else HaStateTone.Neutral)
+        }
         "playing", "running", "active" -> HaStateCue("play-circle-outline", HaStateTone.Active)
         "paused" -> HaStateCue("pause-circle-outline")
         "idle", "standby", "stopped" -> HaStateCue("stop-circle-outline")
