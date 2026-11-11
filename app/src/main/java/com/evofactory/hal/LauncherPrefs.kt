@@ -4,6 +4,15 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 
+internal const val ALL_APPS_TILE_KEY = "dock:all_apps"
+
+internal fun dockTileKeys(appKeys: List<String>, order: List<String>, showAllAppsTile: Boolean): List<String> {
+    if (!showAllAppsTile) return appKeys
+    val before = order.takeWhile { it != ALL_APPS_TILE_KEY }.toSet()
+    val index = if (ALL_APPS_TILE_KEY in order) appKeys.count { it in before } else 0
+    return appKeys.toMutableList().apply { add(index, ALL_APPS_TILE_KEY) }
+}
+
 /**
  * Remembers the order chosen with "Move" and which apps are hidden, across restarts.
  * Stored in shared_prefs/launcher.xml in the app's private data on the TV.

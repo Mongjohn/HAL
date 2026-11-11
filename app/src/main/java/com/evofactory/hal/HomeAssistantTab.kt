@@ -217,8 +217,10 @@ private val ViewRowLift = EdgePadding
 private val ViewRowHeight = 32.dp
 
 // Narrower and the names get cut: about 3 columns on a TV
-private val MinCardWidth = 280.dp
-internal val TwoEntityCardWidth = 400.dp
+private const val DashboardColumns = 3
+
+internal fun dashboardColumnWidth(availableWidth: Dp): Dp =
+    ((availableWidth - PanelItemSpacing * (DashboardColumns - 1)) / DashboardColumns).coerceAtLeast(0.dp)
 
 /**
  * The Assistant tab: everything chosen ([entityIds]: weather, sensors, scenes, scripts and buttons), in
@@ -253,6 +255,7 @@ fun HaAssistantTab(
     toScreenEdge: Boolean = false,
     // From the sides to the cards: the screen's margin on the tab, none in the Home tab's panel
     inset: Dp = EdgePadding,
+    fixedColumnWidth: Dp? = null,
     // Before the columns, scrolling with them, e.g. the Home tab's camera (with [sectionColumns])
     leading: LeadingItem? = null,
     // Selects the cards, as a group: up from the tiles on the Home tab
@@ -291,7 +294,6 @@ fun HaAssistantTab(
     val viewTabs = remember(views.size) { List(views.size) { FocusRequester() } }
     val cards = if (board != null) views.getOrNull(viewIndex)?.cards.orEmpty() else layout.selectionCards(entityIds, entities)
     val rowsByCard = cards.associate { it.key to it.entityRows(layout.twoPerRow) }
-    val minCardWidth = if (layout.twoPerRow) TwoEntityCardWidth else MinCardWidth
     val names = board?.names.orEmpty()
     // Up from the top cards: to the views, if there are several, else to the tab
     val cardsUp = viewTabs.getOrNull(viewIndex)?.takeIf { views.size > 1 } ?: tabFocus
@@ -359,7 +361,9 @@ fun HaAssistantTab(
                 CardWindow(scroll, constraints.maxHeight + (CardPeek + peekBelow).roundToPx(), CardFadeTop.roundToPx(), bottom.clearance.roundToPx(), CardPeek.roundToPx())
             }
             val width = maxWidth - inset * 2
-            val columnCount = ((width + PanelItemSpacing) / (minCardWidth + PanelItemSpacing)).toInt().coerceAtLeast(1)
+            val columnWidth = (fixedColumnWidth ?: dashboardColumnWidth(width)).coerceAtMost(width.coerceAtLeast(0.dp))
+            val columnCount = if (fixedColumnWidth == null) DashboardColumns else
+                (1..DashboardColumns).count { columnWidth * it + PanelItemSpacing * (it - 1) <= width }.coerceAtLeast(1)
             // Each card to the shortest column so far, the leftmost if equal
             val columns = List(columnCount) { mutableListOf<Int>() }
             val columnHeights = IntArray(columnCount)
@@ -395,7 +399,7 @@ fun HaAssistantTab(
                 }
             }
             if (sectionColumns) {
-                SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus, minCardWidth) { card, up, columnWindow, minHeight, maxHeight ->
+                SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus, columnWidth) { card, up, columnWindow, minHeight, maxHeight ->
                     Card(card, up, columnWindow, minHeight, maxHeight)
                 }
                 return@BoxWithConstraints
@@ -418,7 +422,7 @@ fun HaAssistantTab(
                     horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
                 ) {
                     columns.forEach { indices ->
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PanelItemSpacing)) {
+                        Column(Modifier.width(columnWidth), verticalArrangement = Arrangement.spacedBy(PanelItemSpacing)) {
                             indices.forEachIndexed { position, index ->
                                 val card = cards[index]
                                 key(card.key) { Card(card, if (position == 0) cardsUp else null, window) }
@@ -441,9 +445,8 @@ fun HaAssistantTab(
 
 /**
  * The cards one per column, as many columns as there are cards, scrolling sideways: as many as
- * fit show whole (three on the tab) with a tenth of the next at the right edge, and once
- * scrolled, a little of the columns before and after at each edge (a twentieth on the tab), until
- * the last column, which ends at the [inset]. Each column scrolls up and down on its own. [card]
+ * fit show whole (three on the tab). The last column ends at the [inset] once scrolled to the end.
+ * Each column scrolls up and down on its own. [card]
  * draws a card, given where up goes from it and its column's window.
  */
 @OptIn(ExperimentalFoundationApi::class) // LocalBringIntoViewSpec
@@ -456,25 +459,15 @@ private fun BoxWithConstraintsScope.SectionColumns(
     up: FocusRequester,
     leading: LeadingItem?,
     columnsFocus: FocusRequester?,
-    minCardWidth: Dp,
+    columnWidth: Dp,
     card: @Composable (SensorCard, FocusRequester?, CardWindow?, Dp?, Dp?) -> Unit,
 ) {
     val density = LocalDensity.current
     val viewHeight = constraints.maxHeight
-    // On the tab, a gap as wide as the margin: then a tenth of the fourth column shows at first,
-    // and a twentieth of each neighbour once scrolled, with the same column width
-    val gap = if (inset > 0.dp) inset else PanelItemSpacing
+    val gap = PanelItemSpacing
     // What comes before the columns, with its gap
     val lead = leading?.let { it.width + gap } ?: 0.dp
-    // On the tab, as many as fit with a tenth of the next at the edge. Beside what comes first,
-    // one column, with only the next one's edge showing: its rounded corners and padding, none of
-    // what's inside it. Alone, it ends at the inset.
-    val shown = if (leading != null) 1 else ((maxWidth - inset + gap) / (minCardWidth + gap)).toInt().coerceAtLeast(1)
-    val columnWidth = when {
-        leading == null -> (maxWidth - inset - lead - gap * shown) / (shown + FirstPeek)
-        cards.size > 1 -> maxWidth - inset - lead - gap - CardSidePadding
-        else -> maxWidth - inset * 2 - lead
-    }
+    val shown = if (leading == null) DashboardColumns else 1
     // What shows of each neighbour once scrolled: what's left, shared between the two edges
     val sidePeek = ((maxWidth - columnWidth * shown - gap * (shown + 1)) / 2).coerceAtLeast(0.dp)
     val sideways = rememberScrollState()
@@ -586,7 +579,6 @@ private fun BoxWithConstraintsScope.SectionColumns(
 class LeadingItem(val width: Dp, val height: Dp, val content: @Composable () -> Unit)
 
 // The share of the next column showing at first
-private const val FirstPeek = 0.1f
 
 // Between a card's edge and what's inside it
 private val CardSidePadding = 16.dp
@@ -1074,14 +1066,16 @@ private fun SelectRow(connection: HaConnection, id: String, name: String?, modif
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
-            Text(
-                entity?.reading ?: "—",
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.End,
-                modifier = Modifier.weight(1f),
-            )
+            if (cue?.iconOnly != true) {
+                Text(
+                    entity?.reading ?: "—",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             MdiIcon("mdi:menu-down", color = LocalContentColor.current)
         }
         if (menuOpen) {
@@ -1146,9 +1140,10 @@ private fun ActionButton(connection: HaConnection, id: String, name: String?, ra
     val entity = connection.entities[id]
     val domainIcon = defaultHaIcon(id.substringBefore('.'), null, "")
     val ready = connection.session != null && connection.runningAction == null
+    val running = connection.runningAction == id
     Surface(
         onClick = { connection.runAction(id, scope, context) },
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().semantics { if (running) stateDescription = "Running" },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
@@ -1163,7 +1158,6 @@ private fun ActionButton(connection: HaConnection, id: String, name: String?, ra
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val running = connection.runningAction == id
             val icon = if (running) "progress-clock" else entity?.icon ?: domainIcon
             MdiIcon(icon, fallback = domainIcon, color = LocalContentColor.current)
             Text(
@@ -1173,7 +1167,6 @@ private fun ActionButton(connection: HaConnection, id: String, name: String?, ra
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (running) Text("Running…", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

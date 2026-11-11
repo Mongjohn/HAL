@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.text.format.DateFormat
 import android.text.format.Formatter
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -75,10 +77,11 @@ fun LauncherSettingsDialog(
     autoTurnedOff: Boolean,
     showFreeMemory: Boolean,
     dockApps: List<InstalledApp>,
+    dockKeys: List<String>,
     hiddenDockApps: List<InstalledApp>,
     showAllAppsTile: Boolean,
     onShowAllAppsTileChange: (Boolean) -> Unit,
-    onDockReorder: (List<InstalledApp>) -> Unit,
+    onDockReorder: (List<String>) -> Unit,
     onDockVisibilityChange: (InstalledApp, Boolean) -> Unit,
     onCatchHomeKeyChange: (Boolean) -> Unit,
     onReopenAfterHomeChange: (Boolean) -> Unit,
@@ -92,14 +95,14 @@ fun LauncherSettingsDialog(
     val serviceName = stringResource(R.string.home_override_label)
     val serviceOn = rememberHomeOverrideServiceOn()
     var tab by remember { mutableStateOf(LauncherSettingsTab.Launcher) }
-    var dockMove by remember(tab, dockApps) { mutableStateOf<DockMove?>(null) }
+    var dockMove by remember(tab, dockKeys) { mutableStateOf<DockMove?>(null) }
     val advancedOption = remember { FocusRequester() }
     val toggle = remember { FocusRequester() }
     // The item last on, to come back to from the top row
     val items = remember(tab) { ListFocus() }
     val itemKeys = when (tab) {
         LauncherSettingsTab.Launcher -> listOf("catch", "reopen", "accessibility", "export", "import")
-        LauncherSettingsTab.Dock -> listOf(ALL_APPS_OPTION) + (dockApps + hiddenDockApps).map { it.key }
+        LauncherSettingsTab.Dock -> listOf(ALL_APPS_OPTION) + dockKeys + hiddenDockApps.map { it.key }
         LauncherSettingsTab.Advanced -> listOf("hours-", "hours+", "memory")
     }
     val prefs = remember { LauncherPrefs(context) }
@@ -155,7 +158,7 @@ fun LauncherSettingsDialog(
                 modifier = Modifier.padding(horizontal = 12.dp).then(items.row(ALL_APPS_OPTION)).ringToTop(),
             )
             DockSettings(
-                dockApps, hiddenDockApps, dockMove, { dockMove = it }, onDockReorder, onDockVisibilityChange,
+                dockApps, hiddenDockApps, dockKeys, dockMove, { dockMove = it }, onDockReorder, onDockVisibilityChange,
                 focus = items,
                 rowModifier = { key -> items.row(key).ringToTop() },
             )
@@ -239,17 +242,18 @@ fun LauncherSettingsDialog(
     }
 }
 
-private const val ALL_APPS_OPTION = "dock:all_apps"
+private const val ALL_APPS_OPTION = "dock:show_all_apps"
 
-private data class DockMove(val key: String, val apps: List<InstalledApp>)
+private data class DockMove(val key: String, val keys: List<String>)
 
 @Composable
 private fun DockSettings(
     apps: List<InstalledApp>,
     hiddenApps: List<InstalledApp>,
+    dockKeys: List<String>,
     move: DockMove?,
     onMoveChange: (DockMove?) -> Unit,
-    onReorder: (List<InstalledApp>) -> Unit,
+    onReorder: (List<String>) -> Unit,
     onVisibilityChange: (InstalledApp, Boolean) -> Unit,
     focus: ListFocus,
     rowModifier: (String) -> Modifier,
@@ -257,61 +261,64 @@ private fun DockSettings(
     var menuKey by remember { mutableStateOf<String?>(null) }
     var focusKey by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
-    val allApps = (move?.apps ?: apps) + hiddenApps
-    LaunchedEffect(focusKey, allApps) {
+    val appsByKey = remember(apps, hiddenApps) { (apps + hiddenApps).associateBy { it.key } }
+    val allKeys = (move?.keys ?: dockKeys) + hiddenApps.map { it.key }
+    LaunchedEffect(focusKey, allKeys) {
         val key = focusKey ?: return@LaunchedEffect
-        val index = allApps.indexOfFirst { it.key == key }
+        val index = allKeys.indexOf(key)
         withFrameNanos { }
         if (index >= 0 && listState.layoutInfo.visibleItemsInfo.none { it.key == key }) {
             listState.scrollToItem(index)
             withFrameNanos { }
         }
-        focus.requester(if (index >= 0) key else ALL_APPS_OPTION).requestFocus()
+        runCatching { focus.requester(if (index >= 0) key else ALL_APPS_OPTION).requestFocus() }
         focusKey = null
     }
-    if (allApps.isEmpty()) {
+    if (allKeys.isEmpty()) {
         Text("No apps to configure", modifier = Modifier.padding(12.dp))
         return
     }
 
     LazyColumn(Modifier.fillMaxWidth().heightIn(max = 280.dp).padding(top = 4.dp), state = listState) {
-        itemsIndexed(allApps, key = { _, app -> app.key }) { index, app ->
-            val visible = index < apps.size
-            val moving = move?.key == app.key
-            Box {
+        itemsIndexed(allKeys, key = { _, key -> key }) { index, key ->
+            val app = appsByKey[key]
+            val label = if (key == ALL_APPS_TILE_KEY) "All apps" else app?.label ?: return@itemsIndexed
+            val visible = index < dockKeys.size
+            val moving = move?.key == key
+            Box(if (moving) Modifier.border(3.dp, MoveHighlight, RoundedCornerShape(8.dp)) else Modifier) {
                 ListItem(
                     selected = moving,
                     onClick = {
-                        if (visible) onMoveChange(DockMove(app.key, apps)) else menuKey = app.key
+                        if (visible) onMoveChange(DockMove(key, dockKeys)) else menuKey = key
                     },
-                    onLongClick = { menuKey = app.key },
-                    headlineContent = { Text(app.label) },
-                    trailingContent = { Text(if (moving) "↕ Picked up" else if (visible) "Shown" else "Hidden") },
-                    modifier = rowModifier(app.key).onPreviewKeyEvent { event ->
+                    onLongClick = app?.let { { menuKey = key } },
+                    headlineContent = { Text(label) },
+                    trailingContent = { Text(if (visible) "Shown" else "Hidden") },
+                    modifier = rowModifier(key).onPreviewKeyEvent { event ->
                         if (move == null || !moving) return@onPreviewKeyEvent false
                         when (event.key) {
                             Key.DirectionUp, Key.DirectionDown -> {
                                 val destination = index + if (event.key == Key.DirectionUp) -1 else 1
-                                if (event.type == KeyEventType.KeyDown && destination in move.apps.indices) {
-                                    val reordered = move.apps.toMutableList()
+                                if (event.type == KeyEventType.KeyDown && destination in move.keys.indices) {
+                                    val reordered = move.keys.toMutableList()
                                     reordered.add(destination, reordered.removeAt(index))
-                                    focusKey = app.key
-                                    onMoveChange(move.copy(apps = reordered))
+                                    focusKey = key
+                                    onMoveChange(move.copy(keys = reordered))
                                 }
                                 true
                             }
                             Key.DirectionLeft, Key.DirectionRight -> true
                             Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                                 if (event.type == KeyEventType.KeyUp) {
-                                    focusKey = app.key
-                                    onReorder(move.apps)
+                                    focusKey = key
+                                    onReorder(move.keys)
                                     onMoveChange(null)
                                 }
                                 true
                             }
                             Key.Back -> {
                                 if (event.type == KeyEventType.KeyUp) {
-                                    focusKey = app.key
+                                    focusKey = key
                                     onMoveChange(null)
                                 }
                                 true
@@ -320,13 +327,13 @@ private fun DockSettings(
                         }
                     },
                 )
-                if (menuKey == app.key) {
+                if (app != null && menuKey == key) {
                     ContextMenu(
                         title = app.label,
                         actions = listOf(MenuAction(if (visible) "Hide from dock" else "Show in dock") {
                             focusKey = if (visible) {
-                                (apps.getOrNull(index + 1) ?: apps.getOrNull(index - 1))?.key ?: ALL_APPS_OPTION
-                            } else app.key
+                                dockKeys.getOrNull(index + 1) ?: dockKeys.getOrNull(index - 1) ?: ALL_APPS_OPTION
+                            } else key
                             onVisibilityChange(app, !visible)
                         }),
                         onDismiss = { menuKey = null },

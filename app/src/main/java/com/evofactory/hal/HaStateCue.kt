@@ -5,7 +5,7 @@ internal enum class HaStateTone { Neutral, Active, Good, Caution, Alert, Blue, C
 internal data class HaStateCue(
     val icon: String,
     val tone: HaStateTone = HaStateTone.Neutral,
-    val iconOnly: Boolean = false,
+    val iconOnly: Boolean = true,
 )
 
 internal fun haStateCue(domain: String, deviceClass: String?, state: String?): HaStateCue? {
@@ -20,11 +20,11 @@ internal fun haStateCue(domain: String, deviceClass: String?, state: String?): H
             else -> state
         } else state
         return when (lockState) {
-            "locked" -> HaStateCue("lock", HaStateTone.Good, iconOnly = true)
-            "unlocked" -> HaStateCue("lock-open", HaStateTone.Alert, iconOnly = true)
+            "locked" -> HaStateCue("lock", HaStateTone.Good)
+            "unlocked" -> HaStateCue("lock-open", HaStateTone.Alert)
             "locking", "unlocking", "opening" -> HaStateCue("lock-clock", HaStateTone.Caution)
             "jammed" -> HaStateCue("lock-alert", HaStateTone.Alert)
-            else -> HaStateCue("help-circle-outline")
+            else -> HaStateCue("help-circle-outline", iconOnly = false)
         }
     }
     if (domain == "binary_sensor" && state in setOf("on", "off")) {
@@ -56,7 +56,7 @@ internal fun haStateCue(domain: String, deviceClass: String?, state: String?): H
         "person", "device_tracker" -> when (state) {
             "home" -> HaStateCue("home-import-outline", HaStateTone.Good)
             "not_home" -> HaStateCue("home-export-outline")
-            else -> HaStateCue("map-marker", HaStateTone.Blue)
+            else -> HaStateCue("map-marker", HaStateTone.Blue, iconOnly = false)
         }
         else -> null
     }
@@ -97,7 +97,7 @@ internal fun haStateCue(domain: String, deviceClass: String?, state: String?): H
         "above_horizon" -> HaStateCue("white-balance-sunny", HaStateTone.Active)
         "below_horizon" -> HaStateCue("weather-night")
         "error", "fault", "failed" -> HaStateCue("alert-circle-outline", HaStateTone.Alert)
-        else -> HaStateCue("dots-horizontal-circle-outline")
+        else -> HaStateCue("dots-horizontal-circle-outline", iconOnly = false)
     }
 }
 

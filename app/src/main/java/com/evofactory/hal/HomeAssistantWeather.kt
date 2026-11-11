@@ -9,6 +9,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -38,11 +40,17 @@ fun WeatherReading(entity: HaEntity?, hourly: List<HaForecast>?, daily: List<HaF
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MdiIcon(weatherIcon(condition), size = 32.dp)
+            MdiIcon(
+                weatherIcon(condition),
+                modifier = Modifier.clearAndSetSemantics {
+                    contentDescription = weatherLabel(condition) ?: "Weather condition unavailable"
+                },
+                size = 32.dp,
+            )
             Text(entity?.temperature?.let(::degrees) ?: "—", style = MaterialTheme.typography.headlineSmall)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    weatherLabel(condition) ?: entity?.name ?: "",
+                    entity?.name ?: "Weather",
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

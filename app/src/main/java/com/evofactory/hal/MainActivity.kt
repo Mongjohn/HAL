@@ -54,7 +54,6 @@ import kotlin.math.roundToInt
 
 // The panel next to the camera (Home Assistant or the other cameras) is at least this wide; it
 // also gets whatever width the camera leaves
-private val SidePanelWidth = 260.dp
 
 // App tiles from this 0-based slot on have the side panel above them, the earlier ones the camera
 private const val FIRST_SLOT_UNDER_PANEL = 3
@@ -128,6 +127,9 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val all = installed
                     val visible = remember(all, order, hidden) { all?.let { arrange(it, order, hidden) } }
+                    val dockKeys = remember(visible, order, showAllAppsTile) {
+                        dockTileKeys(visible.orEmpty().map { it.key }, order, showAllAppsTile)
+                    }
                     val hiddenApps = remember(all, hidden) {
                         all?.let { apps -> hidden.mapNotNull { key -> apps.find { it.key == key } } }
                     }
@@ -386,7 +388,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             val homeEntities = remember(haEntities) { haEntities.filterNot(::isHaAction) }
-                            val sidePanelWidth = if (haDisplay.homeLayout.twoPerRow) TwoEntityCardWidth else SidePanelWidth
                             if (homeStrip) {
                                 // A dashboard in columns: the camera and the columns in one row that
                                 // scrolls sideways to the screen's right edge, the camera leaving on
@@ -399,7 +400,8 @@ class MainActivity : ComponentActivity() {
                                         .onFocusChanged { middleSelected = it.hasFocus },
                                 ) {
                                     // As large as when next to the panel
-                                    val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - EdgePadding * 3 - sidePanelWidth)
+                                    val columnWidth = dashboardColumnWidth(maxWidth - EdgePadding * 2)
+                                    val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - EdgePadding * 2 - PanelItemSpacing - columnWidth)
                                         .coerceAtLeast(0.dp)
                                     HaAssistantTab(
                                         connection = haConnection,
@@ -428,9 +430,10 @@ class MainActivity : ComponentActivity() {
                                         .padding(start = EdgePadding, top = EdgePadding, end = EdgePadding)
                                         .onFocusChanged { middleSelected = it.hasFocus },
                                 ) {
+                                    val columnWidth = dashboardColumnWidth(maxWidth)
                                     val cameraWidth = minOf(
                                         maxHeight * 16f / 9f,
-                                        if (sideContent) maxWidth - sidePanelWidth - EdgePadding else maxWidth,
+                                        if (sideContent) maxWidth - columnWidth - EdgePadding else maxWidth,
                                     ).coerceAtLeast(0.dp)
                                     Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
                                         if (camera != null) CameraBox(cameraWidth)
@@ -446,10 +449,11 @@ class MainActivity : ComponentActivity() {
                                                 tabFocus = networkFocus,
                                                 onSetUp = { haDialogOpen = true },
                                                 inset = 0.dp,
+                                                fixedColumnWidth = columnWidth,
                                                 modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(haSensorsFocus),
                                             )
                                         } else if (sideContent) {
-                                            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                            Box(modifier = Modifier.width(columnWidth).fillMaxHeight()) {
                                                 HomeAssistantPanel(
                                                     connection = haConnection,
                                                     entityIds = homeEntities,
@@ -506,7 +510,7 @@ class MainActivity : ComponentActivity() {
                                             apps = visible,
                                             hiddenApps = hiddenApps,
                                             showHidden = showHidden,
-                                            showAllAppsTile = showAllAppsTile,
+                                            dockKeys = dockKeys,
                                             onOpenAllApps = { allAppsOpen = true },
                                             onShowHiddenChange = { showHidden = it },
                                             onHide = { app -> setDockAppVisible(app, false) },
@@ -633,6 +637,7 @@ class MainActivity : ComponentActivity() {
                             },
                             showFreeMemory = showFreeMemory,
                             dockApps = visible.orEmpty(),
+                            dockKeys = dockKeys,
                             hiddenDockApps = hiddenApps.orEmpty(),
                             showAllAppsTile = showAllAppsTile,
                             onShowAllAppsTileChange = {
@@ -664,7 +669,10 @@ class MainActivity : ComponentActivity() {
                                 order = haEntities,
                                 topBar = haTopBar,
                                 frigate = frigate.takeIf { it.isSet },
-                                appTiles = visible.orEmpty().map { NamedEntity(it.key, it.label) },
+                                appTiles = dockKeys.mapNotNull { key ->
+                                    if (key == ALL_APPS_TILE_KEY) NamedEntity(key, "All apps")
+                                    else visible?.firstOrNull { it.key == key }?.let { NamedEntity(key, it.label) }
+                                },
                             ),
                             onDismiss = { exportOpen = false },
                         )
@@ -747,9 +755,11 @@ class MainActivity : ComponentActivity() {
         file.frigate?.let(::saveFrigate)
         // The row becomes the apps in the file that are on this TV; the others can be unhidden later
         val apps = installed.orEmpty().map { it.key }
-        val shown = file.appTiles.map { it.id }.filter { it in apps }
+        val importedDock = file.appTiles.map { it.id }.filter { it in apps || it == ALL_APPS_TILE_KEY }.distinct()
+        val shown = importedDock - ALL_APPS_TILE_KEY
         if (shown.isNotEmpty()) {
-            saveDockLayout(shown, (hidden + apps).distinct() - shown.toSet())
+            val tileOrder = if (ALL_APPS_TILE_KEY in importedDock) importedDock else dockTileKeys(shown, order, true)
+            saveDockLayout(tileOrder, (hidden + apps).distinct() - shown.toSet())
         }
         Toast.makeText(this, "Settings imported", Toast.LENGTH_SHORT).show()
     }
@@ -776,10 +786,12 @@ class MainActivity : ComponentActivity() {
         pruneCameraSnapshots(this, value.flatMap { listOf(it.url, it.substreamUrl) })
     }
 
-    private fun saveDockOrder(apps: List<InstalledApp>) = saveOrder(apps.map { it.key })
+    private fun saveDockOrder(keys: List<String>) {
+        saveOrder(if (showAllAppsTile) keys else dockTileKeys(keys, order, true))
+    }
 
     private fun setDockAppVisible(app: InstalledApp, visible: Boolean) {
-        val appKeys = arrange(installed.orEmpty(), order, hidden).map { it.key }
+        val appKeys = dockTileKeys(arrange(installed.orEmpty(), order, hidden).map { it.key }, order, true)
         if (visible) {
             // Unhidden apps return at the end of the visible dock.
             saveDockLayout((appKeys - app.key) + app.key, hidden - app.key)

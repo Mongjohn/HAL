@@ -97,8 +97,7 @@ private const val VisibleTiles = 5.5f
 internal const val FocusSlot = 2
 internal const val LastFocusSlot = 3
 
-private val MoveHighlight = Color(0xFF60A5FA)
-private const val ALL_APPS_TILE_KEY = "dock:all_apps"
+internal val MoveHighlight = Color(0xFF60A5FA)
 
 private const val NO_ALERTS_TILE_KEY = "no-recent-alerts"
 
@@ -180,12 +179,12 @@ fun AppRow(
     apps: List<InstalledApp>,
     hiddenApps: List<InstalledApp>,
     showHidden: Boolean,
-    showAllAppsTile: Boolean,
+    dockKeys: List<String>,
     onOpenAllApps: () -> Unit,
     onShowHiddenChange: (Boolean) -> Unit,
     onHide: (InstalledApp) -> Unit,
     onUnhide: (InstalledApp) -> Unit,
-    onReorder: (List<InstalledApp>) -> Unit,
+    onReorder: (List<String>) -> Unit,
     // Where up goes from the tile on screen in this 0-based slot
     upFocus: (slot: Int) -> FocusRequester,
     // Where down goes from any tile
@@ -208,7 +207,7 @@ fun AppRow(
     val listState = rememberLazyListState()
     val focusRequesters = remember { mutableMapOf<String, FocusRequester>() }
 
-    val initialKey = if (showAllAppsTile) ALL_APPS_TILE_KEY else apps.firstOrNull()?.key
+    val initialKey = dockKeys.firstOrNull()
     var pendingFocus by remember { mutableStateOf(initialKey?.let { FocusRequest(it) }) }
     // Selected as soon as it's laid out, before anything is drawn: nothing else gets the selection first
     var firstFocus by remember { mutableStateOf(initialKey) }
@@ -216,24 +215,25 @@ fun AppRow(
     // Where the row was when the menu opened: menu actions put it back there
     var menuScroll by remember { mutableStateOf(ScrollPosition(0, 0)) }
     // While moving a tile the row shows this working copy: OK saves it, Back cancels
-    var moveOrder by remember { mutableStateOf<List<InstalledApp>?>(null) }
-    var movingKey by remember { mutableStateOf<String?>(null) }
+    var moveOrder by remember(dockKeys) { mutableStateOf<List<String>?>(null) }
+    var movingKey by remember(dockKeys) { mutableStateOf<String?>(null) }
     // The tile sent to Android's uninstall, and where to go if it does disappear
     var uninstalling by remember { mutableStateOf<Pair<String, FocusRequest?>?>(null) }
 
     // Hidden apps always come last, after the apps you've arranged
-    val shown = (moveOrder ?: apps) + if (showHidden) hiddenApps else emptyList()
+    val shown = (moveOrder ?: dockKeys) + if (showHidden) hiddenApps.map { it.key } else emptyList()
+    val appsByKey = remember(apps, hiddenApps) { (apps + hiddenApps).associateBy { it.key } }
     val hiddenKeys = remember(hiddenApps) { hiddenApps.map { it.key }.toSet() }
 
     var selectedKey by remember { mutableStateOf<String?>(null) }
-    val firstDockKey = if (showAllAppsTile) ALL_APPS_TILE_KEY else shown.firstOrNull()?.key
+    val firstDockKey = shown.firstOrNull()
     val firstTileSelected = selectedKey != null && selectedKey == firstDockKey
     val otherTileSelected = selectedKey != null && !firstTileSelected
     SideEffect {
         onFirstTileSelected(firstTileSelected)
         onOtherTileSelected(otherTileSelected)
     }
-    val tilesBeforeApps = (if (showNoAlertsTile) 1 else 0) + (if (showAllAppsTile) 1 else 0)
+    val tilesBeforeApps = if (showNoAlertsTile) 1 else 0
     LaunchedEffect(showNoAlertsTile) {
         // The row keeps to the tile it started on: bring the new one in front of it into view
         if (showNoAlertsTile && listState.firstVisibleItemIndex <= 1 && listState.firstVisibleItemScrollOffset == 0) listState.scrollToItem(0)
@@ -246,21 +246,17 @@ fun AppRow(
 
     LaunchedEffect(shown) {
         val (key, next) = uninstalling ?: return@LaunchedEffect
-        if (shown.none { it.key == key }) {
+        if (key !in shown) {
             uninstalling = null
             pendingFocus = next
         }
     }
 
-    LaunchedEffect(pendingFocus, shown, showAllAppsTile, tilesBeforeApps) {
+    LaunchedEffect(pendingFocus, shown, tilesBeforeApps) {
         val request = pendingFocus ?: return@LaunchedEffect
-        val index = if (request.key == ALL_APPS_TILE_KEY && showAllAppsTile) {
-            tilesBeforeApps - 1
-        } else {
-            val appIndex = shown.indexOfFirst { it.key == request.key }
-            if (appIndex < 0) return@LaunchedEffect
-            appIndex + tilesBeforeApps
-        }
+        val appIndex = shown.indexOf(request.key)
+        if (appIndex < 0) return@LaunchedEffect
+        val index = appIndex + tilesBeforeApps
         when {
             request.keep != null -> listState.scrollToItem(request.keep.index, request.keep.offset)
             listState.layoutInfo.visibleItemsInfo.none { it.index == index } ->
@@ -274,7 +270,7 @@ fun AppRow(
 
     fun shift(delta: Int) {
         val list = moveOrder ?: return
-        val from = list.indexOfFirst { it.key == movingKey }
+        val from = list.indexOf(movingKey ?: return)
         val to = from + delta
         // Only among visible apps: hidden ones stay at the end
         if (from < 0 || to !in list.indices) return
@@ -315,16 +311,15 @@ fun AppRow(
             })
         } else {
             add(MenuAction("Move") {
-                moveOrder = apps
+                moveOrder = dockKeys
                 movingKey = app.key
                 pendingFocus = FocusRequest(app.key, keep)
             })
             add(MenuAction("Hide") {
                 // The next tile slides into this one's place and takes the selection
-                val rest = shown - app
-                val index = shown.indexOf(app)
-                val nextKey = (rest.getOrNull(index) ?: rest.getOrNull(index - 1))?.key
-                    ?: ALL_APPS_TILE_KEY.takeIf { showAllAppsTile }
+                val rest = shown - app.key
+                val index = shown.indexOf(app.key)
+                val nextKey = rest.getOrNull(index) ?: rest.getOrNull(index - 1)
                 pendingFocus = nextKey?.let { FocusRequest(it, keep) }
                 onHide(app)
             })
@@ -332,9 +327,8 @@ fun AppRow(
         add(MenuAction("Info") { context.openAppInfo(app) })
         if (context.canUninstall(app)) {
             add(MenuAction("Uninstall") {
-                val index = shown.indexOf(app)
-                val next = shown.getOrNull(index + 1) ?: shown.getOrNull(index - 1)
-                val nextKey = next?.key ?: ALL_APPS_TILE_KEY.takeIf { showAllAppsTile }
+                val index = shown.indexOf(app.key)
+                val nextKey = shown.getOrNull(index + 1) ?: shown.getOrNull(index - 1)
                 uninstalling = app.key to nextKey?.let { FocusRequest(it, keep) }
                 context.uninstall(app)
             })
@@ -343,7 +337,7 @@ fun AppRow(
             onShowHiddenChange(!showHidden)
             pendingFocus = if (showHidden && app.key in hiddenKeys) {
                 // This tile is about to disappear: go to the last visible app
-                (apps.lastOrNull()?.key ?: firstDockKey)?.let { FocusRequest(it) }
+                dockKeys.lastOrNull()?.let { FocusRequest(it) }
             } else {
                 FocusRequest(app.key, keep)
             }
@@ -384,32 +378,39 @@ fun AppRow(
                         )
                     }
                 }
-                if (showAllAppsTile) {
-                    item(key = ALL_APPS_TILE_KEY) {
-                        val requester = focusRequesters.getOrPut(ALL_APPS_TILE_KEY) { FocusRequester() }
+                items(shown, key = { it }) { key ->
+                    val requester = focusRequesters.getOrPut(key) { FocusRequester() }
+                    val tileFocus = Modifier
+                        .onFocusChanged {
+                            if (it.hasFocus) selectedKey = key else if (selectedKey == key) selectedKey = null
+                        }
+                        .focusRequester(requester)
+                        .then(
+                            if (key == firstFocus) Modifier.onGloballyPositioned {
+                                if (runCatching { requester.requestFocus() }.isSuccess) {
+                                    firstFocus = null
+                                    pendingFocus = null
+                                }
+                            } else Modifier,
+                        )
+                        .focusProperties {
+                            up = upFocus(listState.slotOnScreen(key))
+                            down = downFocus
+                            if (key == shown.first() && !showNoAlertsTile) left = FocusRequester.Cancel
+                            if (key == shown.last()) right = FocusRequester.Cancel
+                        }
+                    if (key == ALL_APPS_TILE_KEY) {
                         DockShortcutTile(
                             title = "All apps",
                             icon = "mdi:apps",
                             width = tileWidth,
                             onClick = onOpenAllApps,
-                            modifier = Modifier
-                                .onFocusChanged {
-                                    if (it.hasFocus) selectedKey = ALL_APPS_TILE_KEY
-                                    else if (selectedKey == ALL_APPS_TILE_KEY) selectedKey = null
-                                }
-                                .focusRequester(requester)
-                                .focusProperties {
-                                    up = upFocus(listState.slotOnScreen(ALL_APPS_TILE_KEY))
-                                    down = downFocus
-                                    if (!showNoAlertsTile) left = FocusRequester.Cancel
-                                    if (shown.isEmpty()) right = FocusRequester.Cancel
-                                },
+                            modifier = tileFocus,
                         )
+                        return@items
                     }
-                }
-                items(shown, key = { it.key }) { app ->
-                    val requester = focusRequesters.getOrPut(app.key) { FocusRequester() }
-                    val moving = app.key == movingKey
+                    val app = appsByKey[key] ?: return@items
+                    val moving = key == movingKey
                     AppTile(
                         app = app,
                         moving = moving,
@@ -421,29 +422,7 @@ fun AppRow(
                         },
                         modifier = Modifier
                             .width(tileWidth)
-                            .onFocusChanged {
-                                if (it.hasFocus) selectedKey = app.key else if (selectedKey == app.key) selectedKey = null
-                            }
-                            .focusRequester(requester)
-                            .then(
-                                if (app.key == firstFocus) {
-                                    Modifier.onGloballyPositioned {
-                                        if (runCatching { requester.requestFocus() }.isSuccess) {
-                                            firstFocus = null
-                                            pendingFocus = null
-                                        }
-                                    }
-                                } else {
-                                    Modifier
-                                },
-                            )
-                            .focusProperties {
-                                up = upFocus(listState.slotOnScreen(app.key))
-                                down = downFocus
-                                // Past the ends the search would otherwise jump down to the row below
-                                if (app == shown.first() && !showNoAlertsTile && !showAllAppsTile) left = FocusRequester.Cancel
-                                if (app == shown.last()) right = FocusRequester.Cancel
-                            }
+                            .then(tileFocus)
                             .then(if (moving) Modifier.onPreviewKeyEvent(::onMoveKey) else Modifier),
                     ) {
                         if (menuFor == app.key) {
