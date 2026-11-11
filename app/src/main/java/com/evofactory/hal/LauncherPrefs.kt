@@ -29,6 +29,10 @@ class LauncherPrefs(context: Context) {
         remove("hidden")
     }
 
+    var showAllAppsTile: Boolean
+        get() = prefs.getBoolean("show_all_apps_tile", true)
+        set(value) = prefs.edit { putBoolean("show_all_apps_tile", value) }
+
     /** Shows hidden from Continue watching, see [WatchItem.hideKey] */
     var hiddenWatching: List<String>
         get() = readList("hidden_watching")

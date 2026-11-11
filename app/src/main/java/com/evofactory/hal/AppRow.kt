@@ -23,6 +23,9 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -55,8 +58,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.tv.material3.Border
 import androidx.tv.material3.Card
@@ -92,6 +98,7 @@ internal const val FocusSlot = 2
 internal const val LastFocusSlot = 3
 
 private val MoveHighlight = Color(0xFF60A5FA)
+private const val ALL_APPS_TILE_KEY = "dock:all_apps"
 
 private const val NO_ALERTS_TILE_KEY = "no-recent-alerts"
 
@@ -173,6 +180,8 @@ fun AppRow(
     apps: List<InstalledApp>,
     hiddenApps: List<InstalledApp>,
     showHidden: Boolean,
+    showAllAppsTile: Boolean,
+    onOpenAllApps: () -> Unit,
     onShowHiddenChange: (Boolean) -> Unit,
     onHide: (InstalledApp) -> Unit,
     onUnhide: (InstalledApp) -> Unit,
@@ -199,9 +208,10 @@ fun AppRow(
     val listState = rememberLazyListState()
     val focusRequesters = remember { mutableMapOf<String, FocusRequester>() }
 
-    var pendingFocus by remember { mutableStateOf(apps.firstOrNull()?.let { FocusRequest(it.key) }) }
+    val initialKey = if (showAllAppsTile) ALL_APPS_TILE_KEY else apps.firstOrNull()?.key
+    var pendingFocus by remember { mutableStateOf(initialKey?.let { FocusRequest(it) }) }
     // Selected as soon as it's laid out, before anything is drawn: nothing else gets the selection first
-    var firstFocus by remember { mutableStateOf(apps.firstOrNull()?.key) }
+    var firstFocus by remember { mutableStateOf(initialKey) }
     var menuFor by remember { mutableStateOf<String?>(null) }
     // Where the row was when the menu opened: menu actions put it back there
     var menuScroll by remember { mutableStateOf(ScrollPosition(0, 0)) }
@@ -216,19 +226,20 @@ fun AppRow(
     val hiddenKeys = remember(hiddenApps) { hiddenApps.map { it.key }.toSet() }
 
     var selectedKey by remember { mutableStateOf<String?>(null) }
-    val firstTileSelected = selectedKey != null && selectedKey == shown.firstOrNull()?.key
+    val firstDockKey = if (showAllAppsTile) ALL_APPS_TILE_KEY else shown.firstOrNull()?.key
+    val firstTileSelected = selectedKey != null && selectedKey == firstDockKey
     val otherTileSelected = selectedKey != null && !firstTileSelected
     SideEffect {
         onFirstTileSelected(firstTileSelected)
         onOtherTileSelected(otherTileSelected)
     }
-    val tilesBeforeApps = if (showNoAlertsTile) 1 else 0
+    val tilesBeforeApps = (if (showNoAlertsTile) 1 else 0) + (if (showAllAppsTile) 1 else 0)
     LaunchedEffect(showNoAlertsTile) {
         // The row keeps to the tile it started on: bring the new one in front of it into view
         if (showNoAlertsTile && listState.firstVisibleItemIndex <= 1 && listState.firstVisibleItemScrollOffset == 0) listState.scrollToItem(0)
     }
     LaunchedEffect(goToFirstTile) {
-        if (goToFirstTile > 0) pendingFocus = shown.firstOrNull()?.let { FocusRequest(it.key, ScrollPosition(0, 0)) }
+        if (goToFirstTile > 0) pendingFocus = firstDockKey?.let { FocusRequest(it, ScrollPosition(0, 0)) }
     }
 
     fun currentScroll() = ScrollPosition(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
@@ -241,15 +252,20 @@ fun AppRow(
         }
     }
 
-    LaunchedEffect(pendingFocus, shown) {
+    LaunchedEffect(pendingFocus, shown, showAllAppsTile, tilesBeforeApps) {
         val request = pendingFocus ?: return@LaunchedEffect
-        val index = shown.indexOfFirst { it.key == request.key }
-        if (index < 0) return@LaunchedEffect
+        val index = if (request.key == ALL_APPS_TILE_KEY && showAllAppsTile) {
+            tilesBeforeApps - 1
+        } else {
+            val appIndex = shown.indexOfFirst { it.key == request.key }
+            if (appIndex < 0) return@LaunchedEffect
+            appIndex + tilesBeforeApps
+        }
         when {
             request.keep != null -> listState.scrollToItem(request.keep.index, request.keep.offset)
-            listState.layoutInfo.visibleItemsInfo.none { it.index == index + tilesBeforeApps } ->
+            listState.layoutInfo.visibleItemsInfo.none { it.index == index } ->
                 // Putting the tile FocusSlot places earlier at the start lands this one in the middle slot
-                listState.scrollToItem((index + tilesBeforeApps - FocusSlot).coerceAtLeast(0))
+                listState.scrollToItem((index - FocusSlot).coerceAtLeast(0))
         }
         withFrameNanos { } // let the row lay out there, so the tile is composed and focusable
         runCatching { focusRequesters[request.key]?.requestFocus() }
@@ -307,7 +323,9 @@ fun AppRow(
                 // The next tile slides into this one's place and takes the selection
                 val rest = shown - app
                 val index = shown.indexOf(app)
-                (rest.getOrNull(index) ?: rest.getOrNull(index - 1))?.let { pendingFocus = FocusRequest(it.key, keep) }
+                val nextKey = (rest.getOrNull(index) ?: rest.getOrNull(index - 1))?.key
+                    ?: ALL_APPS_TILE_KEY.takeIf { showAllAppsTile }
+                pendingFocus = nextKey?.let { FocusRequest(it, keep) }
                 onHide(app)
             })
         }
@@ -316,7 +334,8 @@ fun AppRow(
             add(MenuAction("Uninstall") {
                 val index = shown.indexOf(app)
                 val next = shown.getOrNull(index + 1) ?: shown.getOrNull(index - 1)
-                uninstalling = app.key to next?.let { FocusRequest(it.key, keep) }
+                val nextKey = next?.key ?: ALL_APPS_TILE_KEY.takeIf { showAllAppsTile }
+                uninstalling = app.key to nextKey?.let { FocusRequest(it, keep) }
                 context.uninstall(app)
             })
         }
@@ -324,7 +343,7 @@ fun AppRow(
             onShowHiddenChange(!showHidden)
             pendingFocus = if (showHidden && app.key in hiddenKeys) {
                 // This tile is about to disappear: go to the last visible app
-                apps.lastOrNull()?.let { FocusRequest(it.key) }
+                (apps.lastOrNull()?.key ?: firstDockKey)?.let { FocusRequest(it) }
             } else {
                 FocusRequest(app.key, keep)
             }
@@ -350,7 +369,9 @@ fun AppRow(
             ) {
                 if (showNoAlertsTile) {
                     item(key = NO_ALERTS_TILE_KEY) {
-                        NoAlertsTile(
+                        DockShortcutTile(
+                            title = "No Recent Alerts",
+                            icon = "mdi:cctv",
                             width = tileWidth,
                             onClick = onNoAlertsClick,
                             modifier = Modifier
@@ -363,12 +384,34 @@ fun AppRow(
                         )
                     }
                 }
+                if (showAllAppsTile) {
+                    item(key = ALL_APPS_TILE_KEY) {
+                        val requester = focusRequesters.getOrPut(ALL_APPS_TILE_KEY) { FocusRequester() }
+                        DockShortcutTile(
+                            title = "All apps",
+                            icon = "mdi:apps",
+                            width = tileWidth,
+                            onClick = onOpenAllApps,
+                            modifier = Modifier
+                                .onFocusChanged {
+                                    if (it.hasFocus) selectedKey = ALL_APPS_TILE_KEY
+                                    else if (selectedKey == ALL_APPS_TILE_KEY) selectedKey = null
+                                }
+                                .focusRequester(requester)
+                                .focusProperties {
+                                    up = upFocus(listState.slotOnScreen(ALL_APPS_TILE_KEY))
+                                    down = downFocus
+                                    if (!showNoAlertsTile) left = FocusRequester.Cancel
+                                    if (shown.isEmpty()) right = FocusRequester.Cancel
+                                },
+                        )
+                    }
+                }
                 items(shown, key = { it.key }) { app ->
                     val requester = focusRequesters.getOrPut(app.key) { FocusRequester() }
                     val moving = app.key == movingKey
                     AppTile(
                         app = app,
-                        width = tileWidth,
                         moving = moving,
                         hidden = app.key in hiddenKeys,
                         onClick = { context.launch(app) },
@@ -377,6 +420,7 @@ fun AppRow(
                             menuFor = app.key
                         },
                         modifier = Modifier
+                            .width(tileWidth)
                             .onFocusChanged {
                                 if (it.hasFocus) selectedKey = app.key else if (selectedKey == app.key) selectedKey = null
                             }
@@ -397,7 +441,7 @@ fun AppRow(
                                 up = upFocus(listState.slotOnScreen(app.key))
                                 down = downFocus
                                 // Past the ends the search would otherwise jump down to the row below
-                                if (app == shown.first() && !showNoAlertsTile) left = FocusRequester.Cancel
+                                if (app == shown.first() && !showNoAlertsTile && !showAllAppsTile) left = FocusRequester.Cancel
                                 if (app == shown.last()) right = FocusRequester.Cancel
                             }
                             .then(if (moving) Modifier.onPreviewKeyEvent(::onMoveKey) else Modifier),
@@ -432,15 +476,15 @@ fun showHiddenAction(showHidden: Boolean, hiddenCount: Int, onClick: () -> Unit)
 
 /** Says Frigate has nothing to show, where the row of alerts would otherwise be above the tiles */
 @Composable
-private fun NoAlertsTile(width: Dp, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun DockShortcutTile(title: String, icon: String, width: Dp, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Card(onClick = onClick, modifier = modifier.width(width).aspectRatio(16f / 9f)) {
         Column(
             modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            MdiIcon("mdi:cctv", size = 40.dp)
-            Text("No Recent Alerts", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
+            MdiIcon(icon, size = 40.dp)
+            Text(title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
@@ -448,20 +492,19 @@ private fun NoAlertsTile(width: Dp, onClick: () -> Unit, modifier: Modifier = Mo
 @Composable
 private fun AppTile(
     app: InstalledApp,
-    width: Dp,
-    moving: Boolean,
-    hidden: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
-    overlay: @Composable () -> Unit,
+    moving: Boolean = false,
+    hidden: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
+    overlay: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
     val image by produceState(initialValue = cachedTileImage(app), app.key) {
         if (value == null) value = withContext(Dispatchers.IO) { loadTileImage(context, app) }
     }
 
-    Box(modifier = modifier.width(width).aspectRatio(16f / 9f)) {
+    Box(modifier = modifier.aspectRatio(16f / 9f)) {
         Card(
             onClick = onClick,
             onLongClick = onLongClick,
@@ -494,6 +537,46 @@ private fun AppTile(
             MoveArrow("›", Alignment.CenterEnd)
         }
         overlay()
+    }
+}
+
+@Composable
+fun AllAppsDrawer(apps: List<InstalledApp>, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val first = remember { FocusRequester() }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = EdgePadding, vertical = TopPadding),
+        ) {
+            Text("All apps", style = MaterialTheme.typography.headlineSmall)
+            if (apps.isEmpty()) {
+                Text("No installed apps", modifier = Modifier.padding(top = PanelItemSpacing))
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(140.dp),
+                    contentPadding = PaddingValues(horizontal = TileGrowRoom, vertical = TileGrowRoom),
+                    horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
+                    verticalArrangement = Arrangement.spacedBy(PanelItemSpacing),
+                ) {
+                    items(apps, key = { it.key }) { app ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            AppTile(
+                                app = app,
+                                onClick = { context.launch(app) },
+                                modifier = Modifier.fillMaxWidth()
+                                    .then(if (app.key == apps.first().key) Modifier.focusRequester(first) else Modifier),
+                            )
+                            Text(app.label, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                LaunchedEffect(Unit) {
+                    withFrameNanos { }
+                    runCatching { first.requestFocus() }
+                }
+            }
+        }
     }
 }
 

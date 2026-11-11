@@ -65,6 +65,8 @@ class MainActivity : ComponentActivity() {
     private var order by mutableStateOf(emptyList<String>())
     private var hidden by mutableStateOf(emptyList<String>())
     private var showHidden by mutableStateOf(false)
+    private var showAllAppsTile by mutableStateOf(true)
+    private var allAppsOpen by mutableStateOf(false)
     private var pingOpen by mutableStateOf(false)
     private var networkStatusOpen by mutableStateOf(false)
     private var camerasOpen by mutableStateOf(false)
@@ -107,6 +109,7 @@ class MainActivity : ComponentActivity() {
         installed = prefs.installedApps.ifEmpty { null }
         order = prefs.order
         hidden = prefs.hidden
+        showAllAppsTile = prefs.showAllAppsTile
         cameras = prefs.cameras
         cameraGridLive = prefs.cameraGridLive
         showHomeCamera = prefs.showHomeCamera
@@ -503,6 +506,8 @@ class MainActivity : ComponentActivity() {
                                             apps = visible,
                                             hiddenApps = hiddenApps,
                                             showHidden = showHidden,
+                                            showAllAppsTile = showAllAppsTile,
+                                            onOpenAllApps = { allAppsOpen = true },
                                             onShowHiddenChange = { showHidden = it },
                                             onHide = { app -> setDockAppVisible(app, false) },
                                             onUnhide = { app -> setDockAppVisible(app, true) },
@@ -610,6 +615,9 @@ class MainActivity : ComponentActivity() {
                             onDismiss = { frigateOpen = false },
                         )
                     }
+                    if (allAppsOpen) {
+                        AllAppsDrawer(all.orEmpty(), onDismiss = { allAppsOpen = false })
+                    }
                     if (launcherSettingsOpen) {
                         LauncherSettingsDialog(
                             catchHomeKey = catchHomeKey,
@@ -626,6 +634,11 @@ class MainActivity : ComponentActivity() {
                             showFreeMemory = showFreeMemory,
                             dockApps = visible.orEmpty(),
                             hiddenDockApps = hiddenApps.orEmpty(),
+                            showAllAppsTile = showAllAppsTile,
+                            onShowAllAppsTileChange = {
+                                showAllAppsTile = it
+                                prefs.showAllAppsTile = it
+                            },
                             onDockReorder = ::saveDockOrder,
                             onDockVisibilityChange = ::setDockAppVisible,
                             onShowFreeMemoryChange = { on ->
