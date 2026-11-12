@@ -23,7 +23,7 @@
     <!-- App tile menu: asks Android to show its uninstall confirmation -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
-    <!-- Recommendations: reads preview programs other apps publish to Android TV channels -->
+    <!-- Watch Next: reads the cards other apps publish to Android TV -->
     <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
 
     <!-- Android 11+ hides other apps unless we declare which ones we look up -->

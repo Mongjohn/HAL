@@ -74,95 +74,77 @@ import java.io.InputStream
 import java.net.URISyntaxException
 import java.util.concurrent.TimeUnit
 
-private const val TAG = "AppRecommendations"
-private const val MAX_CHANNEL_CARDS = 30
+private const val TAG = "WatchNext"
+private const val MAX_CARDS_PER_APP = 30
 private const val MAX_POSTER_BYTES = 8 * 1024 * 1024
 private const val POSTER_WIDTH = 480
 
-/** A preview program published by an app to an Android TV home-screen channel. */
-data class AppRecommendation(
+/** An app's program in Android TV's Watch Next feed. */
+data class WatchNextCard(
     val title: String,
     val packageName: String,
     val episode: String?,
     val posterUri: String?,
     val intentUri: String,
     val browsable: Boolean,
-    val weight: Long,
+    val engagedMillis: Long,
 ) {
     val key: String get() = intentUri
-    // Keep honoring the hidden keys written for preview programs by the previous row.
-    val hideKey: String get() = "$packageName|$title|${episode.orEmpty()}|0"
+    // Match the key used by the old Watch Next row, including devices that reported seconds.
+    val hideKey: String get() = "$packageName|$title|${episode.orEmpty()}|$engagedMillis"
 }
 
-fun recommendationsByApp(rows: List<AppRecommendation>, hidden: List<String>): Map<String, List<AppRecommendation>> {
+fun watchNextByApp(rows: List<WatchNextCard>, hidden: List<String>): Map<String, List<WatchNextCard>> {
     val hiddenKeys = hidden.toSet()
     return rows.filter { it.browsable && it.intentUri.isNotBlank() && it.hideKey !in hiddenKeys }
         .groupBy { it.packageName }
-        .mapValues { (_, cards) -> cards.distinctBy { it.key }.take(MAX_CHANNEL_CARDS) }
+        .mapValues { (_, cards) -> cards.sortedByDescending { it.engagedMillis }.distinctBy { it.key }.take(MAX_CARDS_PER_APP) }
 }
 
-fun Context.canReadRecommendations() = checkSelfPermission(READ_TV_LISTINGS) == PackageManager.PERMISSION_GRANTED
+fun Context.canReadWatchNext() = checkSelfPermission(READ_TV_LISTINGS) == PackageManager.PERMISSION_GRANTED
 
 const val READ_TV_LISTINGS = "android.permission.READ_TV_LISTINGS"
 
 /**
- * Other apps' home-screen channels. Without the
- * system-only permission to read all TV data, Android refuses any selection or sort order, so the
- * whole tables are read and filtered here.
+ * The Watch Next table is read with the TV listings permission. Sort and filter locally because
+ * Android reserves SQL selections for callers with privileged TV provider access.
  */
-fun loadAppRecommendations(context: Context): List<AppRecommendation> {
-    val rows = mutableListOf<AppRecommendation>()
-    try {
-        val perApp = mutableMapOf<String, Int>()
-        context.contentResolver.query(TvContract.Channels.CONTENT_URI, null, null, null, null)?.use { cursor ->
-            val id = cursor.getColumnIndexOrThrow(TvContract.Channels._ID)
-            val packageName = cursor.getColumnIndexOrThrow(TvContract.Channels.COLUMN_PACKAGE_NAME)
-            val type = cursor.getColumnIndexOrThrow(TvContract.Channels.COLUMN_TYPE)
-            while (cursor.moveToNext()) {
-                if (cursor.getString(type) != TvContract.Channels.TYPE_PREVIEW) continue
-                val app = cursor.getString(packageName) ?: continue
-                // Some apps leave many old copies of their channels: enough is enough
-                if (perApp.getOrDefault(app, 0) >= MAX_CHANNEL_CARDS) continue
-                val available = MAX_CHANNEL_CARDS - perApp.getOrDefault(app, 0)
-                val cards = readPrograms(context, TvContract.buildPreviewProgramsUriForChannel(cursor.getLong(id)), app)
-                    .filter { it.browsable }.sortedByDescending { it.weight }.take(available)
-                rows += cards
-                perApp[app] = perApp.getOrDefault(app, 0) + cards.size
-            }
-        }
+fun loadWatchNext(context: Context): List<WatchNextCard> {
+    return try {
+        readWatchNext(context)
     } catch (e: RuntimeException) {
-        // The provider is another app and may refuse or be missing on some TVs: then there's no row
-        AppLog.w(TAG, "Couldn't read recommendation channels", e)
+        AppLog.w(TAG, "Couldn't read Watch Next", e)
+        emptyList()
     }
-    return rows
 }
 
-private fun readPrograms(context: Context, uri: Uri, app: String): List<AppRecommendation> = buildList {
-    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+private fun readWatchNext(context: Context): List<WatchNextCard> = buildList {
+    context.contentResolver.query(TvContract.WatchNextPrograms.CONTENT_URI, null, null, null, null)?.use { cursor ->
         fun text(column: String) = cursor.getColumnIndex(column).takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getString)
         fun number(column: String) = cursor.getColumnIndex(column).takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getLong)
         while (cursor.moveToNext()) {
-            val title = text(TvContract.PreviewPrograms.COLUMN_TITLE)?.takeIf { it.isNotBlank() } ?: continue
-            val intent = text(TvContract.PreviewPrograms.COLUMN_INTENT_URI)?.takeIf { it.isNotBlank() } ?: continue
-            if (text(TvContract.PreviewPrograms.COLUMN_PACKAGE_NAME) != app) continue
-            val season = text(TvContract.PreviewPrograms.COLUMN_SEASON_DISPLAY_NUMBER)
-            val episode = text(TvContract.PreviewPrograms.COLUMN_EPISODE_DISPLAY_NUMBER)
-            add(AppRecommendation(
+            val title = text(TvContract.WatchNextPrograms.COLUMN_TITLE)?.takeIf { it.isNotBlank() } ?: continue
+            val intent = text(TvContract.WatchNextPrograms.COLUMN_INTENT_URI)?.takeIf { it.isNotBlank() } ?: continue
+            val app = text(TvContract.WatchNextPrograms.COLUMN_PACKAGE_NAME) ?: continue
+            val season = text(TvContract.WatchNextPrograms.COLUMN_SEASON_DISPLAY_NUMBER)
+            val episode = text(TvContract.WatchNextPrograms.COLUMN_EPISODE_DISPLAY_NUMBER)
+            val engaged = number(TvContract.WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS) ?: 0
+            add(WatchNextCard(
                 title = title,
                 packageName = app,
                 episode = if (season != null && episode != null) "S$season E$episode" else null,
-                posterUri = text(TvContract.PreviewPrograms.COLUMN_THUMBNAIL_URI)
-                    ?: text(TvContract.PreviewPrograms.COLUMN_POSTER_ART_URI),
+                posterUri = text(TvContract.WatchNextPrograms.COLUMN_THUMBNAIL_URI)
+                    ?: text(TvContract.WatchNextPrograms.COLUMN_POSTER_ART_URI),
                 intentUri = intent,
-                browsable = number(TvContract.PreviewPrograms.COLUMN_BROWSABLE) != 0L,
-                weight = number(TvContract.PreviewPrograms.COLUMN_WEIGHT) ?: 0,
+                browsable = number(TvContract.WatchNextPrograms.COLUMN_BROWSABLE) != 0L,
+                engagedMillis = if (engaged in 1 until 100_000_000_000L) engaged * 1000 else engaged,
             ))
         }
     }
 }
 
 /** Resumes in the app that published it; if that fails, at least opens the app. */
-private fun Context.openRecommendation(item: AppRecommendation, app: InstalledApp) {
+private fun Context.openWatchNext(item: WatchNextCard, app: InstalledApp) {
     val opened = try {
         val intent = Intent.parseUri(item.intentUri, Intent.URI_INTENT_SCHEME)
         if (intent.selector != null ||
@@ -177,11 +159,11 @@ private fun Context.openRecommendation(item: AppRecommendation, app: InstalledAp
             true
         }
     } catch (e: URISyntaxException) {
-        AppLog.w(TAG, "Invalid recommendation link")
+        AppLog.w(TAG, "Invalid Watch Next link")
         false
     } catch (e: RuntimeException) {
         // e.g. the app was just removed, or doesn't let others open this
-        AppLog.w(TAG, "Couldn't open recommendation")
+        AppLog.w(TAG, "Couldn't open Watch Next card")
         false
     }
     if (!opened) launch(app)
@@ -192,7 +174,7 @@ private val posterClient by lazy {
 }
 
 // Decoded posters survive refreshes, so returning to the launcher is instant
-private val posterCache = LruCache<String, ImageBitmap>(MAX_CHANNEL_CARDS)
+private val posterCache = LruCache<String, ImageBitmap>(MAX_CARDS_PER_APP)
 
 /** Web or content:// address; null if there's nothing to show. Slow: call off the main thread. */
 private fun loadPoster(context: Context, uri: String): ImageBitmap? {
@@ -253,7 +235,7 @@ fun SlidingRows(
 ) {
     var height by remember { mutableIntStateOf(0) }
     val shift by animateIntAsState(if (aboveRevealed) -height else 0, label = "Alerts row")
-    val extraHeight by animateIntAsState(if (revealed) height else 0, label = "Recommendations row")
+    val extraHeight by animateIntAsState(if (revealed) height else 0, label = "Watch Next row")
     Box(modifier = Modifier.fillMaxWidth().clipToBounds().layout { measurable, constraints ->
         val placeable = measurable.measure(constraints)
         layout(placeable.width, (placeable.height + extraHeight).coerceAtMost(constraints.maxHeight)) {
@@ -268,15 +250,15 @@ fun SlidingRows(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun AppRecommendationsRow(
-    items: List<AppRecommendation>,
+fun WatchNextRow(
+    items: List<WatchNextCard>,
     app: InstalledApp,
     // Down from the app tile comes here.
     firstCardFocus: FocusRequester,
     // Up from any card returns to the source app.
     upFocus: FocusRequester,
     onActiveChange: (Boolean) -> Unit,
-    onHide: (AppRecommendation) -> Unit,
+    onHide: (WatchNextCard) -> Unit,
     // Go back to the app tiles: Back, or nothing left in the row
     onLeave: () -> Unit,
 ) {
@@ -332,11 +314,11 @@ fun AppRecommendationsRow(
             ) {
                 itemsIndexed(items, key = { _, item -> item.key }) { index, item ->
                     val requester = requesters.getOrPut(item.key) { FocusRequester() }
-                    RecommendationCard(
+                    WatchNextTile(
                         item = item,
                         width = cardWidth,
                         loadArtwork = active,
-                        onClick = { context.openRecommendation(item, app) },
+                        onClick = { context.openWatchNext(item, app) },
                         onLongClick = { menuFor = item.key },
                         modifier = Modifier
                             .then(if (index == 0) Modifier.focusRequester(firstCardFocus) else Modifier)
@@ -384,8 +366,8 @@ fun AppRecommendationsRow(
 }
 
 @Composable
-private fun RecommendationCard(
-    item: AppRecommendation,
+private fun WatchNextTile(
+    item: WatchNextCard,
     width: Dp,
     loadArtwork: Boolean,
     onClick: () -> Unit,

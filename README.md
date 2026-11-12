@@ -9,17 +9,17 @@ Project repository: https://github.com/Mongjohn/HAL
 - **Cameras:** RTSP cameras in H.264 or H.265, with an optional substream for the grid. It plays as many live as your TV can decode, and shows the rest as their last picture.
 - **Home Assistant:** pick sensors, scenes and scripts and put them in your order, with the weather and its forecast. The Assistant tab shows them all, in a card per room, or one of your Home Assistant dashboards, and up to three scenes or scripts of your choice are also buttons in the top bar.
 - **Frigate alerts:** the last seven days of alerts, with clips that play full screen.
-- **App recommendations:** a down chevron on a dock tile means the app has shared recommendations with Android TV. Press Down for its cards and OK to open the recommended content.
+- **Watch Next:** a down chevron below a dock tile means the app has shared Watch Next cards with Android TV. Press Down for its cards and OK to open the content.
 - **App row:** move tiles, hide them, see app info or uninstall.
 - **Home button helper:** optionally makes the Home button bring you to HAL.
 - **TV to TV:** send your settings to another TV on your network.
 - **Diagnostics:** a built-in ping tool, network status, and debug logs with logins and tokens stripped out.
 
-Cameras, Home Assistant and Frigate are all optional. Without them, HAL shows your apps and any recommendations they share with Android TV.
+Cameras, Home Assistant and Frigate are all optional. HAL shows your apps and any Watch Next cards they share with Android TV.
 
 ## Privacy
 
-There's no account, no analytics and no HAL server. The app connects to the addresses you enter, to other TVs on your network when you transfer settings, and to the artwork URLs supplied by apps that publish recommendations. Your Home Assistant password isn't stored: the TV keeps a login you can revoke from your Home Assistant profile.
+There's no account, no analytics and no HAL server. The app connects to the addresses you enter, to other TVs on your network when you transfer settings, and to the artwork URLs supplied by apps that publish Watch Next cards. Your Home Assistant password isn't stored: the TV keeps a login you can revoke from your Home Assistant profile.
 
 ## Requirements
 

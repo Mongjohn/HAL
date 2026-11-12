@@ -92,8 +92,8 @@ class MainActivity : ComponentActivity() {
     private var showFreeMemory by mutableStateOf(false)
     private var exportOpen by mutableStateOf(false)
     private var importOpen by mutableStateOf(false)
-    private var recommendations by mutableStateOf(emptyList<AppRecommendation>())
-    private var hiddenRecommendations by mutableStateOf(emptyList<String>())
+    private var watchNext by mutableStateOf(emptyList<WatchNextCard>())
+    private var hiddenWatchNext by mutableStateOf(emptyList<String>())
 
     // Home override's crash guard: the launcher counts as started once it has stayed up a moment
     private val confirmStarted = Runnable {
@@ -118,9 +118,9 @@ class MainActivity : ComponentActivity() {
         haTopBar = prefs.haTopBar
         haDisplay = prefs.haDisplay
         frigate = prefs.frigate
-        hiddenRecommendations = prefs.hiddenRecommendations
+        hiddenWatchNext = prefs.hiddenWatchNext
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
-        if (!canReadRecommendations()) requestPermissions(arrayOf(READ_TV_LISTINGS), 0)
+        if (!canReadWatchNext()) requestPermissions(arrayOf(READ_TV_LISTINGS), 0)
         setContent {
             MaterialTheme(colorScheme = AppColorScheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -145,16 +145,16 @@ class MainActivity : ComponentActivity() {
                     var homeTabSelected by remember { mutableStateOf(false) }
                     var firstTileSelected by remember { mutableStateOf(false) }
                     var goToFirstTile by remember { mutableIntStateOf(0) }
-                    var recommendationSource by remember { mutableStateOf<Pair<String, FocusRequester>?>(null) }
-                    var recommendationsActive by remember { mutableStateOf(false) }
-                    fun returnToRecommendationApp() {
-                        val restored = runCatching { recommendationSource?.second?.requestFocus() == true }.getOrDefault(false)
+                    var watchNextSource by remember { mutableStateOf<Pair<String, FocusRequester>?>(null) }
+                    var watchNextActive by remember { mutableStateOf(false) }
+                    fun returnToWatchNextApp() {
+                        val restored = runCatching { watchNextSource?.second?.requestFocus() == true }.getOrDefault(false)
                         if (!restored) {
-                            recommendationsActive = false
+                            watchNextActive = false
                             goToFirstTile++
                         }
                     }
-                    // The alerts, apps and recommendations at the bottom: off on the Assistant tab
+                    // The alerts, apps and Watch Next at the bottom: off on the Assistant tab
                     // unless chosen in the Home Assistant dialog. Off, they slide in while the
                     // selection is on them, reached with Down from the cards.
                     val bottomRow = tab != HomeTab.Assistant || haDisplay.bottomRow
@@ -166,7 +166,7 @@ class MainActivity : ComponentActivity() {
                     // tiles, anything below the top bar goes to the Assistant tab.
                     BackHandler {
                         when {
-                            recommendationsActive -> returnToRecommendationApp()
+                            watchNextActive -> returnToWatchNextApp()
                             topBarSelected && !homeTabSelected -> runCatching { homeTabFocus.requestFocus() }
                             !bottomShown -> if (!topBarSelected) runCatching { assistantTabFocus.requestFocus() }
                             firstTileSelected -> runCatching { cogFocus.requestFocus() }
@@ -181,16 +181,16 @@ class MainActivity : ComponentActivity() {
                     val homeStrip = sideContent && haDisplay.homeDashboard != null && haDisplay.homeColumns
                     // Picked in the Cameras tab, showing full screen
                     var fullScreenCamera by remember { mutableStateOf<Camera?>(null) }
-                    val recommendationsByPackage = remember(recommendations, hiddenRecommendations) {
-                        recommendationsByApp(recommendations, hiddenRecommendations)
+                    val watchNextByPackage = remember(watchNext, hiddenWatchNext) {
+                        watchNextByApp(watchNext, hiddenWatchNext)
                     }
-                    val source = recommendationSource
-                    val recommendationApp = all?.firstOrNull { it.key == source?.first }
-                    val recommendationItems = recommendationsByPackage[source?.first].orEmpty()
+                    val source = watchNextSource
+                    val watchNextApp = all?.firstOrNull { it.key == source?.first }
+                    val watchNextItems = watchNextByPackage[source?.first].orEmpty()
                     val appRowFocus = remember { FocusRequester() }
-                    val recommendationsFocus = remember { FocusRequester() }
-                    LaunchedEffect(recommendationApp) {
-                        if (recommendationApp == null && recommendationsActive) returnToRecommendationApp()
+                    val watchNextFocus = remember { FocusRequester() }
+                    LaunchedEffect(watchNextApp) {
+                        if (watchNextApp == null && watchNextActive) returnToWatchNextApp()
                     }
                     val frigateFeed = rememberFrigateFeed(frigate, onCertificateAccepted = { saveFrigate(frigate.copy(certPin = it)) })
                     val alertsRowFocus = remember { FocusRequester() }
@@ -222,7 +222,7 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(alertsRowDue, hasAlertsRow) {
                         if (!alertsRowDue || !hasAlertsRow) return@LaunchedEffect
                         // Not from another tile or the row below: those are in use
-                        if (!otherTileSelected && !recommendationsActive && (tilesRowSelected || lostNoAlertsTile)) {
+                        if (!otherTileSelected && !watchNextActive && (tilesRowSelected || lostNoAlertsTile)) {
                             alertsRowShown = true
                             withFrameNanos { } // let the row lay out, so its first card is focusable
                             runCatching { alertsRowFocus.requestFocus() }
@@ -503,8 +503,8 @@ class MainActivity : ComponentActivity() {
                             // The tiles' grow room counts towards the margins above and below the row
                             Spacer(Modifier.height(EdgePadding - TileGrowRoom))
                             SlidingRows(
-                                revealed = recommendationsActive,
-                                aboveRevealed = alertsRowShown && hasAlertsRow && !recommendationsActive,
+                                revealed = watchNextActive,
+                                aboveRevealed = alertsRowShown && hasAlertsRow && !watchNextActive,
                                 above = {
                                     if (alertsRowFeed != null) {
                                         FrigateAlertsRow(
@@ -536,11 +536,11 @@ class MainActivity : ComponentActivity() {
                                                     else -> aboveRows(slot)
                                                 }
                                             },
-                                            recommendationApps = recommendationsByPackage.keys,
-                                            recommendationsFocus = recommendationsFocus,
-                                            onRecommendationSource = { key, requester ->
-                                                if (key != recommendationSource?.first) recommendationsActive = false
-                                                recommendationSource = if (key != null && requester != null) key to requester else null
+                                            watchNextApps = watchNextByPackage.keys,
+                                            watchNextFocus = watchNextFocus,
+                                            onWatchNextSource = { key, requester ->
+                                                if (key != watchNextSource?.first) watchNextActive = false
+                                                watchNextSource = if (key != null && requester != null) key to requester else null
                                             },
                                             rowFocus = appRowFocus,
                                             goToFirstTile = goToFirstTile,
@@ -557,19 +557,19 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 second = {
-                                    if (recommendationApp != null && source != null) {
-                                        key(recommendationApp.key) {
-                                            AppRecommendationsRow(
-                                                items = recommendationItems,
-                                                app = recommendationApp,
-                                                firstCardFocus = recommendationsFocus,
+                                    if (watchNextApp != null && source != null) {
+                                        key(watchNextApp.key) {
+                                            WatchNextRow(
+                                                items = watchNextItems,
+                                                app = watchNextApp,
+                                                firstCardFocus = watchNextFocus,
                                                 upFocus = source.second,
-                                                onActiveChange = { recommendationsActive = it },
+                                                onActiveChange = { watchNextActive = it },
                                                 onHide = {
-                                                    hiddenRecommendations = hiddenRecommendations + it.hideKey
-                                                    prefs.hiddenRecommendations = hiddenRecommendations
+                                                    hiddenWatchNext = hiddenWatchNext + it.hideKey
+                                                    prefs.hiddenWatchNext = hiddenWatchNext
                                                 },
-                                                onLeave = ::returnToRecommendationApp,
+                                                onLeave = ::returnToWatchNextApp,
                                             )
                                         }
                                     }
@@ -858,12 +858,12 @@ class MainActivity : ComponentActivity() {
             if (apps != installed) prefs.installedApps = apps
             installed = apps
         }
-        if (canReadRecommendations()) {
+        if (canReadWatchNext()) {
             lifecycleScope.launch {
-                recommendations = withContext(Dispatchers.IO) { loadAppRecommendations(this@MainActivity) }
+                watchNext = withContext(Dispatchers.IO) { loadWatchNext(this@MainActivity) }
             }
         } else {
-            recommendations = emptyList()
+            watchNext = emptyList()
         }
     }
 

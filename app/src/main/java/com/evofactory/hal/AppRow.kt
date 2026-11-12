@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -82,7 +83,8 @@ val EdgePadding = 24.dp
 // Top of the top bar and its cog; windows with inputs open at this height, clear of the on-screen keyboard
 val TopPadding = EdgePadding
 internal val TileSpacing = EdgePadding
-private val DockTileSpacing = TileSpacing / 2
+private val DockTileSpacing = 15.dp
+private val WatchNextChevronOffset = 20.dp
 
 // Between items inside a panel (Home Assistant readings, camera thumbnails)
 val PanelItemSpacing = 12.dp
@@ -189,9 +191,9 @@ fun AppRow(
     onReorder: (List<String>) -> Unit,
     // Where up goes from the tile on screen in this 0-based slot
     upFocus: (slot: Int) -> FocusRequester,
-    recommendationApps: Set<String>,
-    recommendationsFocus: FocusRequester,
-    onRecommendationSource: (String?, FocusRequester?) -> Unit,
+    watchNextApps: Set<String>,
+    watchNextFocus: FocusRequester,
+    onWatchNextSource: (String?, FocusRequester?) -> Unit,
     // Focuses the tile that was left
     rowFocus: FocusRequester,
     // Each time this goes up, the selection goes to the first tile
@@ -361,7 +363,12 @@ fun AppRow(
                 // Coming back down from the cog lands on the tile that was left, not the one nearest the cog
                 modifier = Modifier.focusRequester(rowFocus).focusRestorer(),
                 // Vertical padding leaves room for the focused tile to grow without being clipped
-                contentPadding = PaddingValues(horizontal = EdgePadding, vertical = TileGrowRoom),
+                contentPadding = PaddingValues(
+                    start = EdgePadding,
+                    end = EdgePadding,
+                    top = TileGrowRoom,
+                    bottom = if (shown.any { it in watchNextApps }) WatchNextChevronOffset + 2.dp else TileGrowRoom,
+                ),
                 horizontalArrangement = Arrangement.spacedBy(DockTileSpacing),
             ) {
                 if (showNoAlertsTile) {
@@ -374,7 +381,7 @@ fun AppRow(
                             modifier = Modifier
                                 .onFocusChanged {
                                     onNoAlertsSelected(it.hasFocus)
-                                    if (it.hasFocus) onRecommendationSource(null, null)
+                                    if (it.hasFocus) onWatchNextSource(null, null)
                                 }
                                 .focusProperties {
                                     up = upFocus(listState.slotOnScreen(NO_ALERTS_TILE_KEY))
@@ -387,13 +394,13 @@ fun AppRow(
                 items(shown, key = { it }) { key ->
                     val requester = focusRequesters.getOrPut(key) { FocusRequester() }
                     val moving = key == movingKey
-                    val hasRecommendations = !moving && key in recommendationApps
+                    val hasWatchNext = !moving && key in watchNextApps
                     val tileFocus = Modifier
                         .onFocusChanged {
                             if (it.hasFocus) {
                                 selectedKey = key
-                                if (key == ALL_APPS_TILE_KEY) onRecommendationSource(null, null)
-                                else onRecommendationSource(key, requester)
+                                if (key == ALL_APPS_TILE_KEY) onWatchNextSource(null, null)
+                                else onWatchNextSource(key, requester)
                             } else if (selectedKey == key) selectedKey = null
                         }
                         .focusRequester(requester)
@@ -407,7 +414,7 @@ fun AppRow(
                         )
                         .focusProperties {
                             up = upFocus(listState.slotOnScreen(key))
-                            down = if (hasRecommendations) recommendationsFocus else FocusRequester.Cancel
+                            down = if (hasWatchNext) watchNextFocus else FocusRequester.Cancel
                             if (key == shown.first() && !showNoAlertsTile) left = FocusRequester.Cancel
                             if (key == shown.last()) right = FocusRequester.Cancel
                         }
@@ -434,16 +441,15 @@ fun AppRow(
                         modifier = Modifier
                             .width(tileWidth)
                             .then(tileFocus)
-                            .then(if (hasRecommendations) Modifier.semantics { stateDescription = "Recommendations below" } else Modifier)
+                            .then(if (hasWatchNext) Modifier.semantics { stateDescription = "Watch Next below" } else Modifier)
                             .then(if (moving) Modifier.onPreviewKeyEvent(::onMoveKey) else Modifier),
                     ) {
-                        if (hasRecommendations && selectedKey == key) {
+                        if (key in watchNextApps) {
                             MdiIcon(
                                 "mdi:chevron-down",
-                                modifier = Modifier.align(Alignment.BottomCenter)
-                                    .padding(bottom = 4.dp)
-                                    .background(Color.Black.copy(alpha = 0.8f), CircleShape),
-                                color = Color.White,
+                                modifier = Modifier.align(Alignment.BottomCenter).offset(y = WatchNextChevronOffset),
+                                size = 14.dp,
+                                color = MaterialTheme.colorScheme.onSurface,
                             )
                         }
                         if (menuFor == app.key) {
