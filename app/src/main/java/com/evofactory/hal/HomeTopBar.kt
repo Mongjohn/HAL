@@ -125,6 +125,7 @@ fun TabButton(
         onClick = onSelect,
         modifier = modifier.fillMaxHeight(),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
         // Stays in place, so the underline doesn't move
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
@@ -134,11 +135,11 @@ fun TabButton(
                 selected -> colors.onSurface
                 else -> colors.onSurfaceVariant
             },
-            focusedContainerColor = colors.onSurface,
-            focusedContentColor = colors.inverseOnSurface,
+            focusedContainerColor = RaisedSurface,
+            focusedContentColor = colors.onSurface,
         ),
     ) {
-        // Else the text's color: it reverses with the tab when the remote is on it
+        // Secondary tabs use their text color for the underline.
         val lineColor = when {
             !selected -> Color.Transparent
             underline.isSpecified -> underline
@@ -243,7 +244,7 @@ private fun Clock() {
         }
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(timeFormat.format(now), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        Text(timeFormat.format(now), style = MaterialTheme.typography.titleLarge, color = DashboardClockColor, maxLines = 1)
         Text(dateFormat.format(now), style = MaterialTheme.typography.labelMedium, color = FaintText, maxLines = 1)
     }
 }
