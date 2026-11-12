@@ -63,7 +63,6 @@ class MainActivity : ComponentActivity() {
     private var installed by mutableStateOf<List<InstalledApp>?>(null)
     private var order by mutableStateOf(emptyList<String>())
     private var hidden by mutableStateOf(emptyList<String>())
-    private var showHidden by mutableStateOf(false)
     private var showAllAppsTile by mutableStateOf(true)
     private var allAppsOpen by mutableStateOf(false)
     private var pingOpen by mutableStateOf(false)
@@ -332,9 +331,6 @@ class MainActivity : ComponentActivity() {
                             },
                         ) {
                             SettingsButton(
-                                showHidden = showHidden,
-                                hiddenCount = hiddenApps?.size ?: 0,
-                                onShowHiddenChange = { showHidden = it },
                                 onOpenCameras = { camerasOpen = true },
                                 onOpenHomeAssistant = { haDialogOpen = true },
                                 onOpenFrigate = { frigateOpen = true },
@@ -520,15 +516,11 @@ class MainActivity : ComponentActivity() {
                                 },
                                 first = {
                                     AppRowSpace(Modifier.onFocusChanged { tilesRowSelected = it.hasFocus }) {
-                                        if (visible != null && hiddenApps != null) AppRow(
+                                        if (visible != null) AppRow(
                                             apps = visible,
-                                            hiddenApps = hiddenApps,
-                                            showHidden = showHidden,
                                             dockKeys = dockKeys,
                                             onOpenAllApps = { allAppsOpen = true },
-                                            onShowHiddenChange = { showHidden = it },
                                             onHide = { app -> setDockAppVisible(app, false) },
-                                            onUnhide = { app -> setDockAppVisible(app, true) },
                                             onReorder = ::saveDockOrder,
                                             upFocus = { slot ->
                                                 when {
@@ -875,12 +867,6 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         running = false
-    }
-
-    override fun onStop() {
-        super.onStop()
-        // Hidden apps are only revealed until you leave the launcher
-        showHidden = false
     }
 
     companion object {

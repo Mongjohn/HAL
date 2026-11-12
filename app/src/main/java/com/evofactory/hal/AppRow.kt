@@ -28,7 +28,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -42,7 +41,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -181,13 +179,9 @@ fun AppRowSpace(modifier: Modifier = Modifier, content: @Composable () -> Unit) 
 @Composable
 fun AppRow(
     apps: List<InstalledApp>,
-    hiddenApps: List<InstalledApp>,
-    showHidden: Boolean,
     dockKeys: List<String>,
     onOpenAllApps: () -> Unit,
-    onShowHiddenChange: (Boolean) -> Unit,
     onHide: (InstalledApp) -> Unit,
-    onUnhide: (InstalledApp) -> Unit,
     onReorder: (List<String>) -> Unit,
     // Where up goes from the tile on screen in this 0-based slot
     upFocus: (slot: Int) -> FocusRequester,
@@ -225,10 +219,8 @@ fun AppRow(
     // The tile sent to Android's uninstall, and where to go if it does disappear
     var uninstalling by remember { mutableStateOf<Pair<String, FocusRequest?>?>(null) }
 
-    // Hidden apps always come last, after the apps you've arranged
-    val shown = (moveOrder ?: dockKeys) + if (showHidden) hiddenApps.map { it.key } else emptyList()
-    val appsByKey = remember(apps, hiddenApps) { (apps + hiddenApps).associateBy { it.key } }
-    val hiddenKeys = remember(hiddenApps) { hiddenApps.map { it.key }.toSet() }
+    val shown = moveOrder ?: dockKeys
+    val appsByKey = remember(apps) { apps.associateBy { it.key } }
 
     var selectedKey by remember { mutableStateOf<String?>(null) }
     val firstDockKey = shown.firstOrNull()
@@ -305,30 +297,20 @@ fun AppRow(
         }
     }
 
-    // Menu: Move, Hide (Unhide on a hidden tile), Info, Uninstall if possible, then Show / Don't show hidden apps
     fun menuActions(app: InstalledApp): List<MenuAction> = buildList {
         val keep = menuScroll
-        if (app.key in hiddenKeys) {
-            add(MenuAction("Unhide") {
-                onUnhide(app)
-                // It moves to the end of the visible apps: follow it
-                pendingFocus = FocusRequest(app.key)
-            })
-        } else {
-            add(MenuAction("Move") {
-                moveOrder = dockKeys
-                movingKey = app.key
-                pendingFocus = FocusRequest(app.key, keep)
-            })
-            add(MenuAction("Hide") {
-                // The next tile slides into this one's place and takes the selection
-                val rest = shown - app.key
-                val index = shown.indexOf(app.key)
-                val nextKey = rest.getOrNull(index) ?: rest.getOrNull(index - 1)
-                pendingFocus = nextKey?.let { FocusRequest(it, keep) }
-                onHide(app)
-            })
-        }
+        add(MenuAction("Move") {
+            moveOrder = dockKeys
+            movingKey = app.key
+            pendingFocus = FocusRequest(app.key, keep)
+        })
+        add(MenuAction("Hide") {
+            // The next tile slides into this one's place and takes the selection
+            val index = shown.indexOf(app.key)
+            val nextKey = shown.getOrNull(index + 1) ?: shown.getOrNull(index - 1)
+            pendingFocus = nextKey?.let { FocusRequest(it, keep) }
+            onHide(app)
+        })
         add(MenuAction("Info") { context.openAppInfo(app) })
         if (context.canUninstall(app)) {
             add(MenuAction("Uninstall") {
@@ -338,15 +320,6 @@ fun AppRow(
                 context.uninstall(app)
             })
         }
-        add(showHiddenAction(showHidden, hiddenApps.size) {
-            onShowHiddenChange(!showHidden)
-            pendingFocus = if (showHidden && app.key in hiddenKeys) {
-                // This tile is about to disappear: go to the last visible app
-                dockKeys.lastOrNull()?.let { FocusRequest(it) }
-            } else {
-                FocusRequest(app.key, keep)
-            }
-        })
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -432,7 +405,6 @@ fun AppRow(
                     AppTile(
                         app = app,
                         moving = moving,
-                        hidden = app.key in hiddenKeys,
                         onClick = { context.launch(app) },
                         onLongClick = {
                             menuScroll = currentScroll()
@@ -470,16 +442,6 @@ fun AppRow(
     }
 }
 
-/** "Show hidden apps (3)" or "Don't show hidden apps": shared by tile menus and settings. */
-fun showHiddenAction(showHidden: Boolean, hiddenCount: Int, onClick: () -> Unit) = MenuAction(
-    label = when {
-        showHidden -> "Don't show hidden apps"
-        hiddenCount > 0 -> "Show hidden apps ($hiddenCount)"
-        else -> "Show hidden apps"
-    },
-    onClick = onClick,
-)
-
 /** Says Frigate has nothing to show, where the row of alerts would otherwise be above the tiles */
 @Composable
 private fun DockShortcutTile(title: String, icon: String, width: Dp, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -501,7 +463,6 @@ private fun AppTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     moving: Boolean = false,
-    hidden: Boolean = false,
     onLongClick: (() -> Unit)? = null,
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
@@ -521,7 +482,7 @@ private fun AppTile(
             },
             modifier = Modifier.fillMaxSize(),
         ) {
-            val content = Modifier.fillMaxSize().alpha(if (hidden) 0.35f else 1f)
+            val content = Modifier.fillMaxSize()
             val tile = image
             when {
                 tile == null -> Box(content.background(MaterialTheme.colorScheme.surfaceVariant))
@@ -537,7 +498,6 @@ private fun AppTile(
                 }
             }
         }
-        if (hidden) HiddenBadge()
         if (moving) {
             MoveArrow("‹", Alignment.CenterStart)
             MoveArrow("›", Alignment.CenterEnd)
@@ -584,21 +544,6 @@ fun AllAppsDrawer(apps: List<InstalledApp>, onDismiss: () -> Unit) {
             }
         }
     }
-}
-
-@Composable
-private fun BoxScope.HiddenBadge() {
-    Text(
-        "Hidden",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier
-            .align(Alignment.TopStart)
-            .zIndex(1f) // the focused Card raises itself; stay above it
-            .padding(6.dp)
-            .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-    )
 }
 
 /** Arrow on the tile's edge showing it can be moved left or right. */
