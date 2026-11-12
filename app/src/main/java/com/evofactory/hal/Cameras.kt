@@ -221,7 +221,7 @@ fun MainCamera(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
-        if (focused) Box(Modifier.matchParentSize().border(3.dp, MaterialTheme.colorScheme.border, CameraShape))
+        if (focused) Box(Modifier.matchParentSize().border(DashboardFocusStroke, CameraShape))
         AnimatedVisibility(
             visible = channelHint,
             enter = fadeIn(),

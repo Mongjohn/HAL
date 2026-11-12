@@ -345,7 +345,6 @@ fun haStatusMessage(connection: HaConnection): String? = when (connection.status
 @Composable
 fun Modifier.selectableTile(up: FocusRequester?, onClick: (() -> Unit)? = null): Modifier {
     var focused by remember { mutableStateOf(false) }
-    val border = MaterialTheme.colorScheme.border
     return this
         .onFocusChanged { focused = it.isFocused }
         .focusProperties { if (up != null) this.up = up }
@@ -365,7 +364,7 @@ fun Modifier.selectableTile(up: FocusRequester?, onClick: (() -> Unit)? = null):
             },
         )
         .focusable()
-        .then(if (focused) Modifier.border(3.dp, border, RoundedCornerShape(12.dp)) else Modifier)
+        .then(if (focused) Modifier.border(DashboardFocusStroke, RoundedCornerShape(12.dp)) else Modifier)
 }
 
 /**
@@ -393,11 +392,12 @@ fun HaActionButtons(connection: HaConnection, actionIds: List<String>) {
                         .onFocusChanged { focused = it.isFocused }
                         .semantics { contentDescription = name },
                     shape = ClickableSurfaceDefaults.shape(CircleShape),
+                    border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
                     colors = ClickableSurfaceDefaults.colors(
                         containerColor = colors.surfaceVariant,
                         contentColor = if (ready) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
-                        focusedContainerColor = colors.onSurface,
-                        focusedContentColor = colors.inverseOnSurface,
+                        focusedContainerColor = RaisedSurface,
+                        focusedContentColor = colors.onSurface,
                     ),
                 ) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -405,6 +406,7 @@ fun AppRow(
                     AppTile(
                         app = app,
                         moving = moving,
+                        dimArtwork = true,
                         onClick = { context.launch(app) },
                         onLongClick = {
                             menuScroll = currentScroll()
@@ -445,7 +447,11 @@ fun AppRow(
 /** Says Frigate has nothing to show, where the row of alerts would otherwise be above the tiles */
 @Composable
 private fun DockShortcutTile(title: String, icon: String, width: Dp, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Card(onClick = onClick, modifier = modifier.width(width).aspectRatio(16f / 9f)) {
+    Card(
+        onClick = onClick,
+        border = CardDefaults.border(focusedBorder = DashboardFocusBorder),
+        modifier = modifier.width(width).aspectRatio(16f / 9f),
+    ) {
         Column(
             modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp),
             verticalArrangement = Arrangement.Center,
@@ -463,6 +469,7 @@ private fun AppTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     moving: Boolean = false,
+    dimArtwork: Boolean = false,
     onLongClick: (() -> Unit)? = null,
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
@@ -470,6 +477,8 @@ private fun AppTile(
     val image by produceState(initialValue = cachedTileImage(app), app.key) {
         if (value == null) value = withContext(Dispatchers.IO) { loadTileImage(context, app) }
     }
+    var focused by remember { mutableStateOf(false) }
+    val artworkAlpha = if (dimArtwork && !focused) 0.7f else 1f
 
     Box(modifier = modifier.aspectRatio(16f / 9f)) {
         Card(
@@ -478,9 +487,9 @@ private fun AppTile(
             border = if (moving) {
                 CardDefaults.border(focusedBorder = Border(BorderStroke(4.dp, MoveHighlight)))
             } else {
-                CardDefaults.border()
+                CardDefaults.border(focusedBorder = DashboardFocusBorder)
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().onFocusChanged { focused = it.isFocused },
         ) {
             val content = Modifier.fillMaxSize()
             val tile = image
@@ -490,11 +499,11 @@ private fun AppTile(
                     bitmap = tile.bitmap,
                     contentDescription = app.label,
                     contentScale = ContentScale.Crop,
-                    modifier = content,
+                    modifier = content.alpha(artworkAlpha),
                 )
                 // Phone apps have no banner: show their icon on a neutral tile
                 else -> Box(modifier = content.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-                    Image(bitmap = tile.bitmap, contentDescription = app.label, modifier = Modifier.size(56.dp))
+                    Image(bitmap = tile.bitmap, contentDescription = app.label, modifier = Modifier.size(56.dp).alpha(artworkAlpha))
                 }
             }
         }

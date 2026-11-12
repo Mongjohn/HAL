@@ -801,8 +801,8 @@ private fun AssistantCard(
             // Selected: a bright outline; gone into: a dim one, while its button is lit
             .then(
                 when {
-                    focused -> Modifier.border(3.dp, colors.onSurface, shape)
-                    entered -> Modifier.border(3.dp, colors.border, shape)
+                    focused -> Modifier.border(DashboardFocusStroke, shape)
+                    entered -> Modifier.border(1.dp, DashboardPanelOutline, shape)
                     else -> Modifier
                 },
             )
@@ -962,11 +962,10 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
     val on = state == "on"
     val hasSwitchState = on || state == "off"
     val ready = connection.session != null
-    var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = { connection.toggle(id, scope, context) },
         // As wide as the card's padding allows, so its icon and text line up with the sensors' above and below
-        modifier = modifier.onFocusChanged { focused = it.isFocused }.widenBy(ToggleRowInset).semantics {
+        modifier = modifier.widenBy(ToggleRowInset).semantics {
             stateDescription = when (state) {
                 "on" -> "On"
                 "off" -> "Off"
@@ -975,12 +974,13 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
             }
         },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
             contentColor = if (ready) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
-            focusedContainerColor = colors.onSurface,
-            focusedContentColor = colors.inverseOnSurface,
+            focusedContainerColor = HigherSurface,
+            focusedContentColor = colors.onSurface,
         ),
     ) {
         Row(
@@ -992,7 +992,7 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
             val defaultIcon = defaultHaIcon(domain, entity?.deviceClass, state.orEmpty())
             val cue = haStateCue(domain, entity?.deviceClass, state)
             val neutral = LocalContentColor.current
-            val stateColor = if (ready || focused) (cue?.tone ?: HaStateTone.Neutral).color(neutral, focused) else neutral
+            val stateColor = if (ready) (cue?.tone ?: HaStateTone.Neutral).color(neutral) else neutral
             MdiIcon(
                 if (hasSwitchState) cue?.icon ?: defaultIcon else entity?.icon ?: defaultIcon,
                 color = stateColor,
@@ -1006,7 +1006,7 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
                 modifier = Modifier.weight(1f),
             )
             if (hasSwitchState) {
-                SwitchMark(on, neutral, activeColor = stateColor, activeKnob = if (focused) SwitchKnob else colors.inverseOnSurface)
+                SwitchMark(on, neutral, activeColor = stateColor, activeKnob = colors.surface)
             } else {
                 Box(Modifier.width(36.dp), contentAlignment = Alignment.Center) {
                     val icon = if (state == "unavailable") "cloud-off-outline" else "help-circle-outline"
@@ -1044,12 +1044,13 @@ private fun SelectRow(connection: HaConnection, id: String, name: String?, modif
         onClick = { if (options.isNotEmpty()) menuOpen = true },
         modifier = modifier.focusRequester(row).widenBy(ToggleRowInset),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
             contentColor = if (ready) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
-            focusedContainerColor = colors.onSurface,
-            focusedContentColor = colors.inverseOnSurface,
+            focusedContainerColor = HigherSurface,
+            focusedContentColor = colors.onSurface,
         ),
     ) {
         Row(
@@ -1145,12 +1146,13 @@ private fun ActionButton(connection: HaConnection, id: String, name: String?, ra
         onClick = { connection.runAction(id, scope, context) },
         modifier = modifier.fillMaxWidth().semantics { if (running) stateDescription = "Running" },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = if (raised) HigherSurface else RaisedSurface,
             contentColor = if (ready) colors.onSurface else colors.onSurface.copy(alpha = 0.5f),
-            focusedContainerColor = colors.onSurface,
-            focusedContentColor = colors.inverseOnSurface,
+            focusedContainerColor = HigherSurface,
+            focusedContentColor = colors.onSurface,
         ),
     ) {
         Row(

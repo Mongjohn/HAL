@@ -2,7 +2,11 @@ package com.evofactory.hal
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.AtomicFile
 import androidx.core.content.edit
+import java.io.File
+import java.io.IOException
+import java.util.Locale
 
 internal const val ALL_APPS_TILE_KEY = "dock:all_apps"
 
@@ -19,6 +23,43 @@ internal fun dockTileKeys(appKeys: List<String>, order: List<String>, showAllApp
  */
 class LauncherPrefs(context: Context) {
     private val prefs = context.getSharedPreferences("launcher", Context.MODE_PRIVATE)
+    private val artworkCredential = AtomicFile(File(context.noBackupFilesDir, "tmdb-token"))
+
+    internal var artworkSettings: ArtworkSettings
+        get() = ArtworkSettings(
+            enabled = prefs.getBoolean("media_artwork", false),
+            region = artworkRegion(prefs.getString("artwork_region", null) ?: Locale.getDefault().country).orEmpty(),
+        )
+        set(value) = prefs.edit {
+            putBoolean("media_artwork", value.enabled)
+            putString("artwork_region", value.region)
+        }
+
+    internal fun readArtworkToken(): String = try {
+        artworkCredential.readFully().decodeToString()
+    } catch (_: IOException) {
+        ""
+    }
+
+    internal fun saveArtworkToken(token: String): Boolean {
+        if (token.isEmpty()) {
+            artworkCredential.delete()
+            return !artworkCredential.baseFile.exists()
+        }
+        val stream = try {
+            artworkCredential.startWrite()
+        } catch (_: IOException) {
+            return false
+        }
+        return try {
+            stream.write(token.encodeToByteArray())
+            artworkCredential.finishWrite(stream)
+            true
+        } catch (_: IOException) {
+            artworkCredential.failWrite(stream)
+            false
+        }
+    }
 
     /** Package names of visible apps, in row order */
     var order: List<String>
