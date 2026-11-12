@@ -212,6 +212,8 @@ class HaEntity(
     /** Weather: the current temperature, in [temperatureUnit] */
     val temperature: Double? get() = attributes.optDouble("temperature").takeUnless { it.isNaN() }
     val temperatureUnit: String? get() = attributes.string("temperature_unit")
+    val currentTemperature: String?
+        get() = attributes.optDouble("current_temperature").takeUnless { it.isNaN() }?.let { "${it.roundToInt()}°" }
 
     /** The reading as shown, e.g. "12.4 °C" or "Open"; a dash while the sensor has no value */
     val reading: String
@@ -227,7 +229,7 @@ class HaEntity(
             // From dashboards: lights, switches, covers… show their state in words
             domain == "climate" -> listOfNotNull(
                 state.words(),
-                attributes.optDouble("current_temperature").takeUnless { it.isNaN() }?.let { "${it.roundToInt()}°" },
+                currentTemperature,
             ).joinToString(" · ")
             domain in PersonDomains -> when (state) {
                 "home" -> "Home"

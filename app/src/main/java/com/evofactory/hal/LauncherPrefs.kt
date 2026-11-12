@@ -4,6 +4,15 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 
+internal const val ALL_APPS_TILE_KEY = "dock:all_apps"
+
+internal fun dockTileKeys(appKeys: List<String>, order: List<String>, showAllAppsTile: Boolean): List<String> {
+    if (!showAllAppsTile) return appKeys
+    val before = order.takeWhile { it != ALL_APPS_TILE_KEY }.toSet()
+    val index = if (ALL_APPS_TILE_KEY in order) appKeys.count { it in before } else 0
+    return appKeys.toMutableList().apply { add(index, ALL_APPS_TILE_KEY) }
+}
+
 /**
  * Remembers the order chosen with "Move" and which apps are hidden, across restarts.
  * Stored in shared_prefs/launcher.xml in the app's private data on the TV.
@@ -29,8 +38,12 @@ class LauncherPrefs(context: Context) {
         remove("hidden")
     }
 
-    /** Shows hidden from Continue watching, see [WatchItem.hideKey] */
-    var hiddenWatching: List<String>
+    var showAllAppsTile: Boolean
+        get() = prefs.getBoolean("show_all_apps_tile", true)
+        set(value) = prefs.edit { putBoolean("show_all_apps_tile", value) }
+
+    /** Cards hidden from Watch Next. */
+    var hiddenWatchNext: List<String>
         get() = readList("hidden_watching")
         set(value) = writeList("hidden_watching", value)
 
@@ -175,6 +188,10 @@ class LauncherPrefs(context: Context) {
         catchHomeKey = false
         reopenAfterHome = false
     }
+
+    var showHomeCamera: Boolean
+        get() = prefs.getBoolean("show_home_camera", true)
+        set(value) = prefs.edit { putBoolean("show_home_camera", value) }
 
     /** The Cameras tab plays substreams live; otherwise it shows still pictures */
     var cameraGridLive: Boolean

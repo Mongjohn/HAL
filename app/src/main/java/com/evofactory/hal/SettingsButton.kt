@@ -32,9 +32,6 @@ val SettingsButtonSize = 40.dp
 /** Cog at the right of the top bar; opens the launcher's settings menu */
 @Composable
 fun SettingsButton(
-    showHidden: Boolean,
-    hiddenCount: Int,
-    onShowHiddenChange: (Boolean) -> Unit,
     onOpenCameras: () -> Unit,
     onOpenHomeAssistant: () -> Unit,
     onOpenFrigate: () -> Unit,
@@ -67,7 +64,6 @@ fun SettingsButton(
                     MenuAction("Cameras", onOpenCameras),
                     MenuAction("Home Assistant", onOpenHomeAssistant),
                     MenuAction("Frigate", onOpenFrigate),
-                    showHiddenAction(showHidden, hiddenCount) { onShowHiddenChange(!showHidden) },
                 ),
                 onDismiss = { menuOpen = false },
                 placement = MenuPlacement.BelowAtRightMargin,

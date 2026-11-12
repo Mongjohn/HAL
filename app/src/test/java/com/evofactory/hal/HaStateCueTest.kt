@@ -3,6 +3,7 @@ package com.evofactory.hal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HaStateCueTest {
@@ -12,7 +13,13 @@ class HaStateCueTest {
             val on = requireNotNull(haStateCue(domain, null, "on"))
             val off = requireNotNull(haStateCue(domain, null, "off"))
             assertNotEquals(domain, on.icon, off.icon)
-            assertEquals(domain, HaStateTone.Active, on.tone)
+            assertTrue(domain, on.iconOnly && off.iconOnly)
+            val expectedTone = when (domain) {
+                "fan" -> HaStateTone.Cyan
+                "humidifier" -> HaStateTone.Blue
+                else -> HaStateTone.Active
+            }
+            assertEquals(domain, expectedTone, on.tone)
             assertEquals(domain, HaStateTone.Neutral, off.tone)
         }
     }
@@ -31,7 +38,7 @@ class HaStateCueTest {
     fun aLockWithMissingStateNeverLooksSecure() {
         assertEquals(HaStateCue("cloud-off-outline"), haStateCue("lock", null, "unavailable"))
         assertEquals(HaStateCue("help-circle-outline"), haStateCue("lock", null, null))
-        assertEquals(HaStateCue("help-circle-outline"), haStateCue("lock", null, "off"))
+        assertEquals(HaStateCue("help-circle-outline", iconOnly = false), haStateCue("lock", null, "off"))
         assertEquals(HaStateCue("lock-alert", HaStateTone.Alert), haStateCue("lock", null, "jammed"))
     }
 
@@ -39,7 +46,7 @@ class HaStateCueTest {
     fun readingsAndCustomStatusesHaveDifferentFallbacks() {
         assertNull(haStateCue("sensor", "temperature", "22.4"))
         assertNull(haStateCue("input_text", null, "error"))
-        assertEquals(HaStateCue("dots-horizontal-circle-outline"), haStateCue("sensor", "enum", "rinse_cycle"))
+        assertEquals(HaStateCue("dots-horizontal-circle-outline", iconOnly = false), haStateCue("sensor", "enum", "rinse_cycle"))
         assertNotEquals(haStateCue("binary_sensor", "door", "off"), haStateCue("binary_sensor", "door", "on"))
     }
 }

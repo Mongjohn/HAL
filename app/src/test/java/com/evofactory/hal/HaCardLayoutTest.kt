@@ -1,9 +1,17 @@
 package com.evofactory.hal
 
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class HaCardLayoutTest {
+    @Test
+    fun threeFixedColumnsAndTwoGapsFitTheDashboardWidth() {
+        val width = 960.dp
+        val column = dashboardColumnWidth(width)
+        assertEquals(width, column * 3 + PanelItemSpacing * 2)
+    }
+
     @Test
     fun pairsEntitiesWithoutCrossingHeadingsOrWeather() {
         val card = SensorCard(

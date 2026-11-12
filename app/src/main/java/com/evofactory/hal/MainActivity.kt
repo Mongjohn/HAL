@@ -54,7 +54,6 @@ import kotlin.math.roundToInt
 
 // The panel next to the camera (Home Assistant or the other cameras) is at least this wide; it
 // also gets whatever width the camera leaves
-private val SidePanelWidth = 260.dp
 
 // App tiles from this 0-based slot on have the side panel above them, the earlier ones the camera
 private const val FIRST_SLOT_UNDER_PANEL = 3
@@ -64,12 +63,14 @@ class MainActivity : ComponentActivity() {
     private var installed by mutableStateOf<List<InstalledApp>?>(null)
     private var order by mutableStateOf(emptyList<String>())
     private var hidden by mutableStateOf(emptyList<String>())
-    private var showHidden by mutableStateOf(false)
+    private var showAllAppsTile by mutableStateOf(true)
+    private var allAppsOpen by mutableStateOf(false)
     private var pingOpen by mutableStateOf(false)
     private var networkStatusOpen by mutableStateOf(false)
     private var camerasOpen by mutableStateOf(false)
     private var cameras by mutableStateOf(emptyList<Camera>())
     private var cameraGridLive by mutableStateOf(true)
+    private var showHomeCamera by mutableStateOf(true)
     private var minimizeVideoStreams by mutableStateOf(false)
     private var selectedCamera by mutableStateOf("")
     private var tab by mutableStateOf(HomeTab.Home)
@@ -90,9 +91,8 @@ class MainActivity : ComponentActivity() {
     private var showFreeMemory by mutableStateOf(false)
     private var exportOpen by mutableStateOf(false)
     private var importOpen by mutableStateOf(false)
-    private var watchNext by mutableStateOf(emptyList<WatchItem>())
-    private var watchNextReadAt by mutableStateOf(0L)
-    private var hiddenWatching by mutableStateOf(emptyList<String>())
+    private var watchNext by mutableStateOf(emptyList<WatchNextCard>())
+    private var hiddenWatchNext by mutableStateOf(emptyList<String>())
 
     // Home override's crash guard: the launcher counts as started once it has stayed up a moment
     private val confirmStarted = Runnable {
@@ -106,8 +106,10 @@ class MainActivity : ComponentActivity() {
         installed = prefs.installedApps.ifEmpty { null }
         order = prefs.order
         hidden = prefs.hidden
+        showAllAppsTile = prefs.showAllAppsTile
         cameras = prefs.cameras
         cameraGridLive = prefs.cameraGridLive
+        showHomeCamera = prefs.showHomeCamera
         minimizeVideoStreams = prefs.minimizeVideoStreams
         selectedCamera = prefs.selectedCamera
         haServer = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
@@ -115,7 +117,7 @@ class MainActivity : ComponentActivity() {
         haTopBar = prefs.haTopBar
         haDisplay = prefs.haDisplay
         frigate = prefs.frigate
-        hiddenWatching = prefs.hiddenWatching
+        hiddenWatchNext = prefs.hiddenWatchNext
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
         if (!canReadWatchNext()) requestPermissions(arrayOf(READ_TV_LISTINGS), 0)
         setContent {
@@ -123,10 +125,13 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val all = installed
                     val visible = remember(all, order, hidden) { all?.let { arrange(it, order, hidden) } }
+                    val dockKeys = remember(visible, order, showAllAppsTile) {
+                        dockTileKeys(visible.orEmpty().map { it.key }, order, showAllAppsTile)
+                    }
                     val hiddenApps = remember(all, hidden) {
                         all?.let { apps -> hidden.mapNotNull { key -> apps.find { it.key == key } } }
                     }
-                    val camera = cameras.find { it.id == selectedCamera } ?: cameras.firstOrNull()
+                    val camera = if (showHomeCamera) cameras.find { it.id == selectedCamera } ?: cameras.firstOrNull() else null
                     val mainCameraFocus = remember { FocusRequester() }
                     val haSensorsFocus = remember { FocusRequester() }
                     val networkFocus = remember { FocusRequester() }
@@ -139,7 +144,16 @@ class MainActivity : ComponentActivity() {
                     var homeTabSelected by remember { mutableStateOf(false) }
                     var firstTileSelected by remember { mutableStateOf(false) }
                     var goToFirstTile by remember { mutableIntStateOf(0) }
-                    // The alerts, apps and Continue Watching at the bottom: off on the Assistant tab
+                    var watchNextSource by remember { mutableStateOf<Pair<String, FocusRequester>?>(null) }
+                    var watchNextActive by remember { mutableStateOf(false) }
+                    fun returnToWatchNextApp() {
+                        val restored = runCatching { watchNextSource?.second?.requestFocus() == true }.getOrDefault(false)
+                        if (!restored) {
+                            watchNextActive = false
+                            goToFirstTile++
+                        }
+                    }
+                    // The alerts, apps and Watch Next at the bottom: off on the Assistant tab
                     // unless chosen in the Home Assistant dialog. Off, they slide in while the
                     // selection is on them, reached with Down from the cards.
                     val bottomRow = tab != HomeTab.Assistant || haDisplay.bottomRow
@@ -151,6 +165,7 @@ class MainActivity : ComponentActivity() {
                     // tiles, anything below the top bar goes to the Assistant tab.
                     BackHandler {
                         when {
+                            watchNextActive -> returnToWatchNextApp()
                             topBarSelected && !homeTabSelected -> runCatching { homeTabFocus.requestFocus() }
                             !bottomShown -> if (!topBarSelected) runCatching { assistantTabFocus.requestFocus() }
                             firstTileSelected -> runCatching { cogFocus.requestFocus() }
@@ -165,12 +180,17 @@ class MainActivity : ComponentActivity() {
                     val homeStrip = sideContent && haDisplay.homeDashboard != null && haDisplay.homeColumns
                     // Picked in the Cameras tab, showing full screen
                     var fullScreenCamera by remember { mutableStateOf<Camera?>(null) }
-                    val continueItems = remember(watchNext, watchNextReadAt, hiddenWatching, visible) {
-                        watchRow(watchNext, watchNextReadAt, visible.orEmpty().map { it.key }, hiddenWatching)
+                    val watchNextByPackage = remember(watchNext, hiddenWatchNext) {
+                        watchNextByApp(watchNext, hiddenWatchNext)
                     }
+                    val source = watchNextSource
+                    val watchNextApp = all?.firstOrNull { it.key == source?.first }
+                    val watchNextItems = watchNextByPackage[source?.first].orEmpty()
                     val appRowFocus = remember { FocusRequester() }
-                    val continueFocus = remember { FocusRequester() }
-                    var continueActive by remember { mutableStateOf(false) }
+                    val watchNextFocus = remember { FocusRequester() }
+                    LaunchedEffect(watchNextApp) {
+                        if (watchNextApp == null && watchNextActive) returnToWatchNextApp()
+                    }
                     val frigateFeed = rememberFrigateFeed(frigate, onCertificateAccepted = { saveFrigate(frigate.copy(certPin = it)) })
                     val alertsRowFocus = remember { FocusRequester() }
                     // From reaching the row until the remote is back on the tiles, wherever it goes meanwhile
@@ -201,7 +221,7 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(alertsRowDue, hasAlertsRow) {
                         if (!alertsRowDue || !hasAlertsRow) return@LaunchedEffect
                         // Not from another tile or the row below: those are in use
-                        if (!otherTileSelected && !continueActive && (tilesRowSelected || lostNoAlertsTile)) {
+                        if (!otherTileSelected && !watchNextActive && (tilesRowSelected || lostNoAlertsTile)) {
                             alertsRowShown = true
                             withFrameNanos { } // let the row lay out, so its first card is focusable
                             runCatching { alertsRowFocus.requestFocus() }
@@ -212,7 +232,7 @@ class MainActivity : ComponentActivity() {
                     fun aboveRows(slot: Int) = when {
                         // What's above moves sideways: the nearest card or the camera
                         tab == HomeTab.Home && homeStrip -> FocusRequester.Default
-                        slot >= FIRST_SLOT_UNDER_PANEL && tab == HomeTab.Home && haServer.isSet -> haSensorsFocus
+                        tab == HomeTab.Home && sideContent && (camera == null || slot >= FIRST_SLOT_UNDER_PANEL) -> haSensorsFocus
                         slot < FIRST_SLOT_UNDER_PANEL && tab == HomeTab.Home && camera != null -> mainCameraFocus
                         else -> FocusRequester.Default
                     }
@@ -253,6 +273,7 @@ class MainActivity : ComponentActivity() {
                         // selection is, and on the Cameras tab the selection moves to it
                         channelStep(event)?.let { step ->
                             if (tab != HomeTab.Home && tab != HomeTab.Cameras) return false
+                            if (tab == HomeTab.Home && camera == null) return false
                             if (event.type == KeyEventType.KeyDown) {
                                 if (tab == HomeTab.Cameras) {
                                     steppedCamera(cameras, gridFocusedCamera, step)?.let { gridCameraDue = it.id }
@@ -269,7 +290,7 @@ class MainActivity : ComponentActivity() {
                                 gridCameraDue = picked.id
                             } else {
                                 selectCamera(picked)
-                                if (tab != HomeTab.Home) {
+                                if (showHomeCamera && tab != HomeTab.Home) {
                                     tab = HomeTab.Home
                                     mainCameraDue = true
                                 }
@@ -310,9 +331,6 @@ class MainActivity : ComponentActivity() {
                             },
                         ) {
                             SettingsButton(
-                                showHidden = showHidden,
-                                hiddenCount = hiddenApps?.size ?: 0,
-                                onShowHiddenChange = { showHidden = it },
                                 onOpenCameras = { camerasOpen = true },
                                 onOpenHomeAssistant = { haDialogOpen = true },
                                 onOpenFrigate = { frigateOpen = true },
@@ -380,7 +398,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             val homeEntities = remember(haEntities) { haEntities.filterNot(::isHaAction) }
-                            val sidePanelWidth = if (haDisplay.homeLayout.twoPerRow) TwoEntityCardWidth else SidePanelWidth
                             if (homeStrip) {
                                 // A dashboard in columns: the camera and the columns in one row that
                                 // scrolls sideways to the screen's right edge, the camera leaving on
@@ -393,7 +410,8 @@ class MainActivity : ComponentActivity() {
                                         .onFocusChanged { middleSelected = it.hasFocus },
                                 ) {
                                     // As large as when next to the panel
-                                    val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - EdgePadding * 3 - sidePanelWidth)
+                                    val columnWidth = dashboardColumnWidth(maxWidth - EdgePadding * 2)
+                                    val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - EdgePadding * 2 - PanelItemSpacing - columnWidth)
                                         .coerceAtLeast(0.dp)
                                     HaAssistantTab(
                                         connection = haConnection,
@@ -405,7 +423,9 @@ class MainActivity : ComponentActivity() {
                                         tabFocus = networkFocus,
                                         onSetUp = { haDialogOpen = true },
                                         sectionColumns = true,
-                                        leading = LeadingItem(cameraWidth, cameraWidth * 9f / 16f) { CameraBox(cameraWidth) },
+                                        leading = camera?.let {
+                                            LeadingItem(cameraWidth, cameraWidth * 9f / 16f) { CameraBox(cameraWidth) }
+                                        },
                                         columnsFocus = haSensorsFocus,
                                         modifier = Modifier.fillMaxSize(),
                                     )
@@ -420,12 +440,13 @@ class MainActivity : ComponentActivity() {
                                         .padding(start = EdgePadding, top = EdgePadding, end = EdgePadding)
                                         .onFocusChanged { middleSelected = it.hasFocus },
                                 ) {
+                                    val columnWidth = dashboardColumnWidth(maxWidth)
                                     val cameraWidth = minOf(
                                         maxHeight * 16f / 9f,
-                                        if (sideContent) maxWidth - sidePanelWidth - EdgePadding else maxWidth,
+                                        if (sideContent) maxWidth - columnWidth - EdgePadding else maxWidth,
                                     ).coerceAtLeast(0.dp)
                                     Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
-                                        CameraBox(cameraWidth)
+                                        if (camera != null) CameraBox(cameraWidth)
                                         if (sideContent && haDisplay.homeDashboard != null) {
                                             // A dashboard chosen for the Home tab: its sections, card by card
                                             HaAssistantTab(
@@ -438,10 +459,11 @@ class MainActivity : ComponentActivity() {
                                                 tabFocus = networkFocus,
                                                 onSetUp = { haDialogOpen = true },
                                                 inset = 0.dp,
+                                                fixedColumnWidth = columnWidth,
                                                 modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(haSensorsFocus),
                                             )
                                         } else if (sideContent) {
-                                            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                            Box(modifier = Modifier.width(columnWidth).fillMaxHeight()) {
                                                 HomeAssistantPanel(
                                                     connection = haConnection,
                                                     entityIds = homeEntities,
@@ -477,8 +499,8 @@ class MainActivity : ComponentActivity() {
                             // The tiles' grow room counts towards the margins above and below the row
                             Spacer(Modifier.height(EdgePadding - TileGrowRoom))
                             SlidingRows(
-                                revealed = continueActive,
-                                aboveRevealed = alertsRowShown && hasAlertsRow,
+                                revealed = watchNextActive,
+                                aboveRevealed = alertsRowShown && hasAlertsRow && !watchNextActive,
                                 above = {
                                     if (alertsRowFeed != null) {
                                         FrigateAlertsRow(
@@ -494,13 +516,11 @@ class MainActivity : ComponentActivity() {
                                 },
                                 first = {
                                     AppRowSpace(Modifier.onFocusChanged { tilesRowSelected = it.hasFocus }) {
-                                        if (visible != null && hiddenApps != null) AppRow(
+                                        if (visible != null) AppRow(
                                             apps = visible,
-                                            hiddenApps = hiddenApps,
-                                            showHidden = showHidden,
-                                            onShowHiddenChange = { showHidden = it },
+                                            dockKeys = dockKeys,
+                                            onOpenAllApps = { allAppsOpen = true },
                                             onHide = { app -> setDockAppVisible(app, false) },
-                                            onUnhide = { app -> setDockAppVisible(app, true) },
                                             onReorder = ::saveDockOrder,
                                             upFocus = { slot ->
                                                 when {
@@ -508,7 +528,12 @@ class MainActivity : ComponentActivity() {
                                                     else -> aboveRows(slot)
                                                 }
                                             },
-                                            downFocus = if (continueItems.isNotEmpty()) continueFocus else FocusRequester.Cancel,
+                                            watchNextApps = watchNextByPackage.keys,
+                                            watchNextFocus = watchNextFocus,
+                                            onWatchNextSource = { key, requester ->
+                                                if (key != watchNextSource?.first) watchNextActive = false
+                                                watchNextSource = if (key != null && requester != null) key to requester else null
+                                            },
                                             rowFocus = appRowFocus,
                                             goToFirstTile = goToFirstTile,
                                             onFirstTileSelected = { firstTileSelected = it },
@@ -524,18 +549,22 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 second = {
-                                    ContinueWatchingRow(
-                                        items = continueItems,
-                                        apps = all.orEmpty(),
-                                        firstCardFocus = continueFocus,
-                                        upFocus = appRowFocus,
-                                        onActiveChange = { continueActive = it },
-                                        onHide = {
-                                            hiddenWatching = hiddenWatching + it.hideKey
-                                            prefs.hiddenWatching = hiddenWatching
-                                        },
-                                        onLeave = { goToFirstTile++ },
-                                    )
+                                    if (watchNextApp != null && source != null) {
+                                        key(watchNextApp.key) {
+                                            WatchNextRow(
+                                                items = watchNextItems,
+                                                app = watchNextApp,
+                                                firstCardFocus = watchNextFocus,
+                                                upFocus = source.second,
+                                                onActiveChange = { watchNextActive = it },
+                                                onHide = {
+                                                    hiddenWatchNext = hiddenWatchNext + it.hideKey
+                                                    prefs.hiddenWatchNext = hiddenWatchNext
+                                                },
+                                                onLeave = ::returnToWatchNextApp,
+                                            )
+                                        }
+                                    }
                                 },
                             )
                             Spacer(Modifier.height(EdgePadding - TileGrowRoom))
@@ -556,6 +585,11 @@ class MainActivity : ComponentActivity() {
                             cameras = cameras,
                             onChange = ::saveCameras,
                             playSubstreams = cameraGridLive,
+                            showHomeCamera = showHomeCamera,
+                            onShowHomeCameraChange = {
+                                showHomeCamera = it
+                                prefs.showHomeCamera = it
+                            },
                             onPlaySubstreamsChange = {
                                 cameraGridLive = it
                                 prefs.cameraGridLive = it
@@ -600,6 +634,9 @@ class MainActivity : ComponentActivity() {
                             onDismiss = { frigateOpen = false },
                         )
                     }
+                    if (allAppsOpen) {
+                        AllAppsDrawer(all.orEmpty(), onDismiss = { allAppsOpen = false })
+                    }
                     if (launcherSettingsOpen) {
                         LauncherSettingsDialog(
                             catchHomeKey = catchHomeKey,
@@ -615,7 +652,13 @@ class MainActivity : ComponentActivity() {
                             },
                             showFreeMemory = showFreeMemory,
                             dockApps = visible.orEmpty(),
+                            dockKeys = dockKeys,
                             hiddenDockApps = hiddenApps.orEmpty(),
+                            showAllAppsTile = showAllAppsTile,
+                            onShowAllAppsTileChange = {
+                                showAllAppsTile = it
+                                prefs.showAllAppsTile = it
+                            },
                             onDockReorder = ::saveDockOrder,
                             onDockVisibilityChange = ::setDockAppVisible,
                             onShowFreeMemoryChange = { on ->
@@ -641,7 +684,10 @@ class MainActivity : ComponentActivity() {
                                 order = haEntities,
                                 topBar = haTopBar,
                                 frigate = frigate.takeIf { it.isSet },
-                                appTiles = visible.orEmpty().map { NamedEntity(it.key, it.label) },
+                                appTiles = dockKeys.mapNotNull { key ->
+                                    if (key == ALL_APPS_TILE_KEY) NamedEntity(key, "All apps")
+                                    else visible?.firstOrNull { it.key == key }?.let { NamedEntity(key, it.label) }
+                                },
                             ),
                             onDismiss = { exportOpen = false },
                         )
@@ -724,9 +770,11 @@ class MainActivity : ComponentActivity() {
         file.frigate?.let(::saveFrigate)
         // The row becomes the apps in the file that are on this TV; the others can be unhidden later
         val apps = installed.orEmpty().map { it.key }
-        val shown = file.appTiles.map { it.id }.filter { it in apps }
+        val importedDock = file.appTiles.map { it.id }.filter { it in apps || it == ALL_APPS_TILE_KEY }.distinct()
+        val shown = importedDock - ALL_APPS_TILE_KEY
         if (shown.isNotEmpty()) {
-            saveDockLayout(shown, (hidden + apps).distinct() - shown.toSet())
+            val tileOrder = if (ALL_APPS_TILE_KEY in importedDock) importedDock else dockTileKeys(shown, order, true)
+            saveDockLayout(tileOrder, (hidden + apps).distinct() - shown.toSet())
         }
         Toast.makeText(this, "Settings imported", Toast.LENGTH_SHORT).show()
     }
@@ -753,10 +801,12 @@ class MainActivity : ComponentActivity() {
         pruneCameraSnapshots(this, value.flatMap { listOf(it.url, it.substreamUrl) })
     }
 
-    private fun saveDockOrder(apps: List<InstalledApp>) = saveOrder(apps.map { it.key })
+    private fun saveDockOrder(keys: List<String>) {
+        saveOrder(if (showAllAppsTile) keys else dockTileKeys(keys, order, true))
+    }
 
     private fun setDockAppVisible(app: InstalledApp, visible: Boolean) {
-        val appKeys = arrange(installed.orEmpty(), order, hidden).map { it.key }
+        val appKeys = dockTileKeys(arrange(installed.orEmpty(), order, hidden).map { it.key }, order, true)
         if (visible) {
             // Unhidden apps return at the end of the visible dock.
             saveDockLayout((appKeys - app.key) + app.key, hidden - app.key)
@@ -800,12 +850,12 @@ class MainActivity : ComponentActivity() {
             if (apps != installed) prefs.installedApps = apps
             installed = apps
         }
-        // Shows watched meanwhile
         if (canReadWatchNext()) {
             lifecycleScope.launch {
                 watchNext = withContext(Dispatchers.IO) { loadWatchNext(this@MainActivity) }
-                watchNextReadAt = System.currentTimeMillis()
             }
+        } else {
+            watchNext = emptyList()
         }
     }
 
@@ -817,12 +867,6 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         running = false
-    }
-
-    override fun onStop() {
-        super.onStop()
-        // Hidden apps are only revealed until you leave the launcher
-        showHidden = false
     }
 
     companion object {

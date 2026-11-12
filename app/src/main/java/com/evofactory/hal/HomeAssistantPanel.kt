@@ -417,23 +417,20 @@ fun SensorReading(id: String, entity: HaEntity?, name: String? = null, iconColor
     val state = entity?.state
     val cue = haStateCue(domain, entity?.deviceClass, state)
     val defaultIcon = defaultHaIcon(domain, entity?.deviceClass, state.orEmpty())
-    val color = if (iconColor != Color.Unspecified) iconColor else when (cue?.tone) {
-        HaStateTone.Good -> Color(0xFF8DBD9B)
-        HaStateTone.Alert -> Color(0xFFE39491)
-        HaStateTone.Caution -> Color(0xFFD9B57C)
-        HaStateTone.Active -> Color(0xFF92B2DC)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    val iconOnly = cue?.iconOnly == true && iconColor == Color.Unspecified
-    val reading = entity?.reading ?: "—"
+    val color = if (iconColor != Color.Unspecified) iconColor else
+        (cue?.tone ?: HaStateTone.Neutral).color(MaterialTheme.colorScheme.onSurfaceVariant)
+    val iconOnly = cue?.iconOnly == true
+    val reading = if (iconOnly) {
+        entity?.currentTemperature?.takeIf { domain == "climate" && state !in setOf(null, "", "unknown", "unavailable") }
+    } else entity?.reading ?: "—"
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         MdiIcon(
             cue?.icon ?: entity?.icon ?: defaultIcon,
             modifier = Modifier.clearAndSetSemantics {
                 when {
-                    iconOnly -> contentDescription = reading
                     state == "unavailable" -> contentDescription = "Unavailable"
                     state.isNullOrEmpty() || state == "unknown" -> contentDescription = "Unknown"
+                    iconOnly -> contentDescription = if (domain == "climate") entity.reading.substringBefore(" · ") else entity.reading
                 }
             },
             color = color,
@@ -447,7 +444,7 @@ fun SensorReading(id: String, entity: HaEntity?, name: String? = null, iconColor
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (iconOnly) return@Row
+        if (reading == null) return@Row
         // No unit in a reading that's only a dash
         val unit = entity?.unit?.takeIf { reading.endsWith(" $it") }.orEmpty()
         Text(

@@ -8,7 +8,6 @@ import android.graphics.BitmapFactory
 import android.media.tv.TvContract
 import android.net.Uri
 import android.util.LruCache
-import android.widget.Toast
 import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -22,7 +21,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -55,6 +53,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -75,89 +74,31 @@ import java.io.InputStream
 import java.net.URISyntaxException
 import java.util.concurrent.TimeUnit
 
-private const val TAG = "ContinueWatching"
-private const val MAX_AGE_MILLIS = 14 * 24 * 3600 * 1000L
-private const val MAX_PROGRESS = 0.95f
-private const val MAX_PER_APP = 5
-private const val MAX_ITEMS = 20
-private const val MAX_CHANNEL_CARDS = 30
+private const val TAG = "WatchNext"
+private const val MAX_CARDS_PER_APP = 30
 private const val MAX_POSTER_BYTES = 8 * 1024 * 1024
 private const val POSTER_WIDTH = 480
 
-// Times below this (year 1973 in milliseconds) were written in seconds, as some apps do
-private const val SMALLEST_MILLIS = 100_000_000_000L
-
-/** A row of Android's Watch Next list or a card of a home screen channel, published by another app. */
-data class WatchItem(
+/** An app's program in Android TV's Watch Next feed. */
+data class WatchNextCard(
     val title: String,
-    val packageName: String?,
+    val packageName: String,
     val episode: String?,
     val posterUri: String?,
-    val intentUri: String?,
-    val type: Int?,
+    val intentUri: String,
     val browsable: Boolean,
     val engagedMillis: Long,
-    val positionMillis: Long,
-    val durationMillis: Long,
 ) {
-    /** Stays the same when the show is watched further */
-    val key: String get() = "$packageName|$title|${episode.orEmpty()}"
-
-    /** Hiding lasts until the show is watched again */
-    val hideKey: String get() = "$key|$engagedMillis"
-
-    /** 0 to 1; null when the app gives no position or length */
-    val progress: Float?
-        get() = if (durationMillis > 0 && positionMillis > 0) (positionMillis.toFloat() / durationMillis).coerceIn(0f, 1f) else null
+    val key: String get() = intentUri
+    // Match the key used by the old Watch Next row, including devices that reported seconds.
+    val hideKey: String get() = "$packageName|$title|${episode.orEmpty()}|$engagedMillis"
 }
 
-/** Read from the row's raw time, see [SMALLEST_MILLIS] */
-fun engagedMillis(raw: Long): Long = if (raw in 1 until SMALLEST_MILLIS) raw * 1000 else raw
-
-/**
- * What the row shows, newest first: shows you started less than two weeks ago, never suggestions.
- * A row without a date is left out since its age is unknown, and a nearly finished one because
- * that's usually a film whose end credits were skipped. Each app gets [MAX_PER_APP] at most, so
- * one with many can't crowd out the others.
- */
-fun continueWatching(rows: List<WatchItem>, now: Long): List<WatchItem> = rows
-    .filter { row ->
-        row.browsable &&
-            row.type == TvContract.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE &&
-            row.engagedMillis > 0 &&
-            now - row.engagedMillis < MAX_AGE_MILLIS &&
-            (row.progress ?: 0f) < MAX_PROGRESS
-    }
-    .sortedByDescending { it.engagedMillis }
-    .distinctBy { it.key }
-    .distinctBy { it.intentUri ?: it.key }
-    .groupBy { it.packageName }
-    .flatMap { (_, rows) -> rows.take(MAX_PER_APP) }
-    .sortedByDescending { it.engagedMillis }
-    .take(MAX_ITEMS)
-
-/**
- * The whole row: what you started, then, for each app in [appOrder] with nothing started lately,
- * what it suggests instead. [hidden] holds [WatchItem.hideKey]s; hiding an app's last started show
- * doesn't bring in its suggestions.
- */
-fun watchRow(rows: List<WatchItem>, now: Long, appOrder: List<String>, hidden: List<String>): List<WatchItem> {
-    val startedApps = continueWatching(rows, now).map { it.packageName }.toSet()
-    val shown = rows.filter { it.hideKey !in hidden }
-    val suggestions = shown
-        .filter { row ->
-            row.browsable &&
-                row.type != TvContract.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE &&
-                // A channel's cards have no type and usually no date
-                (row.type == null || (row.engagedMillis > 0 && now - row.engagedMillis < MAX_AGE_MILLIS))
-        }
-        // Dated ones first, newest first; the rest keep the app's own order
-        .sortedByDescending { it.engagedMillis }
+fun watchNextByApp(rows: List<WatchNextCard>, hidden: List<String>): Map<String, List<WatchNextCard>> {
+    val hiddenKeys = hidden.toSet()
+    return rows.filter { it.browsable && it.intentUri.isNotBlank() && it.hideKey !in hiddenKeys }
         .groupBy { it.packageName }
-    val filled = appOrder.filter { it !in startedApps }.flatMap { app ->
-        suggestions[app].orEmpty().distinctBy { it.key }.distinctBy { it.intentUri ?: it.key }.take(MAX_PER_APP)
-    }
-    return (continueWatching(shown, now) + filled).take(MAX_ITEMS)
+        .mapValues { (_, cards) -> cards.sortedByDescending { it.engagedMillis }.distinctBy { it.key }.take(MAX_CARDS_PER_APP) }
 }
 
 fun Context.canReadWatchNext() = checkSelfPermission(READ_TV_LISTINGS) == PackageManager.PERMISSION_GRANTED
@@ -165,75 +106,67 @@ fun Context.canReadWatchNext() = checkSelfPermission(READ_TV_LISTINGS) == Packag
 const val READ_TV_LISTINGS = "android.permission.READ_TV_LISTINGS"
 
 /**
- * Other apps' Watch Next rows, then the cards of their home screen channels. Without the
- * system-only permission to read all TV data, Android refuses any selection or sort order, so the
- * whole tables are read and filtered here.
+ * The Watch Next table is read with the TV listings permission. Sort and filter locally because
+ * Android reserves SQL selections for callers with privileged TV provider access.
  */
-fun loadWatchNext(context: Context): List<WatchItem> {
-    val rows = mutableListOf<WatchItem>()
-    try {
-        readPrograms(context, TvContract.WatchNextPrograms.CONTENT_URI, rows)
-        val perApp = mutableMapOf<String, Int>()
-        context.contentResolver.query(TvContract.Channels.CONTENT_URI, null, null, null, null)?.use { cursor ->
-            val id = cursor.getColumnIndexOrThrow(TvContract.Channels._ID)
-            val packageName = cursor.getColumnIndexOrThrow(TvContract.Channels.COLUMN_PACKAGE_NAME)
-            while (cursor.moveToNext()) {
-                val app = cursor.getString(packageName) ?: continue
-                // Some apps leave many old copies of their channels: enough is enough
-                if (perApp.getOrDefault(app, 0) >= MAX_CHANNEL_CARDS) continue
-                val before = rows.size
-                readPrograms(context, TvContract.buildPreviewProgramsUriForChannel(cursor.getLong(id)), rows)
-                perApp[app] = perApp.getOrDefault(app, 0) + rows.size - before
-            }
-        }
+fun loadWatchNext(context: Context): List<WatchNextCard> {
+    return try {
+        readWatchNext(context)
     } catch (e: RuntimeException) {
-        // The provider is another app and may refuse or be missing on some TVs: then there's no row
         AppLog.w(TAG, "Couldn't read Watch Next", e)
+        emptyList()
     }
-    return rows
 }
 
-/** The two tables share these columns, except that channel cards have no Watch Next type. */
-private fun readPrograms(context: Context, uri: Uri, into: MutableList<WatchItem>) {
-    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+private fun readWatchNext(context: Context): List<WatchNextCard> = buildList {
+    context.contentResolver.query(TvContract.WatchNextPrograms.CONTENT_URI, null, null, null, null)?.use { cursor ->
         fun text(column: String) = cursor.getColumnIndex(column).takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getString)
         fun number(column: String) = cursor.getColumnIndex(column).takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getLong)
         while (cursor.moveToNext()) {
-            val title = text(TvContract.WatchNextPrograms.COLUMN_TITLE) ?: continue
+            val title = text(TvContract.WatchNextPrograms.COLUMN_TITLE)?.takeIf { it.isNotBlank() } ?: continue
+            val intent = text(TvContract.WatchNextPrograms.COLUMN_INTENT_URI)?.takeIf { it.isNotBlank() } ?: continue
+            val app = text(TvContract.WatchNextPrograms.COLUMN_PACKAGE_NAME) ?: continue
             val season = text(TvContract.WatchNextPrograms.COLUMN_SEASON_DISPLAY_NUMBER)
             val episode = text(TvContract.WatchNextPrograms.COLUMN_EPISODE_DISPLAY_NUMBER)
-            into += WatchItem(
+            val engaged = number(TvContract.WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS) ?: 0
+            add(WatchNextCard(
                 title = title,
-                packageName = text(TvContract.WatchNextPrograms.COLUMN_PACKAGE_NAME),
+                packageName = app,
                 episode = if (season != null && episode != null) "S$season E$episode" else null,
                 posterUri = text(TvContract.WatchNextPrograms.COLUMN_THUMBNAIL_URI)
                     ?: text(TvContract.WatchNextPrograms.COLUMN_POSTER_ART_URI),
-                intentUri = text(TvContract.WatchNextPrograms.COLUMN_INTENT_URI),
-                type = number(TvContract.WatchNextPrograms.COLUMN_WATCH_NEXT_TYPE)?.toInt(),
+                intentUri = intent,
                 browsable = number(TvContract.WatchNextPrograms.COLUMN_BROWSABLE) != 0L,
-                engagedMillis = engagedMillis(number(TvContract.WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS) ?: 0),
-                positionMillis = number(TvContract.WatchNextPrograms.COLUMN_LAST_PLAYBACK_POSITION_MILLIS) ?: 0,
-                durationMillis = number(TvContract.WatchNextPrograms.COLUMN_DURATION_MILLIS) ?: 0,
-            )
+                engagedMillis = if (engaged in 1 until 100_000_000_000L) engaged * 1000 else engaged,
+            ))
         }
     }
 }
 
 /** Resumes in the app that published it; if that fails, at least opens the app. */
-private fun Context.openWatchItem(item: WatchItem, apps: List<InstalledApp>) {
+private fun Context.openWatchNext(item: WatchNextCard, app: InstalledApp) {
     val opened = try {
-        item.intentUri?.let { startActivity(Intent.parseUri(it, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } != null
+        val intent = Intent.parseUri(item.intentUri, Intent.URI_INTENT_SCHEME)
+        if (intent.selector != null ||
+            intent.component?.packageName?.let { it != app.key } == true ||
+            intent.`package`?.let { it != app.key } == true
+        ) {
+            false
+        } else {
+            intent.setPackage(app.key)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            startActivity(intent)
+            true
+        }
     } catch (e: URISyntaxException) {
-        AppLog.w(TAG, "Bad Watch Next link", e)
+        AppLog.w(TAG, "Invalid Watch Next link")
         false
     } catch (e: RuntimeException) {
         // e.g. the app was just removed, or doesn't let others open this
-        AppLog.w(TAG, "Couldn't open Watch Next item", e)
+        AppLog.w(TAG, "Couldn't open Watch Next card")
         false
     }
-    if (opened) return
-    val app = apps.find { it.key == item.packageName }
-    if (app != null) launch(app) else Toast.makeText(this, "Couldn't open ${item.title}", Toast.LENGTH_LONG).show()
+    if (!opened) launch(app)
 }
 
 private val posterClient by lazy {
@@ -241,7 +174,7 @@ private val posterClient by lazy {
 }
 
 // Decoded posters survive refreshes, so returning to the launcher is instant
-private val posterCache = LruCache<String, ImageBitmap>(MAX_ITEMS + 10)
+private val posterCache = LruCache<String, ImageBitmap>(MAX_CARDS_PER_APP)
 
 /** Web or content:// address; null if there's nothing to show. Slow: call off the main thread. */
 private fun loadPoster(context: Context, uri: String): ImageBitmap? {
@@ -252,9 +185,9 @@ private fun loadPoster(context: Context, uri: String): ImageBitmap? {
             posterClient.newCall(Request.Builder().url(uri).build()).execute().use { response ->
                 if (response.isSuccessful) response.body.byteStream().use(::readLimited) else null
             }
-        } else {
+        } else if (parsed.scheme == "content" || parsed.scheme == "android.resource") {
             context.contentResolver.openInputStream(parsed)?.use(::readLimited)
-        }
+        } else null
     } catch (e: IOException) {
         AppLog.d(TAG, "No poster: $e")
         null
@@ -289,10 +222,8 @@ private fun readLimited(stream: InputStream): ByteArray? {
 }
 
 /**
- * The bottom of the home screen: shows [first], and slides up to [second] in the same space while
- * [revealed], or down to [above] while [aboveRevealed]. Only this area moves; what's above it stays
- * where it is. [above] waits under the screen unless it's showing, as above the area it would sit
- * behind the camera, where the remote could land on it.
+ * Shows the dock in [first] and expands below it for [second] while [revealed].
+ * The alerts in [above] slide into the dock's space while [aboveRevealed].
  */
 @Composable
 fun SlidingRows(
@@ -303,32 +234,31 @@ fun SlidingRows(
     second: @Composable () -> Unit,
 ) {
     var height by remember { mutableIntStateOf(0) }
-    val shift by animateIntAsState(
-        when {
-            aboveRevealed -> -height
-            revealed -> height
-            else -> 0
-        },
-        label = "Home rows",
-    )
-    Box(modifier = Modifier.fillMaxWidth().clipToBounds()) {
+    val shift by animateIntAsState(if (aboveRevealed) -height else 0, label = "Alerts row")
+    val extraHeight by animateIntAsState(if (revealed) height else 0, label = "Watch Next row")
+    Box(modifier = Modifier.fillMaxWidth().clipToBounds().layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, (placeable.height + extraHeight).coerceAtMost(constraints.maxHeight)) {
+            placeable.place(0, 0)
+        }
+    }) {
         Box(modifier = Modifier.offset { IntOffset(0, if (shift < 0) -height - shift else 2 * height) }) { above() }
         Box(modifier = Modifier.offset { IntOffset(0, -shift) }.onSizeChanged { height = it.height }) { first() }
-        Box(modifier = Modifier.offset { IntOffset(0, height - shift) }) { second() }
+        Box(modifier = Modifier.offset { IntOffset(0, height) }) { second() }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ContinueWatchingRow(
-    items: List<WatchItem>,
-    apps: List<InstalledApp>,
-    // Down from an app tile comes here: the first card, the most recently watched
+fun WatchNextRow(
+    items: List<WatchNextCard>,
+    app: InstalledApp,
+    // Down from the app tile comes here.
     firstCardFocus: FocusRequester,
-    // Up from any card: the app tiles, which sit behind the camera while this row shows
+    // Up from any card returns to the source app.
     upFocus: FocusRequester,
     onActiveChange: (Boolean) -> Unit,
-    onHide: (WatchItem) -> Unit,
+    onHide: (WatchNextCard) -> Unit,
     // Go back to the app tiles: Back, or nothing left in the row
     onLeave: () -> Unit,
 ) {
@@ -384,11 +314,11 @@ fun ContinueWatchingRow(
             ) {
                 itemsIndexed(items, key = { _, item -> item.key }) { index, item ->
                     val requester = requesters.getOrPut(item.key) { FocusRequester() }
-                    WatchCard(
+                    WatchNextTile(
                         item = item,
-                        appLabel = apps.find { it.key == item.packageName }?.label,
                         width = cardWidth,
-                        onClick = { context.openWatchItem(item, apps) },
+                        loadArtwork = active,
+                        onClick = { context.openWatchNext(item, app) },
                         onLongClick = { menuFor = item.key },
                         modifier = Modifier
                             .then(if (index == 0) Modifier.focusRequester(firstCardFocus) else Modifier)
@@ -396,6 +326,7 @@ fun ContinueWatchingRow(
                             // Past the ends the search would otherwise jump up to the app tiles
                             .focusProperties {
                                 up = upFocus
+                                down = FocusRequester.Cancel
                                 if (index == 0) left = FocusRequester.Cancel
                                 if (index == items.lastIndex) right = FocusRequester.Cancel
                             }
@@ -435,20 +366,23 @@ fun ContinueWatchingRow(
 }
 
 @Composable
-private fun WatchCard(
-    item: WatchItem,
-    appLabel: String?,
+private fun WatchNextTile(
+    item: WatchNextCard,
     width: Dp,
+    loadArtwork: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
     overlay: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
-    val poster by produceState<ImageBitmap?>(initialValue = null, item.posterUri) {
-        val uri = item.posterUri ?: return@produceState
-        value = withContext(Dispatchers.IO) { loadPoster(context, uri) }
-    }
+    val poster = if (loadArtwork) {
+        val image by produceState<ImageBitmap?>(initialValue = null, item.posterUri) {
+            val uri = item.posterUri ?: return@produceState
+            value = withContext(Dispatchers.IO) { loadPoster(context, uri) }
+        }
+        image
+    } else null
     Box(modifier = modifier.width(width).aspectRatio(16f / 9f)) {
         Card(onClick = onClick, onLongClick = onLongClick, modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -475,31 +409,18 @@ private fun WatchCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        listOfNotNull(appLabel, item.episode, timeLeft(item)).joinToString(" · "),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.7f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                item.progress?.let { progress ->
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .fillMaxWidth(progress)
-                            .height(3.dp)
-                            .background(MaterialTheme.colorScheme.onSurface),
-                    )
+                    item.episode?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }
         overlay()
     }
-}
-
-private fun timeLeft(item: WatchItem): String? {
-    if (item.progress == null) return null
-    val minutes = (item.durationMillis - item.positionMillis).coerceAtLeast(0) / 60_000
-    return if (minutes >= 60) "${minutes / 60} h ${minutes % 60} min left" else "$minutes min left"
 }

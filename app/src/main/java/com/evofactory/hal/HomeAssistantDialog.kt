@@ -93,7 +93,7 @@ fun HomeAssistantDialog(
     // The dashboard the Assistant tab shows (see [HaDashboardInfo.key]), null for the choice above,
     // and Home Assistant's dashboards, each read if it can be
     var dashboard by remember { mutableStateOf(initialDisplay.dashboard) }
-    // The alerts, apps and Continue Watching below the Assistant tab's cards
+    // The alerts, apps and Watch Next below the Assistant tab's cards
     var bottomRow by remember { mutableStateOf(initialDisplay.bottomRow) }
     // Each section in a column of its own on the Assistant tab
     var sectionColumns by remember { mutableStateOf(initialDisplay.sectionColumns) }
@@ -651,7 +651,7 @@ private const val MY_SELECTION = "my selection"
  * The Home Tab and HA Tab tabs: the selection made in the other tabs (as [selectionDetail] says),
  * or one of Home Assistant's [boards], each with what it can show. OK [onChoose]s one, by its key
  * (null for the selection). Those with nothing that can be shown aren't offered, unless chosen
- * already. Below them, switches for the [bottomRow] (alerts, apps, Continue Watching) below the
+ * already. Below them, switches for the [bottomRow] (alerts, apps, Watch Next) below the
  * Assistant tab's cards, unless null, and for [sectionColumns].
  */
 @Composable
@@ -725,7 +725,7 @@ private fun DashboardChoice(
         if (bottomRow != null) {
             item(key = BOTTOM_ROW) {
                 ChoiceRow(
-                    "Show bottom row (Alerts / Apps / Continue watching)",
+                    "Show bottom row (Alerts / Apps / Watch Next)",
                     "Below the cards, as on the other tabs. Off: the cards take the whole height.",
                     checked = bottomRow,
                     switch = true,

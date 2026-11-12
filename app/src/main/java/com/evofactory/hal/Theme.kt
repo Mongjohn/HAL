@@ -30,3 +30,16 @@ val SwitchKnob = Color(0xFFEDEBF0)
 
 /** A step below onSurfaceVariant: figures that are only there if you look for them */
 val FaintText = Color(0xFF6E6C72)
+
+/** Home Assistant state hues, with darker shades for the TV's light focus highlight. */
+internal fun HaStateTone.color(neutral: Color, focused: Boolean = false): Color = when (this) {
+    HaStateTone.Neutral -> neutral
+    HaStateTone.Active -> if (focused) Color(0xFF694A00) else Color(0xFFFFC107)
+    HaStateTone.Good -> if (focused) Color(0xFF215A34) else Color(0xFF8DBD9B)
+    HaStateTone.Caution -> if (focused) Color(0xFF743C17) else Color(0xFFE9A16D)
+    HaStateTone.Alert -> if (focused) Color(0xFF852F2B) else Color(0xFFE39491)
+    HaStateTone.Blue -> if (focused) Color(0xFF244F84) else Color(0xFF92B2DC)
+    HaStateTone.Cyan -> if (focused) Color(0xFF125763) else Color(0xFF80C9D7)
+    HaStateTone.Purple -> if (focused) Color(0xFF593882) else Color(0xFFC2A1E6)
+    HaStateTone.Teal -> if (focused) Color(0xFF19594F) else Color(0xFF78C7B7)
+}
