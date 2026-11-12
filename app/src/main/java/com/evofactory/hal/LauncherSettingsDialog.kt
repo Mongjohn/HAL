@@ -63,6 +63,7 @@ import java.util.Date
 private enum class LauncherSettingsTab(val label: String) {
     Launcher("Launcher"),
     Dock("Dock"),
+    Background("Background"),
     Advanced("Advanced"),
 }
 
@@ -71,7 +72,7 @@ private enum class LauncherSettingsTab(val label: String) {
  * Either needs the accessibility service turned on in the TV's settings too.
  */
 @Composable
-fun LauncherSettingsDialog(
+internal fun LauncherSettingsDialog(
     catchHomeKey: Boolean,
     reopenAfterHome: Boolean,
     autoTurnedOff: Boolean,
@@ -83,6 +84,10 @@ fun LauncherSettingsDialog(
     onShowAllAppsTileChange: (Boolean) -> Unit,
     onDockReorder: (List<String>) -> Unit,
     onDockVisibilityChange: (InstalledApp, Boolean) -> Unit,
+    artworkSettings: ArtworkSettings,
+    artworkToken: String,
+    onArtworkEnabled: (Boolean) -> Unit,
+    onSaveArtworkCatalog: (String, String) -> Boolean,
     onCatchHomeKeyChange: (Boolean) -> Unit,
     onReopenAfterHomeChange: (Boolean) -> Unit,
     onShowFreeMemoryChange: (Boolean) -> Unit,
@@ -103,6 +108,7 @@ fun LauncherSettingsDialog(
     val itemKeys = when (tab) {
         LauncherSettingsTab.Launcher -> listOf("catch", "reopen", "accessibility", "export", "import")
         LauncherSettingsTab.Dock -> listOf(ALL_APPS_OPTION) + dockKeys + hiddenDockApps.map { it.key }
+        LauncherSettingsTab.Background -> listOf("artwork", "country", "tmdb-token", "save-catalog")
         LauncherSettingsTab.Advanced -> listOf("hours-", "hours+", "memory")
     }
     val prefs = remember { LauncherPrefs(context) }
@@ -171,6 +177,21 @@ fun LauncherSettingsDialog(
                 optionModifier = items.row("memory").ringToTop(),
                 firstModifier = Modifier.focusRequester(advancedOption).then(items.row("hours-")).ringToTop(right = false),
                 lastModifier = items.row("hours+").ringToTop(left = false),
+            )
+            return@TopDialog
+        }
+        if (tab == LauncherSettingsTab.Background) {
+            ArtworkOptions(
+                settings = artworkSettings,
+                savedToken = artworkToken,
+                onEnabled = onArtworkEnabled,
+                onSave = onSaveArtworkCatalog,
+                rowModifier = { key ->
+                    items.row(key).ringToTop(
+                        left = key == "artwork" || key == "country",
+                        right = key == "artwork" || key == "save-catalog",
+                    )
+                },
             )
             return@TopDialog
         }

@@ -1,6 +1,10 @@
 package com.evofactory.hal
 
+import android.database.ContentObserver
+import android.media.tv.TvContract
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -47,6 +52,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -93,6 +99,10 @@ class MainActivity : ComponentActivity() {
     private var importOpen by mutableStateOf(false)
     private var watchNext by mutableStateOf(emptyList<WatchNextCard>())
     private var hiddenWatchNext by mutableStateOf(emptyList<String>())
+    private var artworkSettings by mutableStateOf(ArtworkSettings())
+    private var artworkToken by mutableStateOf("")
+    private var resumed by mutableStateOf(false)
+    private var watchNextRefresh: Job? = null
 
     // Home override's crash guard: the launcher counts as started once it has stayed up a moment
     private val confirmStarted = Runnable {
@@ -118,9 +128,26 @@ class MainActivity : ComponentActivity() {
         haDisplay = prefs.haDisplay
         frigate = prefs.frigate
         hiddenWatchNext = prefs.hiddenWatchNext
+        artworkSettings = prefs.artworkSettings
+        artworkToken = prefs.readArtworkToken()
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
         if (!canReadWatchNext()) requestPermissions(arrayOf(READ_TV_LISTINGS), 0)
         setContent {
+            DisposableEffect(resumed, artworkSettings.enabled) {
+                if (!resumed || !artworkSettings.enabled || !canReadWatchNext()) {
+                    return@DisposableEffect onDispose {}
+                }
+                val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                    override fun onChange(selfChange: Boolean) = refreshWatchNext()
+                }
+                val registered = try {
+                    contentResolver.registerContentObserver(TvContract.WatchNextPrograms.CONTENT_URI, true, observer)
+                    true
+                } catch (_: SecurityException) {
+                    false
+                }
+                onDispose { if (registered) contentResolver.unregisterContentObserver(observer) }
+            }
             MaterialTheme(colorScheme = AppColorScheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val all = installed
@@ -298,6 +325,13 @@ class MainActivity : ComponentActivity() {
                         }
                         return true
                     }
+                    DashboardArtwork(
+                        settings = artworkSettings,
+                        token = artworkToken,
+                        visiblePackages = remember(visible) { visible.orEmpty().map { it.key }.toSet() },
+                        watchNext = watchNextByPackage,
+                        active = resumed,
+                    )
                     Column(modifier = Modifier.fillMaxSize().onPreviewKeyEvent(::onRemoteButton)) {
                         HomeTopBar(
                             tab = tab,
@@ -661,6 +695,22 @@ class MainActivity : ComponentActivity() {
                             },
                             onDockReorder = ::saveDockOrder,
                             onDockVisibilityChange = ::setDockAppVisible,
+                            artworkSettings = artworkSettings,
+                            artworkToken = artworkToken,
+                            onArtworkEnabled = { enabled ->
+                                artworkSettings = artworkSettings.copy(enabled = enabled)
+                                prefs.artworkSettings = artworkSettings
+                            },
+                            onSaveArtworkCatalog = { region, token ->
+                                if (!prefs.saveArtworkToken(token)) {
+                                    false
+                                } else {
+                                    artworkSettings = artworkSettings.copy(region = region)
+                                    prefs.artworkSettings = artworkSettings
+                                    artworkToken = token
+                                    true
+                                }
+                            },
                             onShowFreeMemoryChange = { on ->
                                 prefs.showFreeMemory = on
                                 showFreeMemory = on
@@ -840,6 +890,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
         // The home override may have switched itself off meanwhile
         updateReplaceHome()
         window.decorView.postDelayed(confirmStarted, 2_000)
@@ -850,16 +901,25 @@ class MainActivity : ComponentActivity() {
             if (apps != installed) prefs.installedApps = apps
             installed = apps
         }
-        if (canReadWatchNext()) {
+        refreshWatchNext()
+    }
+
+    private fun refreshWatchNext() {
+        watchNextRefresh?.cancel()
+        if (!resumed) return
+        watchNextRefresh = if (canReadWatchNext()) {
             lifecycleScope.launch {
                 watchNext = withContext(Dispatchers.IO) { loadWatchNext(this@MainActivity) }
             }
         } else {
             watchNext = emptyList()
+            null
         }
     }
 
     override fun onPause() {
+        resumed = false
+        watchNextRefresh?.cancel()
         super.onPause()
         window.decorView.removeCallbacks(confirmStarted)
     }

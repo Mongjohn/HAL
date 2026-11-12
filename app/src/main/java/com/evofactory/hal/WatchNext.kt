@@ -88,6 +88,8 @@ data class WatchNextCard(
     val intentUri: String,
     val browsable: Boolean,
     val engagedMillis: Long,
+    val programType: Int? = null,
+    val availability: Int? = null,
 ) {
     val key: String get() = intentUri
     // Match the key used by the old Watch Next row, including devices that reported seconds.
@@ -138,6 +140,8 @@ private fun readWatchNext(context: Context): List<WatchNextCard> = buildList {
                 intentUri = intent,
                 browsable = number(TvContract.WatchNextPrograms.COLUMN_BROWSABLE) != 0L,
                 engagedMillis = if (engaged in 1 until 100_000_000_000L) engaged * 1000 else engaged,
+                programType = number(TvContract.WatchNextPrograms.COLUMN_TYPE)?.toInt(),
+                availability = number(TvContract.WatchNextPrograms.COLUMN_AVAILABILITY)?.toInt(),
             ))
         }
     }
@@ -210,14 +214,14 @@ private fun loadPoster(context: Context, uri: String): ImageBitmap? {
 }
 
 /** null if it's larger than any poster should be */
-private fun readLimited(stream: InputStream): ByteArray? {
+internal fun readLimited(stream: InputStream, maxBytes: Int = MAX_POSTER_BYTES): ByteArray? {
     val out = ByteArrayOutputStream()
     val buffer = ByteArray(16 * 1024)
     while (true) {
         val read = stream.read(buffer)
         if (read < 0) return out.toByteArray()
         out.write(buffer, 0, read)
-        if (out.size() > MAX_POSTER_BYTES) return null
+        if (out.size() > maxBytes) return null
     }
 }
 
