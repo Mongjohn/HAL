@@ -444,7 +444,7 @@ fun AppRow(
                             .then(if (hasWatchNext) Modifier.semantics { stateDescription = "Watch Next below" } else Modifier)
                             .then(if (moving) Modifier.onPreviewKeyEvent(::onMoveKey) else Modifier),
                     ) {
-                        if (key in watchNextApps) {
+                        if (hasWatchNext && selectedKey == key) {
                             MdiIcon(
                                 "mdi:chevron-down",
                                 modifier = Modifier.align(Alignment.BottomCenter).offset(y = WatchNextChevronOffset),
