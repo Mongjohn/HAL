@@ -70,6 +70,7 @@ data class SettingsFile(
     val frigate: FrigateServer? = null,
     // The apps visible in the row, in their order
     val appTiles: List<NamedEntity> = emptyList(),
+    val dashboards: DashboardLayouts? = null,
 ) {
     /** Only what's checked, by [Row] key */
     fun only(keys: Set<String>) = copy(
@@ -80,6 +81,7 @@ data class SettingsFile(
         order = order?.filter { "sensor:$it" in keys || "action:$it" in keys },
         topBar = topBar?.filter { "action:$it" in keys },
         frigate = frigate?.takeIf { FRIGATE_KEY in keys },
+        dashboards = dashboards?.takeIf { DASHBOARDS_KEY in keys },
         appTiles = appTiles.takeIf { APP_TILES_KEY in keys }.orEmpty(),
     )
 
@@ -98,6 +100,7 @@ data class SettingsFile(
         .put("sensors", entitiesToJson(sensors))
         .put("actions", entitiesToJson(actions))
         .apply {
+            dashboards?.let { put("dashboards", it.toJson()) }
             order?.let { put("order", JSONArray(it)) }
             topBar?.let { put("topBar", JSONArray(it)) }
             frigate?.let {
@@ -111,6 +114,7 @@ data class SettingsFile(
         .toString(2)
 }
 
+private const val DASHBOARDS_KEY = "dashboards"
 private const val LOGIN_KEY = "login"
 private const val FRIGATE_KEY = "frigate"
 private const val APP_TILES_KEY = "appTiles"
@@ -137,6 +141,7 @@ fun settingsFromJson(json: String): SettingsFile? = runCatching {
         order = root.optJSONArray("order")?.let { array -> List(array.length()) { array.getString(it) } },
         topBar = root.optJSONArray("topBar")?.let { array -> List(array.length()) { array.getString(it) } },
         frigate = frigate?.let { FrigateServer(it.getString("url"), it.optString("username"), it.optString("password"), it.optString("certPin")) },
+        dashboards = root.optJSONObject("dashboards")?.let { DashboardLayouts.fromJson(it) },
         appTiles = entitiesFromJson(root.optJSONArray("appTiles")),
     )
 }.getOrNull()
@@ -172,6 +177,13 @@ private fun sections(file: SettingsFile) = listOf(
             file.login?.let { Row(LOGIN_KEY, Uri.parse(it.url).host ?: it.url, file.username.ifEmpty { "Access token" }) },
         ),
     ),
+    Section("HAL dashboards", listOfNotNull(file.dashboards?.let { layouts ->
+        val surfaces = listOfNotNull(
+            "Assistant tab".takeIf { layouts.assistant != null },
+            "Home panel".takeIf { layouts.home != null },
+        )
+        Row(DASHBOARDS_KEY, "Dashboard layouts", surfaces.joinToString(", "))
+    })),
     Section("Home Assistant sensors", file.sensors.map { Row("sensor:${it.id}", it.name, it.id) }),
     Section("Home Assistant actions", file.actions.map { Row("action:${it.id}", it.name, it.id) }),
     Section("Frigate login", listOfNotNull(file.frigate?.let { Row(FRIGATE_KEY, Uri.parse(it.url).host ?: it.url, it.username) })),

@@ -65,5 +65,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("com.squareup.okhttp3:okhttp:5.5.1")
     implementation("org.conscrypt:conscrypt-android:2.8.0")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+    implementation("com.google.zxing:core:3.5.3")
     testImplementation("junit:junit:4.13.2")
 }
