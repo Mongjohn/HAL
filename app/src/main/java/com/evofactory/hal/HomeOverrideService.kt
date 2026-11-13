@@ -16,6 +16,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
+internal const val ACTION_FOCUS_HAL_HOME = "com.evofactory.hal.FOCUS_HOME"
+
 private const val TAG = "HomeOverride"
 
 /** The TVs' own home screens; the service only receives events from these (res/xml/home_override_service.xml) */
@@ -130,7 +132,7 @@ class HomeOverrideService : AccessibilityService() {
         // No transition animation: keeps the stock home screen's flash as short as possible
         return try {
             startActivity(
-                Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                Intent(this, MainActivity::class.java).setAction(ACTION_FOCUS_HAL_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle(),
             )
             true

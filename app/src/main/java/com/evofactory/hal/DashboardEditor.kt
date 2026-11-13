@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.LinkAddress
 import android.net.NetworkCapabilities
-import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,15 +23,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.Text
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -40,9 +35,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.util.UUID
 
 private const val EditorPort = 8765
-private const val EditorIdleMs = 15 * 60 * 1000L
 private const val EditorMaxBytes = 4 * 1024 * 1024
 
 private class DashboardEditorServer(
@@ -63,8 +58,6 @@ private class DashboardEditorServer(
         }
     }
     val url get() = "http://$address:$listeningPort"
-    @Volatile var lastActivity = SystemClock.elapsedRealtime()
-        private set
     @Volatile private var closed = false
 
     fun close() {
@@ -98,17 +91,11 @@ private class DashboardEditorServer(
             else -> null
         }
         if (asset != null && session.method == Method.GET) {
-            lastActivity = SystemClock.elapsedRealtime()
             return reply(Response.Status.OK, context.assets.open("dashboard-editor/${asset.first}").bufferedReader().use { it.readText() }, asset.second)
-        }
-        if (session.uri == "/api/activity" && session.method == Method.GET) {
-            lastActivity = SystemClock.elapsedRealtime()
-            return reply(Response.Status.OK, "{}")
         }
         val read = session.method == Method.GET && session.uri in listOf("/api/state", "/api/catalog")
         val write = session.method == Method.POST && session.uri in listOf("/api/apply", "/api/restore")
         if (!read && !write) return error(Response.Status.NOT_FOUND, "Page not found.")
-        lastActivity = SystemClock.elapsedRealtime()
 
         val body = if (write) {
             if (headers["origin"] != url || headers["content-type"]?.substringBefore(';') != "application/json" ||
@@ -148,27 +135,29 @@ private fun editorAddress(context: Context): LinkAddress? {
 }
 
 @Composable
-internal fun DashboardEditorDialog(
+internal fun DashboardEditor(
     haServer: HaServer,
     layouts: () -> DashboardLayouts,
     canRestore: () -> Boolean,
     legacyDisplay: HaDisplay,
     legacyEntities: List<String>,
     cameraVisible: Boolean,
+    installedApps: List<InstalledApp>,
     save: (DashboardLayouts) -> Unit,
     restore: () -> Unit,
-    onDismiss: () -> Unit,
+    showInfo: Boolean,
+    onDismissInfo: () -> Unit,
+    onStartFailed: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val apps by rememberUpdatedState(installedApps)
     val readLayouts by rememberUpdatedState(layouts)
     val readCanRestore by rememberUpdatedState(canRestore)
     val currentSave by rememberUpdatedState(save)
     val currentRestore by rememberUpdatedState(restore)
     var editor by remember { mutableStateOf<DashboardEditorServer?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var revision by remember { mutableStateOf(0) }
+    var revision by remember { mutableStateOf(UUID.randomUUID().toString()) }
     var catalog by remember { mutableStateOf<List<HaEntity>>(emptyList()) }
     var templates by remember { mutableStateOf<List<Pair<HaDashboardInfo, HaDashboard>>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -187,6 +176,7 @@ internal fun DashboardEditorDialog(
 
     fun state() = JSONObject().put("revision", revision).put("canRestore", readCanRestore())
         .put("camera", cameraVisible)
+        .put("apps", JSONArray(apps.map { JSONObject().put("id", it.key).put("name", it.label) }))
         .put("assistant", (readLayouts().assistant ?: initial(false)).toJson())
         .put("home", (readLayouts().home ?: initial(true)).toJson())
 
@@ -194,7 +184,7 @@ internal fun DashboardEditorDialog(
         val previousKeepScreenOn = view.keepScreenOn
         val address = editorAddress(context)
         var listener: DashboardEditorServer? = null
-        if (address == null) error = "Connect this TV to Wi-Fi or Ethernet, then try again."
+        if (address == null) onStartFailed("Connect this TV to Wi-Fi or Ethernet, then try again.")
         else {
             val server = DashboardEditorServer(address, context.applicationContext) { path, body ->
                 when (path) {
@@ -210,21 +200,23 @@ internal fun DashboardEditorDialog(
                                 .put("skipped", JSONArray(board.skipped))
                         }))
                     else -> {
-                        if (body == null || body.optInt("revision", -1) != revision) null else {
+                        if (body == null || body.optString("revision") != revision) null else {
                             if (path == "/api/restore") {
                                 check(readCanRestore())
                                 currentRestore()
                             } else {
                                 val layout = dashboardLayoutFromJson(body.getJSONObject("layout"))
+                                val previous = readLayouts()
+                                val claimsFocus = layout.pages.any { page -> page.cards.any { it.focusOnHome } }
                                 val next = when (body.getString("surface")) {
-                                    "assistant" -> readLayouts().copy(assistant = layout)
-                                    "home" -> readLayouts().copy(home = layout.copy(bottomRow = false))
+                                    "assistant" -> previous.copy(assistant = layout, home = previous.home?.let { if (claimsFocus) it.withoutHomeFocus() else it })
+                                    "home" -> previous.copy(home = layout.copy(bottomRow = false, appsConfigured = true), assistant = previous.assistant?.let { if (claimsFocus) it.withoutHomeFocus() else it })
                                     else -> throw IllegalArgumentException("Unknown surface")
                                 }
                                 currentSave(next)
                             }
-                            revision++
-                            JSONObject().put("revision", revision)
+                            revision = UUID.randomUUID().toString()
+                            JSONObject().put("revision", revision).put("applied", path == "/api/apply")
                         }
                     }
                 }
@@ -236,33 +228,22 @@ internal fun DashboardEditorDialog(
                 view.keepScreenOn = true
             } catch (_: Exception) {
                 server.close()
-                error = "Could not open dashboard editor port $EditorPort."
+                onStartFailed("Could not open dashboard editor port $EditorPort.")
             }
         }
-        fun stop() {
+        onDispose {
             listener?.let {
                 it.close()
                 view.keepScreenOn = previousKeepScreenOn
-                listener = null
             }
         }
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) stop()
-        }
-        lifecycle.addObserver(observer)
-        onDispose {
-            lifecycle.removeObserver(observer)
-            stop()
-        }
-    }
-    LaunchedEffect(editor) {
-        val listener = editor ?: return@LaunchedEffect
-        while (SystemClock.elapsedRealtime() - listener.lastActivity < EditorIdleMs) delay(1000)
-        listener.close()
-        onDismiss()
     }
     LaunchedEffect(editor, haServer) {
         if (editor == null) return@LaunchedEffect
+        loading = true
+        catalog = emptyList()
+        templates = emptyList()
+        catalogError = null
         try {
             if (haServer.isSet) withTimeoutOrNull(25_000) {
                 haSession(haServer) {
@@ -283,28 +264,27 @@ internal fun DashboardEditorDialog(
         }
     }
 
-    val stopEditing = {
-        editor?.close()
-        onDismiss()
-    }
+    if (showInfo) editor?.let { DashboardEditorInfo(it.url, onDismissInfo) }
+}
+
+@Composable
+private fun DashboardEditorInfo(url: String, onDismiss: () -> Unit) {
     TopDialog(
         title = "Dashboard editor",
-        onDismiss = stopEditing,
-        buttons = listOf(DialogButton(if (error == null) "Stop editing" else "Close", primary = true, onClick = stopEditing)),
+        onDismiss = onDismiss,
+        buttons = listOf(DialogButton("Close", primary = true, onClick = onDismiss)),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            error?.let { Text(it) }
-            editor?.url?.let { url ->
-                Text("Open this address on a device on the same network.")
-                Text(url)
-                val qr = remember(url) { QRCodeWriter().encode(url, BarcodeFormat.QR_CODE, 49, 49) }
-                Canvas(Modifier.size(160.dp)) {
-                    drawRect(Color.White)
-                    val cell = (size.minDimension / qr.width).toInt().toFloat().coerceAtLeast(1f)
-                    val offset = (size.minDimension - qr.width * cell) / 2
-                    for (y in 0 until qr.height) for (x in 0 until qr.width) {
-                        if (qr[x, y]) drawRect(Color.Black, Offset(offset + x * cell, offset + y * cell), Size(cell, cell))
-                    }
+            Text("Open this address on a device on the same network.")
+            Text(url)
+            Text("Use Settings → Enable Web Editor to turn it off.")
+            val qr = remember(url) { QRCodeWriter().encode(url, BarcodeFormat.QR_CODE, 49, 49) }
+            Canvas(Modifier.size(160.dp)) {
+                drawRect(Color.White)
+                val cell = (size.minDimension / qr.width).toInt().toFloat().coerceAtLeast(1f)
+                val offset = (size.minDimension - qr.width * cell) / 2
+                for (y in 0 until qr.height) for (x in 0 until qr.width) {
+                    if (qr[x, y]) drawRect(Color.Black, Offset(offset + x * cell, offset + y * cell), Size(cell, cell))
                 }
             }
         }

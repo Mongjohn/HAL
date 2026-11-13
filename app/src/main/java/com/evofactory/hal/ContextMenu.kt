@@ -39,9 +39,17 @@ import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
+import androidx.tv.material3.Switch
 import androidx.tv.material3.Text
 
-data class MenuAction(val label: String, val onClick: () -> Unit)
+data class MenuAction(val label: String, val onClick: () -> Unit) {
+    var checked: Boolean? = null
+        private set
+
+    constructor(label: String, checked: Boolean, onClick: () -> Unit) : this(label, onClick) {
+        this.checked = checked
+    }
+}
 
 enum class MenuPlacement {
     /** Centred above the anchor: tile menus */
@@ -109,6 +117,7 @@ fun ContextMenu(
                             action.onClick()
                         },
                         headlineContent = { Text(action.label) },
+                        trailingContent = { action.checked?.let { Switch(checked = it, onCheckedChange = null) } },
                         modifier = if (index == start) Modifier.focusRequester(firstItem) else Modifier,
                     )
                 }
