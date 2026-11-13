@@ -168,10 +168,9 @@ function attachGesture(handle, tile, card, resize) {
   handle.onpointerdown = event => {
     if (busy || gesture || !event.isPrimary || event.button !== 0) return;
     const grid = $("grid");
-    const viewport = $("grid-viewport");
     const style = getComputedStyle(grid);
     const dx = (grid.clientWidth + parseFloat(style.columnGap)) / page().columns;
-    const dy = (viewport.clientHeight + parseFloat(style.rowGap)) / screenRows;
+    const dy = parseFloat(style.gridAutoRows) + parseFloat(style.rowGap);
     let candidate = card;
     let moved = false;
     let preview = null;

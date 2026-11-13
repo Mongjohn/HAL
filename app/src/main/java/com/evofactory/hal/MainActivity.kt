@@ -161,6 +161,15 @@ class MainActivity : ComponentActivity() {
                         dockTileKeys(visible.orEmpty().map { it.key }, order, showAllAppsTile)
                     }
                     val camera = if (showHomeCamera) cameras.find { it.id == selectedCamera } ?: cameras.firstOrNull() else null
+                    val availableTabs = remember(cameras.isNotEmpty(), frigate.isSet) {
+                        HomeTab.entries.filter { entry ->
+                            when (entry) {
+                                HomeTab.Cameras -> cameras.isNotEmpty()
+                                HomeTab.Alerts -> frigate.isSet
+                                else -> true
+                            }
+                        }
+                    }
                     val mainCameraFocus = remember { FocusRequester() }
                     val haSensorsFocus = remember { FocusRequester() }
                     val networkFocus = remember { FocusRequester() }
@@ -169,6 +178,12 @@ class MainActivity : ComponentActivity() {
                     val homeTabFocus = remember { FocusRequester() }
                     val alertsTabFocus = remember { FocusRequester() }
                     val assistantTabFocus = remember { FocusRequester() }
+                    LaunchedEffect(availableTabs, tab) {
+                        if (tab !in availableTabs) {
+                            tab = HomeTab.Home
+                            homeTabFocus.requestFocus()
+                        }
+                    }
                     var topBarSelected by remember { mutableStateOf(false) }
                     var homeTabSelected by remember { mutableStateOf(false) }
                     val bottomRow = tab != HomeTab.Assistant || (dashboardLayouts.assistant?.bottomRow ?: haDisplay.bottomRow)
@@ -253,6 +268,7 @@ class MainActivity : ComponentActivity() {
                             return true
                         }
                         colorButtonTab(event)?.let { pressed ->
+                            if (pressed !in availableTabs) return false
                             if (event.type == KeyEventType.KeyDown) {
                                 tab = pressed
                                 val tabFocus = when (pressed) {
@@ -304,6 +320,7 @@ class MainActivity : ComponentActivity() {
                     Column(modifier = Modifier.fillMaxSize().onPreviewKeyEvent(::onRemoteButton)) {
                         HomeTopBar(
                             tab = tab,
+                            availableTabs = availableTabs,
                             onTabChange = { tab = it },
                             secondTabFocus = secondTabFocus,
                             homeTabFocus = homeTabFocus,

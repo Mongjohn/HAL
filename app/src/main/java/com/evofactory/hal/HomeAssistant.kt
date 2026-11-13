@@ -297,8 +297,7 @@ fun isHaAction(entityId: String) = entityId.substringBefore('.') in ActionDomain
 
 fun isHaWeather(entityId: String) = entityId.substringBefore('.') == "weather"
 
-// That OK can switch on and off on the Assistant tab. Not covers or locks: a slip of the remote
-// shouldn't open the garage or the front door.
+// Domains that expose an on/off toggle service.
 private val ToggleDomains = setOf("light", "switch", "input_boolean", "fan", "automation")
 
 // Whose state is one of a list of options, chosen from a menu
@@ -566,9 +565,6 @@ class HaSession internal constructor(private val socket: WebSocket) {
         }
     }
 
-    /** Switches a light, switch, fan or input boolean on if it's off, and off if it's on */
-    suspend fun toggle(entityId: String) = callService(entityId, "toggle")
-
     /** Sets a select or input select to [option], one of its options */
     suspend fun selectOption(entityId: String, option: String) = callService(entityId, "select_option") { put("option", option) }
 
@@ -583,7 +579,7 @@ class HaSession internal constructor(private val socket: WebSocket) {
      * having noticed, e.g. after the TV changed network: it's dropped, so the next try reconnects
      * rather than waiting for the pings to notice.
      */
-    private suspend fun callService(entityId: String, service: String, data: (JSONObject.() -> Unit)? = null) {
+    internal suspend fun callService(entityId: String, service: String, data: (JSONObject.() -> Unit)? = null) {
         try {
             command("call_service") {
                 put("domain", entityId.substringBefore('.'))

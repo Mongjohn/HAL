@@ -30,21 +30,21 @@ label:has(input[type=checkbox]) { display: flex; align-items: center; padding-bo
 input[type=number] { width: 74px; }
 #dimensions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 #dimensions input { width: 100%; }
-.screen { display: flex; width: 100%; aspect-ratio: 16 / 9; gap: 2%; align-items: stretch; overflow: hidden; border: 1px solid #303e54; border-radius: 12px; padding: 2%; background: #121924; }
+.screen { display: flex; width: 100%; aspect-ratio: 16 / 9; gap: 2%; align-items: stretch; overflow: hidden; border: 1px solid #303e54; border-radius: 16px; padding: 2%; background: #121924; }
 #camera { flex: 2 1 0; min-width: 0; align-self: start; max-height: 100%; display: grid; place-items: center; aspect-ratio: 16 / 9; border: 1px solid #526785; border-radius: 8px; background: #252e3b; color: #c5d2e5; }
 #grid-viewport { flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; container-type: size; }
-#grid { display: grid; min-width: 0; min-height: 100%; align-content: start; gap: 2px; grid-auto-rows: calc((100cqh + 2px) / var(--screen-rows) - 2px); }
+#grid { --row-gap: 8px; display: grid; min-width: 0; min-height: 100%; align-content: start; gap: var(--row-gap) 12px; grid-auto-rows: max(0px, calc((100cqh + var(--row-gap)) / var(--screen-rows) - var(--row-gap))); }
 .tile-readings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .tile-readings > p { grid-column: 1 / -1; }
 .tile-readings > .half { grid-column: 1; }
 .tile-readings > .second-half { grid-column: 2; }
-.tile { min-width: 0; overflow: hidden; position: relative; background: #253248; border: 1px solid #495975; border-radius: 8px; }
+.tile { min-width: 0; overflow: hidden; position: relative; background: #253248; border: 1px solid #495975; border-radius: 12px; }
 .tile.active { border-color: #a5ceff; box-shadow: inset 0 0 0 1px #a5ceff; }
 .tile.invalid { border-color: #ff998e; }
 .tile-title { display: block; width: 100%; border: 0; border-radius: 0; padding: 4px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; cursor: grab; touch-action: none; font-weight: 650; }
-.tile-grip { position: absolute; z-index: 1; top: 0; right: 0; width: auto; padding: 0 5px; line-height: 1.2; }
+.tile-grip { position: absolute; z-index: 1; top: 4px; right: 4px; width: auto; padding: 0 5px; line-height: 1.2; border-radius: 5px; }
 .tile p { margin: 4px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .82rem; color: #b9cce6; }
-.resize { position: absolute; bottom: 0; right: 0; padding: 0; width: 24px; height: 24px; cursor: nwse-resize; touch-action: none; }
+.resize { position: absolute; bottom: 4px; right: 4px; padding: 0; width: 24px; height: 24px; cursor: nwse-resize; touch-action: none; }
 #contents, #entities { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 #contents li { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 #contents details { width: 100%; }
