@@ -33,6 +33,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.DataInputStream
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.UUID
@@ -98,14 +99,16 @@ private class DashboardEditorServer(
         if (!read && !write) return error(Response.Status.NOT_FOUND, "Page not found.")
 
         val body = if (write) {
+            val length = headers["content-length"]?.toIntOrNull() ?: 0
             if (headers["origin"] != url || headers["content-type"]?.substringBefore(';') != "application/json" ||
                 headers.containsKey("transfer-encoding") ||
-                (headers["content-length"]?.toIntOrNull() ?: 0) !in 1..EditorMaxBytes
+                length !in 1..EditorMaxBytes
             ) return error(Response.Status.BAD_REQUEST, "Invalid editor request.")
             try {
-                val files = mutableMapOf<String, String>()
-                session.parseBody(files)
-                JSONObject(files.getValue("postData"))
+                // JSON requests use UTF-8 even without a charset parameter.
+                val bytes = ByteArray(length)
+                DataInputStream(session.inputStream).readFully(bytes)
+                JSONObject(bytes.decodeToString(throwOnInvalidSequence = true))
             } catch (_: Exception) {
                 return error(Response.Status.BAD_REQUEST, "Invalid dashboard data.")
             }

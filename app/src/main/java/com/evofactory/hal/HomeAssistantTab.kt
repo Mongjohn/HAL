@@ -404,7 +404,7 @@ fun HaAssistantTab(
                 val weather = card.ids.firstOrNull()?.takeIf { card.isWeather && board == null && customLayout == null }
                 val rows = rowsByCard.getValue(card.key)
                 val buttonRows = rows.flatMapIndexed { row, positions ->
-                    positions.filter { isInteractive(card.ids[it]) }.map { row }
+                    positions.filter { card.hasControl(card.ids[it]) }.map { row }
                 }
                 AssistantCard(
                     target = targets[card.key],
@@ -945,7 +945,7 @@ private fun CardContent(
     halfWidthItems: Set<Int> = emptySet(),
 ) {
     // What the remote lands on once in the card, in order: buttons and switches
-    val interactive = card.ids.filter(::isInteractive)
+    val interactive = card.ids.filter(card::hasControl)
     @Composable
     fun Entity(id: String) {
         val index = interactive.indexOf(id)
@@ -971,8 +971,8 @@ private fun CardContent(
             .onFocusChanged { if (it.isFocused) onButtonFocused(index) }
             // Only once gone into the card
             .focusProperties { canFocus = entered }
-        if (isHaToggle(id)) {
-            ToggleRow(connection, id, names[id], modifier)
+        if (isHaStatefulControl(id)) {
+            StatefulControlRow(connection, id, names[id], modifier)
         } else if (isHaSelect(id)) {
             SelectRow(connection, id, names[id], modifier)
         } else {
@@ -1017,34 +1017,19 @@ private fun CardHeading(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/** Buttons (scenes, scripts, buttons), switches (lights, switches, automations…) and selects: what OK acts on in a card */
-private fun isInteractive(id: String) = isHaAction(id) || isHaToggle(id) || isHaSelect(id)
+/** Entities that accept OK when displayed as readings or actions in a card. */
+private fun SensorCard.hasControl(id: String) =
+    !isFullWidth(id) && (isHaAction(id) || isHaStatefulControl(id) || isHaSelect(id))
 
-/**
- * A light, switch, fan or input boolean: a sensor row with a switch at its end, showing whether
- * it's on. Selected once in its card, OK switches it; greyed out until connected.
- */
 @Composable
-private fun ToggleRow(connection: HaConnection, id: String, name: String?, modifier: Modifier) {
+private fun StatefulControlRow(connection: HaConnection, id: String, name: String?, modifier: Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
-    val entity = connection.entities[id]
-    val state = entity?.state
-    val on = state == "on"
-    val hasSwitchState = on || state == "off"
     val ready = connection.session != null
     Surface(
-        onClick = { connection.toggle(id, scope, context) },
-        // As wide as the card's padding allows, so its icon and text line up with the sensors' above and below
-        modifier = modifier.widenBy(ToggleRowInset).semantics {
-            stateDescription = when (state) {
-                "on" -> "On"
-                "off" -> "Off"
-                "unavailable" -> "Unavailable"
-                else -> "Unknown"
-            }
-        },
+        onClick = { connection.control(id, scope, context) },
+        modifier = modifier.widenBy(ControlRowInset),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
@@ -1055,36 +1040,8 @@ private fun ToggleRow(connection: HaConnection, id: String, name: String?, modif
             focusedContentColor = colors.onSurface,
         ),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = ToggleRowInset, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val domain = id.substringBefore('.')
-            val defaultIcon = defaultHaIcon(domain, entity?.deviceClass, state.orEmpty())
-            val cue = haStateCue(domain, entity?.deviceClass, state)
-            val neutral = LocalContentColor.current
-            val stateColor = if (ready) (cue?.tone ?: HaStateTone.Neutral).color(neutral) else neutral
-            MdiIcon(
-                if (hasSwitchState) cue?.icon ?: defaultIcon else entity?.icon ?: defaultIcon,
-                color = stateColor,
-                fallback = defaultIcon,
-            )
-            Text(
-                name ?: entity?.name ?: id,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (hasSwitchState) {
-                SwitchMark(on, neutral, activeColor = stateColor, activeKnob = colors.surface)
-            } else {
-                Box(Modifier.width(36.dp), contentAlignment = Alignment.Center) {
-                    val icon = if (state == "unavailable") "cloud-off-outline" else "help-circle-outline"
-                    MdiIcon(icon, color = LocalContentColor.current)
-                }
-            }
+        Box(Modifier.padding(horizontal = ControlRowInset, vertical = 4.dp)) {
+            SensorReading(id, connection.entities[id], name, textColor = LocalContentColor.current)
         }
     }
 }
@@ -1114,7 +1071,7 @@ private fun SelectRow(connection: HaConnection, id: String, name: String?, modif
     }
     Surface(
         onClick = { if (options.isNotEmpty()) menuOpen = true },
-        modifier = modifier.focusRequester(row).widenBy(ToggleRowInset),
+        modifier = modifier.focusRequester(row).widenBy(ControlRowInset),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
@@ -1126,7 +1083,7 @@ private fun SelectRow(connection: HaConnection, id: String, name: String?, modif
         ),
     ) {
         Row(
-            modifier = Modifier.padding(start = ToggleRowInset, end = ToggleRowInset - 4.dp, top = 4.dp, bottom = 4.dp),
+            modifier = Modifier.padding(start = ControlRowInset, end = ControlRowInset - 4.dp, top = 4.dp, bottom = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1170,8 +1127,8 @@ private fun SelectRow(connection: HaConnection, id: String, name: String?, modif
     }
 }
 
-// How far a switch's row reaches into the card's padding on each side
-private val ToggleRowInset = 8.dp
+// How far a control row reaches into the card's padding on each side
+private val ControlRowInset = 8.dp
 
 /** Measured [by] wider on each side and placed as much to the left: the same width as the others, plus [by] on each side */
 private fun Modifier.widenBy(by: Dp) = layout { measurable, constraints ->

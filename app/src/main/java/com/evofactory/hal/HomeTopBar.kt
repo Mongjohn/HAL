@@ -62,6 +62,7 @@ enum class HomeTab(val label: String, val color: Color) {
 @Composable
 fun HomeTopBar(
     tab: HomeTab,
+    availableTabs: List<HomeTab>,
     onTabChange: (HomeTab) -> Unit,
     secondTabFocus: FocusRequester,
     homeTabFocus: FocusRequester,
@@ -78,7 +79,7 @@ fun HomeTopBar(
         horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HomeTab.entries.forEach { entry ->
+        availableTabs.forEach { entry ->
             TabButton(
                 entry.label,
                 selected = entry == tab,

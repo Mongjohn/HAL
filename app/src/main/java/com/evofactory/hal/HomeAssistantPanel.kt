@@ -115,12 +115,14 @@ class HaConnection {
     var runningAction by mutableStateOf<String?>(null)
         private set
 
-    /** Switches [id] on or off, if Home Assistant is connected; a failure shows as a toast. Its new state comes back with its updates. */
-    fun toggle(id: String, scope: CoroutineScope, context: Context) {
+    /** Runs the control for the entity's latest state. The resulting state arrives through the subscription. */
+    internal fun control(id: String, scope: CoroutineScope, context: Context) {
         val session = session ?: return notConnected(context)
+        val entity = entities[id] ?: return
+        val service = haPrimaryService(id, entity.state, entity.attributes.optInt("supported_features")) ?: return
         scope.launch {
             try {
-                session.toggle(id)
+                session.callService(id, service)
             } catch (e: HaException) {
                 Toast.makeText(context, e.message, Toast.LENGTH_LONG).show()
             }
@@ -412,13 +414,19 @@ fun HaActionButtons(connection: HaConnection, actionIds: List<String>) {
 
 /** A sensor's icon (in [iconColor], e.g. its line's in a graph), name (or the [name] given to it) and reading, on one line */
 @Composable
-fun SensorReading(id: String, entity: HaEntity?, name: String? = null, iconColor: Color = Color.Unspecified) {
+fun SensorReading(
+    id: String,
+    entity: HaEntity?,
+    name: String? = null,
+    iconColor: Color = Color.Unspecified,
+    textColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
     val domain = id.substringBefore('.')
     val state = entity?.state
     val cue = haStateCue(domain, entity?.deviceClass, state)
     val defaultIcon = defaultHaIcon(domain, entity?.deviceClass, state.orEmpty())
     val color = if (iconColor != Color.Unspecified) iconColor else
-        (cue?.tone ?: HaStateTone.Neutral).color(MaterialTheme.colorScheme.onSurfaceVariant)
+        (cue?.tone ?: HaStateTone.Neutral).color(textColor)
     val iconOnly = cue?.iconOnly == true
     val reading = if (iconOnly) {
         entity?.currentTemperature?.takeIf { domain == "climate" && state !in setOf(null, "", "unknown", "unavailable") }
@@ -439,7 +447,7 @@ fun SensorReading(id: String, entity: HaEntity?, name: String? = null, iconColor
         Text(
             name ?: entity?.name ?: id,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = textColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
