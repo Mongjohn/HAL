@@ -16,6 +16,7 @@
       <button id="apply" class="primary" disabled>Apply to TV</button>
     </div>
   </header>
+  <p id="apply-result" role="status" hidden></p>
   <p id="status" role="status">Loading dashboard…</p>
   <main id="workspace" hidden>
     <section class="preview" aria-label="Dashboard preview">
@@ -28,8 +29,9 @@
       <div class="controls">
         <label>View title <input id="page-title" maxlength="160"></label>
         <label>Columns <input id="columns" type="number" min="1" max="6"></label>
-        <label id="dock-label"><input id="dock" type="checkbox"> Show dock</label>
+        <label id="dock-label"><input id="dock" type="checkbox"> Show Frigate previews</label>
         <button id="add-card">Add card</button>
+        <button id="add-apps" hidden>Add Apps card</button>
       </div>
       <div class="controls">
         <label>Home Assistant template <select id="template"></select></label>
@@ -37,26 +39,36 @@
       </div>
       <div class="screen">
         <div id="camera" hidden>Camera</div>
-        <div id="grid" aria-label="Card grid"></div>
+        <div id="grid-viewport" aria-label="Dashboard viewport" tabindex="0">
+          <div id="grid" aria-label="Card grid"></div>
+        </div>
       </div>
       <p class="hint">Drag a card by its title to move or swap it. Resize it from the lower-right corner.</p>
     </section>
     <aside id="inspector" hidden aria-label="Card settings">
       <h2>Card settings</h2>
-      <label>Title <input id="title" maxlength="160"></label>
+      <label>Card heading (optional) <input id="title" maxlength="160"></label>
       <div id="dimensions">
         <label>Column <input id="x" type="number" min="1"></label>
         <label>Row <input id="y" type="number" min="1"></label>
         <label>Width <input id="w" type="number" min="1"></label>
-        <label>Height <input id="h" type="number" min="1" max="30"></label>
+        <label>Height <input id="h" type="number" min="1" max="15"></label>
       </div>
-      <label><input id="pair" type="checkbox"> Two readings per row</label>
+      <label><input id="home-focus" type="checkbox"> Focus on Home press</label>
       <div class="controls">
         <button id="duplicate">Duplicate</button>
         <button id="remove">Remove card</button>
       </div>
+      <section id="apps-settings" hidden>
+        <label>Apps per row <input id="apps-per-row" type="number" min="1" max="8"></label>
+        <label>Installed apps <select id="app-choice"></select></label>
+        <button id="add-app">Add app</button>
+        <ol id="selected-apps"></ol>
+      </section>
+      <section id="entity-settings">
       <h2>Card contents</h2>
       <ol id="contents"></ol>
+      <label>Subheading at end of card (optional) <input id="end-heading" maxlength="160"></label>
       <h2>Add an entity</h2>
       <label>Search <input id="search" type="search" placeholder="Name or entity ID"></label>
       <div class="controls">
@@ -74,6 +86,7 @@
         <label>Maximum <input id="gauge-max" type="number" value="100"></label>
       </div>
       <label id="history-fields" hidden>History hours <input id="history-hours" type="number" min="1" max="8760" value="24"></label>
+      </section>
     </aside>
   </main>
 </body>

@@ -107,11 +107,12 @@ class SensorCard(
     /** A weather alone: shown as a weather card, with its forecast */
     val isWeather get() = ids.size == 1 && isHaWeather(ids.first()) && subtitles.isEmpty()
 
-    fun entityRows(twoPerRow: Boolean): List<IntRange> = buildList {
+    fun entityRows(twoPerRow: Boolean, halfWidthItems: Set<Int>? = null): List<IntRange> = buildList {
         var first = 0
         while (first < ids.size) {
             val second = first + 1
-            val pair = twoPerRow && second < ids.size && second !in subtitles &&
+            val bothHalf = halfWidthItems?.let { first in it && second in it } ?: twoPerRow
+            val pair = bothHalf && second < ids.size && second !in subtitles &&
                 !isFullWidth(ids[first]) && !isFullWidth(ids[second])
             val last = if (pair) second else first
             add(first..last)
@@ -119,7 +120,7 @@ class SensorCard(
         }
     }
 
-    private fun isFullWidth(id: String) = isHaWeather(id) || id in gauges || id in graphs
+    internal fun isFullWidth(id: String) = isHaWeather(id) || id in gauges || id in graphs
 }
 
 /**
@@ -262,13 +263,15 @@ fun HaAssistantTab(
     // Selects the cards, as a group: up from the tiles on the Home tab
     columnsFocus: FocusRequester? = null,
     customLayout: DashboardLayout? = null,
+    homeFocusRequest: Int = 0,
+    renderApps: (@Composable (DashboardCard, FocusRequester, Dp, (FocusDirection) -> FocusRequester) -> Unit)? = null,
 ) {
     val board = connection.dashboard(dashboard)
     val missing = connection.dashboardMissing(dashboard)
     val reading = dashboard != null && board == null && !missing
     val prompt = when {
-        !homeAssistantSet -> null to "Set up Home Assistant"
-        connection.status == HaStatus.TokenRejected -> "Home Assistant rejected the login" to "Log in again"
+        !homeAssistantSet && renderApps == null -> null to "Set up Home Assistant"
+        connection.status == HaStatus.TokenRejected && renderApps == null -> "Home Assistant rejected the login" to "Log in again"
         customLayout == null && board == null && !reading && entityIds.isEmpty() ->
             (if (missing) "This dashboard is built by Home Assistant itself, with nothing to read" else null) to "Edit dashboard in browser"
         else -> null
@@ -288,6 +291,20 @@ fun HaAssistantTab(
     }
     val entities = connection.entities
     var viewIndex by remember(board, customLayout) { mutableIntStateOf(0) }
+    val targets = remember(customLayout) {
+        customLayout?.pages.orEmpty().flatMap { it.cards }.associate { it.card.key to FocusRequester() }
+    }
+    LaunchedEffect(homeFocusRequest) {
+        if (homeFocusRequest == 0) return@LaunchedEffect
+        val index = customLayout?.pages?.indexOfFirst { page -> page.cards.any { it.focusOnHome } } ?: -1
+        if (index >= 0) {
+            viewIndex = index
+            val target = customLayout?.pages?.get(index)?.cards?.first { it.focusOnHome }
+            withFrameNanos { }
+            withFrameNanos { }
+            runCatching { targets[target?.card?.key]?.requestFocus() }
+        }
+    }
     // With something before the columns (the Home tab's camera), every view's cards follow each
     // other, without the views' names above them
     val views = (customLayout?.pages?.map { DashboardView(it.title, it.cards.map(DashboardCard::card)) } ?: board?.views.orEmpty()).let { all ->
@@ -297,7 +314,10 @@ fun HaAssistantTab(
     val page = customLayout?.pages?.getOrNull(viewIndex)
     val cards = if (board != null || customLayout != null) views.getOrNull(viewIndex)?.cards.orEmpty() else layout.selectionCards(entityIds, entities)
     val cardOptions = page?.cards.orEmpty().associateBy { it.card.key }
-    val rowsByCard = cards.associate { it.key to it.entityRows(cardOptions[it.key]?.twoPerRow ?: layout.twoPerRow) }
+    val rowsByCard = cards.associate { card ->
+        val options = cardOptions[card.key]
+        card.key to card.entityRows(options?.twoPerRow ?: layout.twoPerRow, options?.halfWidthItems)
+    }
     val aliases = customLayout?.aliases.orEmpty()
     val names = (customLayout?.names ?: board?.names.orEmpty()) + aliases
     // Up from the top cards: to the views, if there are several, else to the tab
@@ -387,6 +407,7 @@ fun HaAssistantTab(
                     positions.filter { isInteractive(card.ids[it]) }.map { row }
                 }
                 AssistantCard(
+                    target = targets[card.key],
                     up = up,
                     window = window,
                     buttonRows = buttonRows,
@@ -399,26 +420,40 @@ fun HaAssistantTab(
                     if (weather != null) {
                         WeatherReading(entities[weather], connection.hourly[weather], connection.daily[weather])
                     } else {
-                        CardContent(card, rows, connection, names, aliases, entered == card.key, raised, firstButton, onButtonFocused)
+                        CardContent(card, rows, connection, names, aliases, entered == card.key, raised, firstButton, onButtonFocused,
+                            cardOptions[card.key]?.halfWidthItems.orEmpty())
                     }
                 }
             }
             if (page != null) {
                 val gap = minOf(PanelItemSpacing, width.coerceAtLeast(0.dp) / (page.columns * 2))
                 val cell = ((width - gap * (page.columns - 1)) / page.columns).coerceAtLeast(0.dp)
-                val step = 48.dp + gap
+                val topMargin = minOf(CardPeek, maxHeight / 4)
+                val bottomMargin = minOf(EdgePadding, maxHeight / 4)
+                val usableHeight = (maxHeight - topMargin - bottomMargin).coerceAtLeast(0.dp)
+                val rowGap = minOf(4.dp, usableHeight / (DashboardScreenRows * 2))
+                val step = (usableHeight + rowGap) / DashboardScreenRows
                 val rows = page.cards.maxOfOrNull { it.y + it.height } ?: 0
                 CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
-                    Box(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = inset, vertical = CardPeek)) {
-                        Box(Modifier.fillMaxWidth().height(step * rows)) {
+                    Box(Modifier.fillMaxSize().verticalScroll(scroll).padding(
+                        start = inset, end = inset, top = topMargin, bottom = bottomMargin,
+                    )) {
+                        Box(Modifier.fillMaxWidth().height((step * rows - rowGap).coerceAtLeast(0.dp))) {
                             page.cards.sortedWith(compareBy(DashboardCard::y, DashboardCard::x)).forEach { item ->
                                 key(item.card.key) {
-                                    val height = step * item.height - gap
+                                    val height = step * item.height.coerceAtMost(DashboardScreenRows) - rowGap
                                     Box(
                                         Modifier.offset((cell + gap) * item.x, step * item.y)
                                             .width((cell + gap) * item.width - gap),
                                     ) {
-                                        Card(item.card, cardsUp.takeIf { item.y == 0 }, null, height, height)
+                                        if (item.apps != null && renderApps != null) {
+                                            renderApps(item, targets.getValue(item.card.key), height) { direction ->
+                                                neighboringCard(item, page.cards, direction)?.let { targets[it.card.key] }
+                                                    ?: FocusRequester.Cancel
+                                            }
+                                        } else {
+                                            Card(item.card, cardsUp.takeIf { item.y == 0 }, null, height, height)
+                                        }
                                     }
                                 }
                             }
@@ -738,9 +773,10 @@ private fun AssistantCard(
     onLeave: () -> Unit,
     minHeight: Dp? = null,
     maxHeight: Dp? = null,
+    target: FocusRequester? = null,
     content: @Composable (raised: Boolean, firstButton: FocusRequester, onButtonFocused: (Int) -> Unit) -> Unit,
 ) {
-    val card = remember { FocusRequester() }
+    val card = target ?: remember { FocusRequester() }
     val firstButton = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     var focused by remember { mutableStateOf(false) }
@@ -906,6 +942,7 @@ private fun CardContent(
     raised: Boolean,
     firstButton: FocusRequester,
     onButtonFocused: (Int) -> Unit,
+    halfWidthItems: Set<Int> = emptySet(),
 ) {
     // What the remote lands on once in the card, in order: buttons and switches
     val interactive = card.ids.filter(::isInteractive)
@@ -945,8 +982,13 @@ private fun CardContent(
     if (card.title.isNotEmpty()) CardHeading(card.title)
     for (row in rows) {
         card.subtitles[row.first]?.let { CardHeading(it, Modifier.padding(top = 8.dp)) }
-        HaEntityRow(row) { Entity(card.ids[it]) }
+        if (row.first == row.last && row.first in halfWidthItems && !card.isFullWidth(card.ids[row.first])) {
+            Box(Modifier.fillMaxWidth(0.5f)) { Entity(card.ids[row.first]) }
+        } else {
+            HaEntityRow(row) { Entity(card.ids[it]) }
+        }
     }
+    card.subtitles[card.ids.size]?.let { CardHeading(it) }
 }
 
 @Composable

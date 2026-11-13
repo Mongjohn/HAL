@@ -2,6 +2,7 @@ package com.evofactory.hal
 
 import android.database.ContentObserver
 import android.media.tv.TvContract
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -79,8 +80,10 @@ class MainActivity : ComponentActivity() {
     private var showHomeCamera by mutableStateOf(true)
     private var minimizeVideoStreams by mutableStateOf(false)
     private var selectedCamera by mutableStateOf("")
+    private var homeFocusRequest by mutableIntStateOf(0)
     private var tab by mutableStateOf(HomeTab.Home)
-    private var dashboardEditorOpen by mutableStateOf(false)
+    private var dashboardEditorEnabled by mutableStateOf(false)
+    private var dashboardEditorInfoOpen by mutableStateOf(false)
     private var dashboardLayouts by mutableStateOf(DashboardLayouts())
     private var haDialogOpen by mutableStateOf(false)
     private var haServer by mutableStateOf(HaServer(""))
@@ -100,7 +103,6 @@ class MainActivity : ComponentActivity() {
     private var exportOpen by mutableStateOf(false)
     private var importOpen by mutableStateOf(false)
     private var watchNext by mutableStateOf(emptyList<WatchNextCard>())
-    private var hiddenWatchNext by mutableStateOf(emptyList<String>())
     private var artworkSettings by mutableStateOf(ArtworkSettings())
     private var artworkToken by mutableStateOf("")
     private var resumed by mutableStateOf(false)
@@ -114,6 +116,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent.action == ACTION_FOCUS_HAL_HOME) homeFocusRequest++
         // Last time's list: the tiles and the selection are there from the first frame
         installed = prefs.installedApps.ifEmpty { null }
         order = prefs.order
@@ -130,7 +133,6 @@ class MainActivity : ComponentActivity() {
         haDisplay = prefs.haDisplay
         dashboardLayouts = prefs.dashboardLayouts
         frigate = prefs.frigate
-        hiddenWatchNext = prefs.hiddenWatchNext
         artworkSettings = prefs.artworkSettings
         artworkToken = prefs.readArtworkToken()
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
@@ -158,9 +160,6 @@ class MainActivity : ComponentActivity() {
                     val dockKeys = remember(visible, order, showAllAppsTile) {
                         dockTileKeys(visible.orEmpty().map { it.key }, order, showAllAppsTile)
                     }
-                    val hiddenApps = remember(all, hidden) {
-                        all?.let { apps -> hidden.mapNotNull { key -> apps.find { it.key == key } } }
-                    }
                     val camera = if (showHomeCamera) cameras.find { it.id == selectedCamera } ?: cameras.firstOrNull() else null
                     val mainCameraFocus = remember { FocusRequester() }
                     val haSensorsFocus = remember { FocusRequester() }
@@ -172,34 +171,16 @@ class MainActivity : ComponentActivity() {
                     val assistantTabFocus = remember { FocusRequester() }
                     var topBarSelected by remember { mutableStateOf(false) }
                     var homeTabSelected by remember { mutableStateOf(false) }
-                    var firstTileSelected by remember { mutableStateOf(false) }
-                    var goToFirstTile by remember { mutableIntStateOf(0) }
-                    var watchNextSource by remember { mutableStateOf<Pair<String, FocusRequester>?>(null) }
-                    var watchNextActive by remember { mutableStateOf(false) }
-                    fun returnToWatchNextApp() {
-                        val restored = runCatching { watchNextSource?.second?.requestFocus() == true }.getOrDefault(false)
-                        if (!restored) {
-                            watchNextActive = false
-                            goToFirstTile++
-                        }
-                    }
-                    // The alerts, apps and Watch Next at the bottom: off on the Assistant tab
-                    // unless enabled in the dashboard editor. Off, they slide in while the
-                    // selection is on them, reached with Down from the cards.
                     val bottomRow = tab != HomeTab.Assistant || (dashboardLayouts.assistant?.bottomRow ?: haDisplay.bottomRow)
                     var bottomRevealed by remember { mutableStateOf(false) }
                     val bottomShown = bottomRow || bottomRevealed
                     val bottomFraction by animateFloatAsState(if (bottomShown) 1f else 0f, label = "bottom rows")
-                    // Back never leaves the launcher, it moves the selection: the top bar to Home,
-                    // anything else to the first tile, and the first tile to the cog. Without the
-                    // tiles, anything below the top bar goes to the Assistant tab.
+                    // Back returns focus to the tabs.
                     BackHandler {
                         when {
-                            watchNextActive -> returnToWatchNextApp()
                             topBarSelected && !homeTabSelected -> runCatching { homeTabFocus.requestFocus() }
                             !bottomShown -> if (!topBarSelected) runCatching { assistantTabFocus.requestFocus() }
-                            firstTileSelected -> runCatching { cogFocus.requestFocus() }
-                            else -> goToFirstTile++
+                            else -> runCatching { homeTabFocus.requestFocus() }
                         }
                     }
                     // The launcher top bar has its own action selection.
@@ -215,66 +196,39 @@ class MainActivity : ComponentActivity() {
                     val haConnection = rememberHaConnection(haServer, followed, legacyBoards)
                     val openDashboardSetup: () -> Unit = {
                         if (!haServer.isSet || haConnection.status == HaStatus.TokenRejected) haDialogOpen = true
-                        else dashboardEditorOpen = true
+                        else openDashboardEditor()
                     }
-                    val sideContent = haServer.isSet
-                    // A dashboard in columns on the Home tab: the camera and the columns scroll sideways together
-                    val homeStrip = sideContent && haDisplay.homeDashboard != null && haDisplay.homeColumns
-                    // Picked in the Cameras tab, showing full screen
-                    var fullScreenCamera by remember { mutableStateOf<Camera?>(null) }
-                    val watchNextByPackage = remember(watchNext, hiddenWatchNext) {
-                        watchNextByApp(watchNext, hiddenWatchNext)
+                    val legacyHomeBoard = haConnection.dashboard(haDisplay.homeDashboard)
+                    val homeLayout = remember(dashboardLayouts.home, dockKeys, haDisplay, legacyHomeBoard, haEntities) {
+                        (dashboardLayouts.home ?: seedDashboardLayout(
+                            legacyHomeBoard,
+                            haDisplay.homeLayout.selectionCards(haEntities.filterNot(::isHaAction), haConnection.entities),
+                            1, haDisplay.homeLayout.twoPerRow,
+                        )).migrateAppsCard(dockKeys)
                     }
-                    val source = watchNextSource
-                    val watchNextApp = all?.firstOrNull { it.key == source?.first }
-                    val watchNextItems = watchNextByPackage[source?.first].orEmpty()
-                    val appRowFocus = remember { FocusRequester() }
-                    val watchNextFocus = remember { FocusRequester() }
-                    LaunchedEffect(watchNextApp) {
-                        if (watchNextApp == null && watchNextActive) returnToWatchNextApp()
+                    var focusHomeSurface by remember { mutableIntStateOf(0) }
+                    var focusAssistantSurface by remember { mutableIntStateOf(0) }
+                    LaunchedEffect(homeFocusRequest) {
+                        if (homeFocusRequest == 0) return@LaunchedEffect
+                        val assistantTarget = dashboardLayouts.assistant?.pages.orEmpty().any { page -> page.cards.any { it.focusOnHome } }
+                        tab = if (assistantTarget) HomeTab.Assistant else HomeTab.Home
+                        withFrameNanos { }
+                        val fallback = if (assistantTarget) assistantTabFocus else homeTabFocus
+                        runCatching { fallback.requestFocus() }
+                        if (assistantTarget) focusAssistantSurface++ else focusHomeSurface++
+                    }
+                    var lastApp by remember { mutableStateOf<String?>(null) }
+                    val watchNextByPackage = remember(watchNext) {
+                        watchNextByApp(watchNext, prefs.hiddenWatchNext)
                     }
                     val frigateFeed = rememberFrigateFeed(frigate, onCertificateAccepted = { saveFrigate(frigate.copy(certPin = it)) })
                     val alertsRowFocus = remember { FocusRequester() }
-                    // From reaching the row until the remote is back on the tiles, wherever it goes meanwhile
-                    var alertsRowShown by remember { mutableStateOf(false) }
-                    // Not on the Alerts tab, nor on the Assistant tab unless chosen in the Home Assistant dialog
                     val alertsRowFeed = frigateFeed?.takeIf { tab != HomeTab.Alerts && bottomRow }
-                    val hasAlertsRow = alertsRowFeed != null && alertsRowFeed.rowAlerts.isNotEmpty()
-                    LaunchedEffect(hasAlertsRow) { if (!hasAlertsRow) alertsRowShown = false }
-                    var tilesRowSelected by remember { mutableStateOf(false) }
-                    var otherTileSelected by remember { mutableStateOf(false) }
-                    var noAlertsSelected by remember { mutableStateOf(false) }
-                    val showNoAlertsTile = frigateFeed?.noRecentAlerts == true && bottomRow
-                    // Worked out before the tile is removed, when focus is still known to be on it
-                    val lostNoAlertsTile = remember(showNoAlertsTile) { !showNoAlertsTile && noAlertsSelected }
-                    val alertsExist = frigateFeed != null && frigateFeed.rowAlerts.isNotEmpty()
-                    // Above the rows, the row of alerts is what shows below
-                    var middleSelected by remember { mutableStateOf(false) }
-                    LaunchedEffect(hasAlertsRow, topBarSelected, middleSelected) {
-                        if (hasAlertsRow && (topBarSelected || middleSelected)) alertsRowShown = true
-                    }
-                    // When alerts arrive or the Cameras tab opens, the selection on the first tile goes to the row
-                    var alertsRowDue by remember { mutableStateOf(false) }
-                    LaunchedEffect(alertsExist) { if (alertsExist) alertsRowDue = true }
-                    LaunchedEffect(tab) { if (tab == HomeTab.Cameras) alertsRowDue = true }
-                    LaunchedEffect(showNoAlertsTile) {
-                        if (lostNoAlertsTile && (!alertsExist || tab == HomeTab.Alerts)) goToFirstTile++
-                    }
-                    LaunchedEffect(alertsRowDue, hasAlertsRow) {
-                        if (!alertsRowDue || !hasAlertsRow) return@LaunchedEffect
-                        // Not from another tile or the row below: those are in use
-                        if (!otherTileSelected && !watchNextActive && (tilesRowSelected || lostNoAlertsTile)) {
-                            alertsRowShown = true
-                            withFrameNanos { } // let the row lay out, so its first card is focusable
-                            runCatching { alertsRowFocus.requestFocus() }
-                        }
-                        alertsRowDue = false
-                    }
+                    var fullScreenCamera by remember { mutableStateOf<Camera?>(null) }
                     // Where up goes from the bottom rows, from the item on screen in this 0-based slot
                     fun aboveRows(slot: Int) = when {
                         // What's above moves sideways: the nearest card or the camera
-                        tab == HomeTab.Home && homeStrip -> FocusRequester.Default
-                        tab == HomeTab.Home && sideContent && (camera == null || slot >= FIRST_SLOT_UNDER_PANEL) -> haSensorsFocus
+                        tab == HomeTab.Home && (camera == null || slot >= FIRST_SLOT_UNDER_PANEL) -> haSensorsFocus
                         slot < FIRST_SLOT_UNDER_PANEL && tab == HomeTab.Home && camera != null -> mainCameraFocus
                         else -> FocusRequester.Default
                     }
@@ -384,6 +338,13 @@ class MainActivity : ComponentActivity() {
                                 onOpenHomeAssistant = { haDialogOpen = true },
                                 onOpenFrigate = { frigateOpen = true },
                                 onOpenLauncherSettings = { launcherSettingsOpen = true },
+                                webEditorEnabled = dashboardEditorEnabled,
+                                onToggleWebEditor = {
+                                    if (dashboardEditorEnabled) {
+                                        dashboardEditorEnabled = false
+                                        dashboardEditorInfoOpen = false
+                                    } else openDashboardEditor()
+                                },
                                 modifier = Modifier.focusRequester(cogFocus),
                             )
                         }
@@ -401,7 +362,7 @@ class MainActivity : ComponentActivity() {
                                 selectCamera = gridCameraDue,
                                 onCameraSelected = { gridCameraDue = null },
                                 onCameraFocused = { gridFocusedCamera = it },
-                                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
+                                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding),
                             )
                         } else if (tab == HomeTab.Alerts) {
                             FrigateAlertsGrid(
@@ -416,12 +377,13 @@ class MainActivity : ComponentActivity() {
                                 entityIds = haEntities,
                                 dashboard = haDisplay.dashboard.takeIf { dashboardLayouts.assistant == null },
                                 customLayout = dashboardLayouts.assistant,
+                                homeFocusRequest = focusAssistantSurface,
                                 layout = haDisplay.layout,
                                 tabFocus = assistantTabFocus,
                                 onSetUp = openDashboardSetup,
                                 sectionColumns = haDisplay.sectionColumns,
                                 toScreenEdge = !bottomShown,
-                                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
+                                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding),
                             )
                         } else {
                             // The camera, stopped before a clip opens, so the clip can have its decoder
@@ -431,7 +393,7 @@ class MainActivity : ComponentActivity() {
                                     if (camera != null && !(minimizeVideoStreams && frigateFeed?.playing != null)) {
                                         // Restarted when the panel appears or goes: the playing video
                                         // doesn't follow the camera's new size otherwise
-                                        key(sideContent) {
+                                        key(Unit) {
                                             MainCamera(
                                                 camera = camera,
                                                 cameras = cameras,
@@ -447,119 +409,39 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            val homeEntities = remember(haEntities) { haEntities.filterNot(::isHaAction) }
-                            if (homeStrip) {
-                                // A dashboard in columns: the camera and the columns in one row that
-                                // scrolls sideways to the screen's right edge, the camera leaving on
-                                // the left as Right brings in more columns
-                                BoxWithConstraints(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxWidth()
-                                        .padding(top = EdgePadding)
-                                        .onFocusChanged { middleSelected = it.hasFocus },
-                                ) {
-                                    // As large as when next to the panel
-                                    val columnWidth = dashboardColumnWidth(maxWidth - EdgePadding * 2)
-                                    val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - EdgePadding * 2 - PanelItemSpacing - columnWidth)
-                                        .coerceAtLeast(0.dp)
-                                    val custom = dashboardLayouts.home
-                                    if (custom != null) {
-                                        Row(
-                                            Modifier.fillMaxSize().padding(horizontal = EdgePadding),
-                                            horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
-                                        ) {
-                                            if (camera != null) CameraBox(cameraWidth)
-                                            HaAssistantTab(
-                                                connection = haConnection,
-                                                homeAssistantSet = haServer.isSet,
-                                                entityIds = homeEntities,
-                                                dashboard = null,
-                                                customLayout = custom,
-                                                tabFocus = networkFocus,
-                                                onSetUp = { haDialogOpen = true },
-                                                inset = 0.dp,
-                                                modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(haSensorsFocus),
-                                            )
-                                        }
-                                    } else {
-                                        HaAssistantTab(
-                                            connection = haConnection,
-                                            homeAssistantSet = haServer.isSet,
-                                            entityIds = homeEntities,
-                                            dashboard = haDisplay.homeDashboard,
-                                            layout = haDisplay.homeLayout,
-                                            // The button next to the cog
-                                            tabFocus = networkFocus,
-                                            onSetUp = openDashboardSetup,
-                                            sectionColumns = true,
-                                            leading = camera?.let {
-                                                LeadingItem(cameraWidth, cameraWidth * 9f / 16f) { CameraBox(cameraWidth) }
-                                            },
-                                            columnsFocus = haSensorsFocus,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                    }
-                                }
-                            } else {
-                                // The camera, as large as fits above the app row, and Home Assistant
-                                // next to it, which gets all the width the camera leaves
-                                BoxWithConstraints(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxWidth()
-                                        .padding(start = EdgePadding, top = EdgePadding, end = EdgePadding)
-                                        .onFocusChanged { middleSelected = it.hasFocus },
-                                ) {
-                                    val columnWidth = dashboardColumnWidth(maxWidth)
-                                    val cameraWidth = minOf(
-                                        maxHeight * 16f / 9f,
-                                        if (sideContent) maxWidth - columnWidth - EdgePadding else maxWidth,
-                                    ).coerceAtLeast(0.dp)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
-                                        if (camera != null) CameraBox(cameraWidth)
-                                        if (sideContent && (haDisplay.homeDashboard != null || dashboardLayouts.home != null)) {
-                                            // A dashboard chosen for the Home tab: its sections, card by card
-                                            HaAssistantTab(
-                                                connection = haConnection,
-                                                homeAssistantSet = haServer.isSet,
-                                                entityIds = homeEntities,
-                                                dashboard = haDisplay.homeDashboard.takeIf { dashboardLayouts.home == null },
-                                                customLayout = dashboardLayouts.home,
-                                                layout = haDisplay.homeLayout,
-                                                // The button next to the cog
-                                                tabFocus = networkFocus,
-                                                onSetUp = openDashboardSetup,
-                                                inset = 0.dp,
-                                                fixedColumnWidth = columnWidth,
-                                                modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(haSensorsFocus),
-                                            )
-                                        } else if (sideContent) {
-                                            Box(modifier = Modifier.width(columnWidth).fillMaxHeight()) {
-                                                HomeAssistantPanel(
-                                                    connection = haConnection,
-                                                    entityIds = homeEntities,
-                                                    layout = haDisplay.homeLayout,
-                                                    sensorsFocus = haSensorsFocus,
-                                                    // The button next to the cog
-                                                    upFocus = networkFocus,
-                                                    onLogIn = { haDialogOpen = true },
-                                                    onOpen = {
-                                                        tab = HomeTab.Assistant
-                                                        runCatching { assistantTabFocus.requestFocus() }
-                                                    },
-                                                    modifier = Modifier.fillMaxSize(),
-                                                )
-                                            }
-                                        }
-                                    }
+                            BoxWithConstraints(
+                                Modifier.weight(1f).fillMaxWidth()
+                                    .padding(start = EdgePadding, top = EdgePadding, end = EdgePadding)
+,
+                            ) {
+                                val columnWidth = dashboardColumnWidth(maxWidth)
+                                val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - columnWidth - EdgePadding)
+                                    .coerceAtLeast(0.dp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
+                                    if (camera != null) CameraBox(cameraWidth)
+                                    HaAssistantTab(
+                                        connection = haConnection,
+                                        homeAssistantSet = haServer.isSet,
+                                        entityIds = emptyList(),
+                                        dashboard = null,
+                                        customLayout = homeLayout,
+                                        homeFocusRequest = focusHomeSurface,
+                                        renderApps = { card, target, height, neighbor ->
+                                            DashboardAppsCard(card, all.orEmpty(), target, height, lastApp, neighbor,
+                                                { lastApp = it }, { allAppsOpen = true })
+                                        },
+                                        tabFocus = networkFocus,
+                                        onSetUp = openDashboardSetup,
+                                        inset = 0.dp,
+                                        modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(haSensorsFocus),
+                                    )
                                 }
                             }
                         }
-                        // Hidden on the Assistant tab unless chosen or the selection is on them: its
+                        // Previews can hide on the Assistant tab until reached by focus. Its
                         // cards then take the whole height. They slide up from the screen's edge,
                         // placed below it while hidden, where only Down finds them.
-                        Column(
+                        if (alertsRowFeed?.rowAlerts?.isNotEmpty() == true) Column(
                             Modifier
                                 .onFocusChanged { if (!bottomRow) bottomRevealed = it.hasFocus }
                                 .clipToBounds()
@@ -570,75 +452,20 @@ class MainActivity : ComponentActivity() {
                         ) {
                             // The tiles' grow room counts towards the margins above and below the row
                             Spacer(Modifier.height(EdgePadding - TileGrowRoom))
-                            SlidingRows(
-                                revealed = watchNextActive,
-                                aboveRevealed = alertsRowShown && hasAlertsRow && !watchNextActive,
-                                above = {
-                                    if (alertsRowFeed != null) {
+                            Column {
+                                    if (alertsRowFeed != null && alertsRowFeed.rowAlerts.isNotEmpty()) {
                                         FrigateAlertsRow(
                                             feed = alertsRowFeed,
-                                            shown = alertsRowShown,
+                                            shown = true,
                                             firstCardFocus = alertsRowFocus,
                                             upFocus = ::aboveRows,
-                                            downFocus = appRowFocus,
-                                            onEnter = { alertsRowShown = true },
-                                            onLeave = { goToFirstTile++ },
+                                            downFocus = FocusRequester.Default,
+                                            onEnter = {},
+                                            onLeave = { runCatching { haSensorsFocus.requestFocus() } },
                                         )
                                     }
-                                },
-                                first = {
-                                    AppRowSpace(Modifier.onFocusChanged { tilesRowSelected = it.hasFocus }) {
-                                        if (visible != null) AppRow(
-                                            apps = visible,
-                                            dockKeys = dockKeys,
-                                            onOpenAllApps = { allAppsOpen = true },
-                                            onHide = { app -> setDockAppVisible(app, false) },
-                                            onReorder = ::saveDockOrder,
-                                            upFocus = { slot ->
-                                                when {
-                                                    hasAlertsRow -> alertsRowFocus
-                                                    else -> aboveRows(slot)
-                                                }
-                                            },
-                                            watchNextApps = watchNextByPackage.keys,
-                                            watchNextFocus = watchNextFocus,
-                                            onWatchNextSource = { key, requester ->
-                                                if (key != watchNextSource?.first) watchNextActive = false
-                                                watchNextSource = if (key != null && requester != null) key to requester else null
-                                            },
-                                            rowFocus = appRowFocus,
-                                            goToFirstTile = goToFirstTile,
-                                            onFirstTileSelected = { firstTileSelected = it },
-                                            onOtherTileSelected = { otherTileSelected = it },
-                                            showNoAlertsTile = showNoAlertsTile,
-                                            onNoAlertsSelected = { noAlertsSelected = it },
-                                            onNoAlertsClick = {
-                                                tab = HomeTab.Alerts
-                                                runCatching { alertsTabFocus.requestFocus() }
-                                            },
-                                            modifier = Modifier.onFocusChanged { if (it.hasFocus) alertsRowShown = false },
-                                        ) else AppRowPlaceholder()
-                                    }
-                                },
-                                second = {
-                                    if (watchNextApp != null && source != null) {
-                                        key(watchNextApp.key) {
-                                            WatchNextRow(
-                                                items = watchNextItems,
-                                                app = watchNextApp,
-                                                firstCardFocus = watchNextFocus,
-                                                upFocus = source.second,
-                                                onActiveChange = { watchNextActive = it },
-                                                onHide = {
-                                                    hiddenWatchNext = hiddenWatchNext + it.hideKey
-                                                    prefs.hiddenWatchNext = hiddenWatchNext
-                                                },
-                                                onLeave = ::returnToWatchNextApp,
-                                            )
-                                        }
-                                    }
-                                },
-                            )
+
+                            }
                             Spacer(Modifier.height(EdgePadding - TileGrowRoom))
                         }
                     }
@@ -678,7 +505,7 @@ class MainActivity : ComponentActivity() {
                         HomeAssistantDialog(
                             initialServer = haServer,
                             initialUsername = remember { prefs.haUsername },
-                            onEditDashboard = { dashboardEditorOpen = true },
+                            onEditDashboard = ::openDashboardEditor,
                             initialTopBar = haTopBar,
                             loginRejected = haConnection.status == HaStatus.TokenRejected,
                             onSave = { server, username, topBar ->
@@ -696,17 +523,24 @@ class MainActivity : ComponentActivity() {
                             onDismiss = { haDialogOpen = false },
                         )
                     }
-                    if (dashboardEditorOpen) {
-                        DashboardEditorDialog(
+                    if (dashboardEditorEnabled) {
+                        DashboardEditor(
                             haServer = haServer,
-                            layouts = { dashboardLayouts },
+                            layouts = { dashboardLayouts.copy(home = homeLayout) },
+                            installedApps = all.orEmpty(),
                             canRestore = { prefs.previousDashboardLayouts != null },
                             legacyDisplay = haDisplay,
                             legacyEntities = haEntities,
                             cameraVisible = camera != null,
                             save = ::saveDashboardLayouts,
                             restore = { prefs.previousDashboardLayouts?.let(::saveDashboardLayouts) },
-                            onDismiss = { dashboardEditorOpen = false },
+                            showInfo = dashboardEditorInfoOpen,
+                            onDismissInfo = { dashboardEditorInfoOpen = false },
+                            onStartFailed = { message ->
+                                dashboardEditorEnabled = false
+                                dashboardEditorInfoOpen = false
+                                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                            },
                         )
                     }
                     if (frigateOpen) {
@@ -723,7 +557,7 @@ class MainActivity : ComponentActivity() {
                         LauncherSettingsDialog(
                             onEditDashboard = {
                                 launcherSettingsOpen = false
-                                dashboardEditorOpen = true
+                                openDashboardEditor()
                             },
                             catchHomeKey = catchHomeKey,
                             reopenAfterHome = reopenAfterHome,
@@ -737,16 +571,6 @@ class MainActivity : ComponentActivity() {
                                 homeOverrideChanged()
                             },
                             showFreeMemory = showFreeMemory,
-                            dockApps = visible.orEmpty(),
-                            dockKeys = dockKeys,
-                            hiddenDockApps = hiddenApps.orEmpty(),
-                            showAllAppsTile = showAllAppsTile,
-                            onShowAllAppsTileChange = {
-                                showAllAppsTile = it
-                                prefs.showAllAppsTile = it
-                            },
-                            onDockReorder = ::saveDockOrder,
-                            onDockVisibilityChange = ::setDockAppVisible,
                             artworkSettings = artworkSettings,
                             artworkToken = artworkToken,
                             onArtworkEnabled = { enabled ->
@@ -785,18 +609,14 @@ class MainActivity : ComponentActivity() {
                                 actions = (haEntities.filter(::isHaAction) + haTopBar).distinct().map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
                                 order = haEntities,
                                 topBar = haTopBar,
-                                dashboards = dashboardLayouts.takeIf { it.assistant != null || it.home != null },
+                                dashboards = dashboardLayouts.copy(home = homeLayout),
                                 frigate = frigate.takeIf { it.isSet },
-                                appTiles = dockKeys.mapNotNull { key ->
-                                    if (key == ALL_APPS_TILE_KEY) NamedEntity(key, "All apps")
-                                    else visible?.firstOrNull { it.key == key }?.let { NamedEntity(key, it.label) }
-                                },
                             ),
                             onDismiss = { exportOpen = false },
                         )
                     }
                     if (importOpen) {
-                        ImportDialog(onImport = ::applyImport, onDismiss = { importOpen = false })
+                        ImportDialog(onImport = { applyImport(it, homeLayout) }, onDismiss = { importOpen = false })
                     }
                     if (networkStatusOpen) {
                         NetworkStatusDialog(
@@ -832,7 +652,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Adds what's in the file. A camera whose name is already taken gets "(imported)" after its name. */
-    private fun applyImport(file: SettingsFile) {
+    private fun applyImport(file: SettingsFile, currentHome: DashboardLayout) {
         // The same camera, by its exact addresses, only takes the imported name. Each camera here
         // matches one in the file; any more copies in the file aren't added.
         val sameUrls = { a: Camera, b: Camera -> a.url == b.url && a.substreamUrl == b.substreamUrl }
@@ -870,21 +690,23 @@ class MainActivity : ComponentActivity() {
         val imported = file.order ?: (file.sensors.map { it.id } + fileActions)
         val entities = (haEntities + imported).distinct()
         saveHaChoice(entities, (haTopBar + (file.topBar ?: fileActions.take(MAX_HA_ACTIONS))).distinct().filter(::isHaAction).take(MAX_HA_ACTIONS))
-        file.dashboards?.let { importedLayouts ->
+        val incoming = file.dashboards
+        val importedHome = incoming?.home
+        val importedAssistant = incoming?.assistant
+        if (incoming != null || file.appTiles.isNotEmpty()) {
+            val importedApps = file.appTiles.map { it.id }.distinct()
+            val home = when {
+                importedHome != null -> importedHome
+                importedApps.isNotEmpty() -> currentHome.replaceApps(importedApps)
+                else -> currentHome
+            }
+            val assistant = importedAssistant ?: dashboardLayouts.assistant
             saveDashboardLayouts(DashboardLayouts(
-                importedLayouts.assistant ?: dashboardLayouts.assistant,
-                importedLayouts.home ?: dashboardLayouts.home,
+                if (importedHome?.hasHomeFocus == true) assistant?.withoutHomeFocus() else assistant,
+                if (importedAssistant?.hasHomeFocus == true) home.withoutHomeFocus() else home,
             ))
         }
         file.frigate?.let(::saveFrigate)
-        // The row becomes the apps in the file that are on this TV; the others can be unhidden later
-        val apps = installed.orEmpty().map { it.key }
-        val importedDock = file.appTiles.map { it.id }.filter { it in apps || it == ALL_APPS_TILE_KEY }.distinct()
-        val shown = importedDock - ALL_APPS_TILE_KEY
-        if (shown.isNotEmpty()) {
-            val tileOrder = if (ALL_APPS_TILE_KEY in importedDock) importedDock else dockTileKeys(shown, order, true)
-            saveDockLayout(tileOrder, (hidden + apps).distinct() - shown.toSet())
-        }
         Toast.makeText(this, "Settings imported", Toast.LENGTH_SHORT).show()
     }
 
@@ -915,31 +737,6 @@ class MainActivity : ComponentActivity() {
         pruneCameraSnapshots(this, value.flatMap { listOf(it.url, it.substreamUrl) })
     }
 
-    private fun saveDockOrder(keys: List<String>) {
-        saveOrder(if (showAllAppsTile) keys else dockTileKeys(keys, order, true))
-    }
-
-    private fun setDockAppVisible(app: InstalledApp, visible: Boolean) {
-        val appKeys = dockTileKeys(arrange(installed.orEmpty(), order, hidden).map { it.key }, order, true)
-        if (visible) {
-            // Unhidden apps return at the end of the visible dock.
-            saveDockLayout((appKeys - app.key) + app.key, hidden - app.key)
-        } else {
-            saveDockLayout(appKeys - app.key, (hidden - app.key) + app.key)
-        }
-    }
-
-    private fun saveOrder(value: List<String>) {
-        order = value
-        prefs.order = value
-    }
-
-    private fun saveDockLayout(visibleKeys: List<String>, hiddenKeys: List<String>) {
-        order = visibleKeys
-        hidden = hiddenKeys
-        prefs.saveDockLayout(visibleKeys, hiddenKeys)
-    }
-
     private fun homeOverrideChanged() {
         prefs.replaceHomeAutoOff = false
         updateReplaceHome()
@@ -952,6 +749,11 @@ class MainActivity : ComponentActivity() {
         showFreeMemory = prefs.showFreeMemory
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.action == ACTION_FOCUS_HAL_HOME) homeFocusRequest++
+    }
+
     override fun onResume() {
         super.onResume()
         resumed = true
@@ -959,7 +761,7 @@ class MainActivity : ComponentActivity() {
         updateReplaceHome()
         window.decorView.postDelayed(confirmStarted, 2_000)
         // Refresh in the background (apps may have been installed or removed meanwhile);
-        // the current row stays on screen until the new list is ready
+        // the Apps card keeps its current tiles until the new list is ready
         lifecycleScope.launch {
             val apps = withContext(Dispatchers.IO) { loadInstalledApps(this@MainActivity) }
             if (apps != installed) prefs.installedApps = apps
@@ -988,9 +790,9 @@ class MainActivity : ComponentActivity() {
         window.decorView.removeCallbacks(confirmStarted)
     }
 
-    override fun onStop() {
-        dashboardEditorOpen = false
-        super.onStop()
+    private fun openDashboardEditor() {
+        dashboardEditorInfoOpen = true
+        dashboardEditorEnabled = true
     }
 
     override fun onDestroy() {

@@ -36,6 +36,8 @@ fun SettingsButton(
     onOpenHomeAssistant: () -> Unit,
     onOpenFrigate: () -> Unit,
     onOpenLauncherSettings: () -> Unit,
+    webEditorEnabled: Boolean,
+    onToggleWebEditor: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -56,14 +58,12 @@ fun SettingsButton(
                 // The cog says what it is
                 title = null,
                 actions = listOf(
-                    // The system Settings app has no tile in the row, so it's reachable from here
-                    MenuAction(if (context.isGoogleTv()) "Google TV settings" else "Android TV settings") {
-                        context.openSystemSettings()
-                    },
-                    MenuAction("HAL settings", onOpenLauncherSettings),
-                    MenuAction("Cameras", onOpenCameras),
+                    MenuAction("HAL", onOpenLauncherSettings),
                     MenuAction("Home Assistant", onOpenHomeAssistant),
+                    MenuAction("Cameras", onOpenCameras),
                     MenuAction("Frigate", onOpenFrigate),
+                    MenuAction("Android TV") { context.openSystemSettings() },
+                    MenuAction("Enable Web Editor", webEditorEnabled, onToggleWebEditor),
                 ),
                 onDismiss = { menuOpen = false },
                 placement = MenuPlacement.BelowAtRightMargin,
@@ -71,9 +71,6 @@ fun SettingsButton(
         }
     }
 }
-
-/** Google TV rather than plain Android TV: Google TV devices declare this feature */
-private fun Context.isGoogleTv() = packageManager.hasSystemFeature("com.google.android.feature.AMATI_EXPERIENCE")
 
 /**
  * The name of a round top bar button, for inside a box of the button's size while the remote is on

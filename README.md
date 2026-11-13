@@ -9,23 +9,22 @@ Project repository: https://github.com/Mongjohn/HAL
 - **Cameras:** RTSP cameras in H.264 or H.265, with an optional substream for the grid. It plays as many live as your TV can decode, and shows the rest as their last picture.
 - **Home Assistant:** build dashboards for the Assistant tab and the Home panel with sensors, weather, scenes and scripts. Up to three scenes or scripts can also appear as buttons in the launcher top bar.
 - **Frigate alerts:** the last seven days of alerts, with clips that play full screen.
-- **Watch Next:** a down chevron below a dock tile means the app has shared Watch Next cards with Android TV. Press Down for its cards and OK to open the content.
-- **App row:** move tiles, hide them, see app info or uninstall.
-- **Home button helper:** optionally makes the Home button bring you to HAL.
+- **Apps card:** choose and arrange the Android apps on HAL Home in the web editor. Use the remote to focus and launch individual app tiles.
+- **Home button helper:** optionally makes the Home button bring you to HAL. Choose one dashboard card in the web editor to receive focus.
 - **TV to TV:** send your settings to another TV on your network.
 - **Diagnostics:** a built-in ping tool, network status, and debug logs with logins and tokens stripped out.
 
-Cameras, Home Assistant and Frigate are all optional. HAL shows your apps and any Watch Next cards they share with Android TV.
+Cameras, Home Assistant and Frigate are all optional. HAL shows your selected apps on the Home tab.
 
 ## Privacy
 
-HAL has no account or analytics. Its dashboard editor uses a temporary HTTP server on the TV. The app connects to the addresses you enter, to other TVs on your network when you transfer settings, and to the artwork URLs supplied by apps that publish Watch Next cards. Your Home Assistant password isn't stored: the TV keeps a login you can revoke from your Home Assistant profile.
+HAL has no account or analytics. Its dashboard editor uses a temporary HTTP server on the TV. The app connects to the addresses you enter, to other TVs on your network when you transfer settings, and to the artwork URLs supplied by apps through Android TV. Your Home Assistant password isn't stored: the TV keeps a login you can revoke from your Home Assistant profile.
 
 ## Edit dashboards
 
-On the TV, open the cog → **HAL settings** → **Edit dashboard in browser**. Scan the QR code or open the displayed HTTP address on port 8765 from a phone or computer on the same Wi-Fi or Ethernet network. Choose the Assistant tab or Home panel, arrange and resize cards, and select their entities. Open **Friendly name** next to an entity in a card to set the name HAL uses throughout that surface. Use a Home Assistant dashboard as a template to start with a copy you can edit independently. Select **Apply to TV** to save the current surface.
+On the TV, open the Settings cog and turn on **Enable Web Editor**. Scan the QR code or open the displayed HTTP address on port 8765 from a phone or computer on the same Wi-Fi or Ethernet network. Choose the Assistant tab or Home panel, arrange and resize cards, and select their entities. Open **Friendly name** next to an entity in a card to set the name HAL uses throughout that surface. Use a Home Assistant dashboard as a template to start with a copy you can edit independently. Select **Apply to TV** to save the current surface.
 
-The editor is accessible on the local network without pairing while it is enabled. HAL keeps the TV awake during the session. Select **Stop editing** on the TV to close it. It also closes when HAL leaves the screen or after 15 minutes without browser activity.
+The editor is accessible on the local network without pairing while it is enabled. Closing the QR popup leaves the listener running and HAL keeps the screen awake while in the foreground. Toggle **Enable Web Editor** off in the cog menu to stop the listener.
 
 ## Requirements
 
