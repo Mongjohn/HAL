@@ -148,8 +148,23 @@ class LauncherPrefs(context: Context) {
     val haTopBar: List<String>
         get() = if (prefs.contains("ha_top_bar")) readList("ha_top_bar") else oldHaActions().take(MAX_HA_ACTIONS)
 
+    val dashboardLayouts get() = readDashboardLayouts("dashboard_layouts") ?: DashboardLayouts()
+    val previousDashboardLayouts get() = readDashboardLayouts("dashboard_layouts_previous")
+
+    private fun readDashboardLayouts(key: String): DashboardLayouts? =
+        prefs.getString(key, null)?.let { raw ->
+            runCatching { DashboardLayouts.fromJson(org.json.JSONObject(raw)) }.getOrNull()
+        }
+
+    fun saveDashboardLayouts(value: DashboardLayouts, previous: DashboardLayouts) {
+        prefs.edit()
+            .putString("dashboard_layouts", value.toJson().toString())
+            .putString("dashboard_layouts_previous", previous.toJson().toString())
+            .apply()
+    }
+
     /** What the Assistant tab and the Home tab's panel show of Home Assistant */
-    var haDisplay: HaDisplay
+    val haDisplay: HaDisplay
         get() = HaDisplay(
             dashboard = prefs.getString("ha_dashboard", null),
             bottomRow = prefs.getBoolean("ha_bottom_row", false),
@@ -159,17 +174,6 @@ class LauncherPrefs(context: Context) {
             layout = readHaLayout("ha_layout"),
             homeLayout = readHaLayout("ha_home_layout"),
         )
-        set(value) = prefs.edit {
-            if (value.dashboard == null) remove("ha_dashboard") else putString("ha_dashboard", value.dashboard)
-            putBoolean("ha_bottom_row", value.bottomRow)
-            putBoolean("ha_section_columns", value.sectionColumns)
-            if (value.homeDashboard == null) remove("ha_home_dashboard") else putString("ha_home_dashboard", value.homeDashboard)
-            putBoolean("ha_home_columns", value.homeColumns)
-            putHaLayout("ha_layout", value.layout)
-            putHaLayout("ha_home_layout", value.homeLayout)
-            // The bottom row's first version, which only hid the alerts row
-            remove("ha_alerts_row")
-        }
 
     private fun readHaLayout(key: String) = HaCardLayout(
         grouping = HaCardGrouping.entries.firstOrNull { it.name == prefs.getString("${key}_grouping", null) }
@@ -177,12 +181,6 @@ class LauncherPrefs(context: Context) {
         alphabetical = prefs.getBoolean("${key}_alphabetical", false),
         twoPerRow = prefs.getBoolean("${key}_two_per_row", false),
     )
-
-    private fun SharedPreferences.Editor.putHaLayout(key: String, layout: HaCardLayout) {
-        putString("${key}_grouping", layout.grouping.name)
-        putBoolean("${key}_alphabetical", layout.alphabetical)
-        putBoolean("${key}_two_per_row", layout.twoPerRow)
-    }
 
     // Together: before the top bar was a choice of its own, the actions were in another list
     fun saveHaChoice(entities: List<String>, topBar: List<String>) {

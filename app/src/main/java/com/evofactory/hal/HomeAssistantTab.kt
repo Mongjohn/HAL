@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -260,6 +261,7 @@ fun HaAssistantTab(
     leading: LeadingItem? = null,
     // Selects the cards, as a group: up from the tiles on the Home tab
     columnsFocus: FocusRequester? = null,
+    customLayout: DashboardLayout? = null,
 ) {
     val board = connection.dashboard(dashboard)
     val missing = connection.dashboardMissing(dashboard)
@@ -267,8 +269,8 @@ fun HaAssistantTab(
     val prompt = when {
         !homeAssistantSet -> null to "Set up Home Assistant"
         connection.status == HaStatus.TokenRejected -> "Home Assistant rejected the login" to "Log in again"
-        board == null && !reading && entityIds.isEmpty() ->
-            (if (missing) "This dashboard is built by Home Assistant itself, with nothing to read" else null) to "Choose entities"
+        customLayout == null && board == null && !reading && entityIds.isEmpty() ->
+            (if (missing) "This dashboard is built by Home Assistant itself, with nothing to read" else null) to "Edit dashboard in browser"
         else -> null
     }
     if (prompt != null) {
@@ -285,16 +287,19 @@ fun HaAssistantTab(
         return
     }
     val entities = connection.entities
-    var viewIndex by remember(board) { mutableIntStateOf(0) }
+    var viewIndex by remember(board, customLayout) { mutableIntStateOf(0) }
     // With something before the columns (the Home tab's camera), every view's cards follow each
     // other, without the views' names above them
-    val views = board?.views.orEmpty().let { all ->
+    val views = (customLayout?.pages?.map { DashboardView(it.title, it.cards.map(DashboardCard::card)) } ?: board?.views.orEmpty()).let { all ->
         if (leading != null && all.size > 1) listOf(DashboardView(all.first().title, all.flatMap { it.cards })) else all
     }
     val viewTabs = remember(views.size) { List(views.size) { FocusRequester() } }
-    val cards = if (board != null) views.getOrNull(viewIndex)?.cards.orEmpty() else layout.selectionCards(entityIds, entities)
-    val rowsByCard = cards.associate { it.key to it.entityRows(layout.twoPerRow) }
-    val names = board?.names.orEmpty()
+    val page = customLayout?.pages?.getOrNull(viewIndex)
+    val cards = if (board != null || customLayout != null) views.getOrNull(viewIndex)?.cards.orEmpty() else layout.selectionCards(entityIds, entities)
+    val cardOptions = page?.cards.orEmpty().associateBy { it.card.key }
+    val rowsByCard = cards.associate { it.key to it.entityRows(cardOptions[it.key]?.twoPerRow ?: layout.twoPerRow) }
+    val aliases = customLayout?.aliases.orEmpty()
+    val names = (customLayout?.names ?: board?.names.orEmpty()) + aliases
     // Up from the top cards: to the views, if there are several, else to the tab
     val cardsUp = viewTabs.getOrNull(viewIndex)?.takeIf { views.size > 1 } ?: tabFocus
     // Roughly in rows of sensors: a weather takes about 5, with its next hours, and a heading 1
@@ -376,7 +381,7 @@ fun HaAssistantTab(
             @Composable
             fun Card(card: SensorCard, up: FocusRequester?, window: CardWindow?, minHeight: Dp? = null, maxHeight: Dp? = null) {
                 // Selection's weather cards have the weather's name as title, which its reading says already
-                val weather = card.ids.first().takeIf { card.isWeather && board == null }
+                val weather = card.ids.firstOrNull()?.takeIf { card.isWeather && board == null && customLayout == null }
                 val rows = rowsByCard.getValue(card.key)
                 val buttonRows = rows.flatMapIndexed { row, positions ->
                     positions.filter { isInteractive(card.ids[it]) }.map { row }
@@ -394,9 +399,33 @@ fun HaAssistantTab(
                     if (weather != null) {
                         WeatherReading(entities[weather], connection.hourly[weather], connection.daily[weather])
                     } else {
-                        CardContent(card, rows, connection, names, entered == card.key, raised, firstButton, onButtonFocused)
+                        CardContent(card, rows, connection, names, aliases, entered == card.key, raised, firstButton, onButtonFocused)
                     }
                 }
+            }
+            if (page != null) {
+                val gap = minOf(PanelItemSpacing, width.coerceAtLeast(0.dp) / (page.columns * 2))
+                val cell = ((width - gap * (page.columns - 1)) / page.columns).coerceAtLeast(0.dp)
+                val step = 48.dp + gap
+                val rows = page.cards.maxOfOrNull { it.y + it.height } ?: 0
+                CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
+                    Box(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = inset, vertical = CardPeek)) {
+                        Box(Modifier.fillMaxWidth().height(step * rows)) {
+                            page.cards.sortedWith(compareBy(DashboardCard::y, DashboardCard::x)).forEach { item ->
+                                key(item.card.key) {
+                                    val height = step * item.height - gap
+                                    Box(
+                                        Modifier.offset((cell + gap) * item.x, step * item.y)
+                                            .width((cell + gap) * item.width - gap),
+                                    ) {
+                                        Card(item.card, cardsUp.takeIf { item.y == 0 }, null, height, height)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return@BoxWithConstraints
             }
             if (sectionColumns) {
                 SectionColumns(cards, viewIndex, bottom, inset, cardsUp, leading, columnsFocus, columnWidth) { card, up, columnWindow, minHeight, maxHeight ->
@@ -872,6 +901,7 @@ private fun CardContent(
     connection: HaConnection,
     // The names a dashboard's cards give entities, in place of their own
     names: Map<String, String>,
+    aliases: Map<String, String>,
     entered: Boolean,
     raised: Boolean,
     firstButton: FocusRequester,
@@ -883,7 +913,7 @@ private fun CardContent(
     fun Entity(id: String) {
         val index = interactive.indexOf(id)
         card.graphs[id]?.let { graph ->
-            HistoryGraph(connection, graph, names)
+            HistoryGraph(connection, graph, names, aliases)
             return
         }
         if (isHaWeather(id)) {

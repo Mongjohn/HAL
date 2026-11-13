@@ -89,7 +89,7 @@ private const val HISTORY_REFRESH_MS = 5 * 60_000L
  * states in words) as a bar per entity, colored by state over time
  */
 @Composable
-fun HistoryGraph(connection: HaConnection, graph: HaGraph, names: Map<String, String>) {
+fun HistoryGraph(connection: HaConnection, graph: HaGraph, names: Map<String, String>, aliases: Map<String, String>) {
     val session = connection.session
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val start = now - (graph.hours * 3_600_000).roundToLong()
@@ -159,12 +159,12 @@ fun HistoryGraph(connection: HaConnection, graph: HaGraph, names: Map<String, St
         charts.forEach { chart ->
             LineChart(chart, start, now, labelWidth)
             chart.entities.forEach { (entity, color) ->
-                SensorReading(entity.id, connection.entities[entity.id], entity.name ?: names[entity.id], iconColor = color)
+                SensorReading(entity.id, connection.entities[entity.id], aliases[entity.id] ?: entity.name ?: names[entity.id], iconColor = color)
             }
         }
         barEntities.forEach { entity ->
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SensorReading(entity.id, connection.entities[entity.id], entity.name ?: names[entity.id])
+                SensorReading(entity.id, connection.entities[entity.id], aliases[entity.id] ?: entity.name ?: names[entity.id])
                 val current = connection.entities[entity.id]
                 // Each state in words, as the entity's reading would say it, e.g. "Open" for a door
                 TimelineBar(series[entity.id].orEmpty(), start, now, colors.onSurface.copy(alpha = 0.12f)) { state ->

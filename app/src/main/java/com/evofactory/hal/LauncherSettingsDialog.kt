@@ -91,6 +91,7 @@ internal fun LauncherSettingsDialog(
     onCatchHomeKeyChange: (Boolean) -> Unit,
     onReopenAfterHomeChange: (Boolean) -> Unit,
     onShowFreeMemoryChange: (Boolean) -> Unit,
+    onEditDashboard: () -> Unit,
     onExport: () -> Unit,
     onImport: () -> Unit,
     onDismiss: () -> Unit,
@@ -106,7 +107,7 @@ internal fun LauncherSettingsDialog(
     // The item last on, to come back to from the top row
     val items = remember(tab) { ListFocus() }
     val itemKeys = when (tab) {
-        LauncherSettingsTab.Launcher -> listOf("catch", "reopen", "accessibility", "export", "import")
+        LauncherSettingsTab.Launcher -> listOf("catch", "reopen", "accessibility", "dashboard", "export", "import")
         LauncherSettingsTab.Dock -> listOf(ALL_APPS_OPTION) + dockKeys + hiddenDockApps.map { it.key }
         LauncherSettingsTab.Background -> listOf("artwork", "country", "tmdb-token", "save-catalog")
         LauncherSettingsTab.Advanced -> listOf("hours-", "hours+", "memory")
@@ -238,6 +239,10 @@ internal fun LauncherSettingsDialog(
         ) {
             Text(if (accessibilityScreen) "Open Accessibility settings" else "Open TV settings")
         }
+        OutlinedButton(
+            onClick = onEditDashboard,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).then(items.row("dashboard")).ringToTop(),
+        ) { Text("Edit dashboard in browser") }
         MenuDivider()
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),

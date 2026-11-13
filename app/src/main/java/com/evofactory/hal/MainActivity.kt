@@ -80,6 +80,8 @@ class MainActivity : ComponentActivity() {
     private var minimizeVideoStreams by mutableStateOf(false)
     private var selectedCamera by mutableStateOf("")
     private var tab by mutableStateOf(HomeTab.Home)
+    private var dashboardEditorOpen by mutableStateOf(false)
+    private var dashboardLayouts by mutableStateOf(DashboardLayouts())
     private var haDialogOpen by mutableStateOf(false)
     private var haServer by mutableStateOf(HaServer(""))
     // Everything on the Assistant tab in its order, and the actions also in the top bar
@@ -126,6 +128,7 @@ class MainActivity : ComponentActivity() {
         haEntities = prefs.haEntities
         haTopBar = prefs.haTopBar
         haDisplay = prefs.haDisplay
+        dashboardLayouts = prefs.dashboardLayouts
         frigate = prefs.frigate
         hiddenWatchNext = prefs.hiddenWatchNext
         artworkSettings = prefs.artworkSettings
@@ -181,9 +184,9 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     // The alerts, apps and Watch Next at the bottom: off on the Assistant tab
-                    // unless chosen in the Home Assistant dialog. Off, they slide in while the
+                    // unless enabled in the dashboard editor. Off, they slide in while the
                     // selection is on them, reached with Down from the cards.
-                    val bottomRow = tab != HomeTab.Assistant || haDisplay.bottomRow
+                    val bottomRow = tab != HomeTab.Assistant || (dashboardLayouts.assistant?.bottomRow ?: haDisplay.bottomRow)
                     var bottomRevealed by remember { mutableStateOf(false) }
                     val bottomShown = bottomRow || bottomRevealed
                     val bottomFraction by animateFloatAsState(if (bottomShown) 1f else 0f, label = "bottom rows")
@@ -199,9 +202,21 @@ class MainActivity : ComponentActivity() {
                             else -> goToFirstTile++
                         }
                     }
-                    // The top bar's, in their order on the Assistant tab, which has them all
-                    val actions = remember(haEntities, haTopBar) { haEntities.filter { it in haTopBar }.take(MAX_HA_ACTIONS) }
-                    val haConnection = rememberHaConnection(haServer, haEntities, haDisplay.dashboards)
+                    // The launcher top bar has its own action selection.
+                    val actions = haTopBar.take(MAX_HA_ACTIONS)
+                    val followed = remember(dashboardLayouts, haEntities, haTopBar) {
+                        (haTopBar + (dashboardLayouts.assistant?.entityIds ?: haEntities) +
+                            (dashboardLayouts.home?.entityIds ?: haEntities.filterNot(::isHaAction))).distinct()
+                    }
+                    val legacyBoards = listOfNotNull(
+                        haDisplay.dashboard.takeIf { dashboardLayouts.assistant == null },
+                        haDisplay.homeDashboard.takeIf { dashboardLayouts.home == null },
+                    ).distinct()
+                    val haConnection = rememberHaConnection(haServer, followed, legacyBoards)
+                    val openDashboardSetup: () -> Unit = {
+                        if (!haServer.isSet || haConnection.status == HaStatus.TokenRejected) haDialogOpen = true
+                        else dashboardEditorOpen = true
+                    }
                     val sideContent = haServer.isSet
                     // A dashboard in columns on the Home tab: the camera and the columns scroll sideways together
                     val homeStrip = sideContent && haDisplay.homeDashboard != null && haDisplay.homeColumns
@@ -399,10 +414,11 @@ class MainActivity : ComponentActivity() {
                                 connection = haConnection,
                                 homeAssistantSet = haServer.isSet,
                                 entityIds = haEntities,
-                                dashboard = haDisplay.dashboard,
+                                dashboard = haDisplay.dashboard.takeIf { dashboardLayouts.assistant == null },
+                                customLayout = dashboardLayouts.assistant,
                                 layout = haDisplay.layout,
                                 tabFocus = assistantTabFocus,
-                                onSetUp = { haDialogOpen = true },
+                                onSetUp = openDashboardSetup,
                                 sectionColumns = haDisplay.sectionColumns,
                                 toScreenEdge = !bottomShown,
                                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding).onFocusChanged { middleSelected = it.hasFocus },
@@ -447,22 +463,43 @@ class MainActivity : ComponentActivity() {
                                     val columnWidth = dashboardColumnWidth(maxWidth - EdgePadding * 2)
                                     val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - EdgePadding * 2 - PanelItemSpacing - columnWidth)
                                         .coerceAtLeast(0.dp)
-                                    HaAssistantTab(
-                                        connection = haConnection,
-                                        homeAssistantSet = haServer.isSet,
-                                        entityIds = homeEntities,
-                                        dashboard = haDisplay.homeDashboard,
-                                        layout = haDisplay.homeLayout,
-                                        // The button next to the cog
-                                        tabFocus = networkFocus,
-                                        onSetUp = { haDialogOpen = true },
-                                        sectionColumns = true,
-                                        leading = camera?.let {
-                                            LeadingItem(cameraWidth, cameraWidth * 9f / 16f) { CameraBox(cameraWidth) }
-                                        },
-                                        columnsFocus = haSensorsFocus,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
+                                    val custom = dashboardLayouts.home
+                                    if (custom != null) {
+                                        Row(
+                                            Modifier.fillMaxSize().padding(horizontal = EdgePadding),
+                                            horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
+                                        ) {
+                                            if (camera != null) CameraBox(cameraWidth)
+                                            HaAssistantTab(
+                                                connection = haConnection,
+                                                homeAssistantSet = haServer.isSet,
+                                                entityIds = homeEntities,
+                                                dashboard = null,
+                                                customLayout = custom,
+                                                tabFocus = networkFocus,
+                                                onSetUp = { haDialogOpen = true },
+                                                inset = 0.dp,
+                                                modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(haSensorsFocus),
+                                            )
+                                        }
+                                    } else {
+                                        HaAssistantTab(
+                                            connection = haConnection,
+                                            homeAssistantSet = haServer.isSet,
+                                            entityIds = homeEntities,
+                                            dashboard = haDisplay.homeDashboard,
+                                            layout = haDisplay.homeLayout,
+                                            // The button next to the cog
+                                            tabFocus = networkFocus,
+                                            onSetUp = openDashboardSetup,
+                                            sectionColumns = true,
+                                            leading = camera?.let {
+                                                LeadingItem(cameraWidth, cameraWidth * 9f / 16f) { CameraBox(cameraWidth) }
+                                            },
+                                            columnsFocus = haSensorsFocus,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
                                 }
                             } else {
                                 // The camera, as large as fits above the app row, and Home Assistant
@@ -481,17 +518,18 @@ class MainActivity : ComponentActivity() {
                                     ).coerceAtLeast(0.dp)
                                     Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
                                         if (camera != null) CameraBox(cameraWidth)
-                                        if (sideContent && haDisplay.homeDashboard != null) {
+                                        if (sideContent && (haDisplay.homeDashboard != null || dashboardLayouts.home != null)) {
                                             // A dashboard chosen for the Home tab: its sections, card by card
                                             HaAssistantTab(
                                                 connection = haConnection,
                                                 homeAssistantSet = haServer.isSet,
                                                 entityIds = homeEntities,
-                                                dashboard = haDisplay.homeDashboard,
+                                                dashboard = haDisplay.homeDashboard.takeIf { dashboardLayouts.home == null },
+                                                customLayout = dashboardLayouts.home,
                                                 layout = haDisplay.homeLayout,
                                                 // The button next to the cog
                                                 tabFocus = networkFocus,
-                                                onSetUp = { haDialogOpen = true },
+                                                onSetUp = openDashboardSetup,
                                                 inset = 0.dp,
                                                 fixedColumnWidth = columnWidth,
                                                 modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(haSensorsFocus),
@@ -640,11 +678,10 @@ class MainActivity : ComponentActivity() {
                         HomeAssistantDialog(
                             initialServer = haServer,
                             initialUsername = remember { prefs.haUsername },
-                            initialEntities = haEntities,
+                            onEditDashboard = { dashboardEditorOpen = true },
                             initialTopBar = haTopBar,
-                            initialDisplay = haDisplay,
                             loginRejected = haConnection.status == HaStatus.TokenRejected,
-                            onSave = { server, username, entities, topBar, display ->
+                            onSave = { server, username, topBar ->
                                 // A replaced username-and-password login is ended in Home Assistant
                                 if (haServer.refreshToken != server.refreshToken) revokeHaLogin(haServer)
                                 haServer = server
@@ -652,13 +689,24 @@ class MainActivity : ComponentActivity() {
                                 prefs.haToken = server.token
                                 prefs.haRefreshToken = server.refreshToken
                                 prefs.haUsername = username
-                                saveHaChoice(entities, topBar)
-                                haDisplay = display
-                                prefs.haDisplay = display
+                                saveHaChoice(haEntities, topBar)
                             },
                             onLogOut = ::logOutOfHa,
                             onDiscardLogin = ::revokeHaLogin,
                             onDismiss = { haDialogOpen = false },
+                        )
+                    }
+                    if (dashboardEditorOpen) {
+                        DashboardEditorDialog(
+                            haServer = haServer,
+                            layouts = { dashboardLayouts },
+                            canRestore = { prefs.previousDashboardLayouts != null },
+                            legacyDisplay = haDisplay,
+                            legacyEntities = haEntities,
+                            cameraVisible = camera != null,
+                            save = ::saveDashboardLayouts,
+                            restore = { prefs.previousDashboardLayouts?.let(::saveDashboardLayouts) },
+                            onDismiss = { dashboardEditorOpen = false },
                         )
                     }
                     if (frigateOpen) {
@@ -673,6 +721,10 @@ class MainActivity : ComponentActivity() {
                     }
                     if (launcherSettingsOpen) {
                         LauncherSettingsDialog(
+                            onEditDashboard = {
+                                launcherSettingsOpen = false
+                                dashboardEditorOpen = true
+                            },
                             catchHomeKey = catchHomeKey,
                             reopenAfterHome = reopenAfterHome,
                             autoTurnedOff = remember { prefs.replaceHomeAutoOff },
@@ -730,9 +782,10 @@ class MainActivity : ComponentActivity() {
                                 login = haServer.takeIf { it.isSet },
                                 username = remember { prefs.haUsername },
                                 sensors = haEntities.filterNot(::isHaAction).map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
-                                actions = haEntities.filter(::isHaAction).map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
+                                actions = (haEntities.filter(::isHaAction) + haTopBar).distinct().map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
                                 order = haEntities,
                                 topBar = haTopBar,
+                                dashboards = dashboardLayouts.takeIf { it.assistant != null || it.home != null },
                                 frigate = frigate.takeIf { it.isSet },
                                 appTiles = dockKeys.mapNotNull { key ->
                                     if (key == ALL_APPS_TILE_KEY) NamedEntity(key, "All apps")
@@ -749,7 +802,7 @@ class MainActivity : ComponentActivity() {
                         NetworkStatusDialog(
                             frigate = frigateFeed,
                             // It only connects with something to show
-                            homeAssistant = haConnection.takeIf { haServer.isSet && haEntities.isNotEmpty() },
+                            homeAssistant = haConnection.takeIf { haServer.isSet && (followed.isNotEmpty() || legacyBoards.isNotEmpty()) },
                             onOpenPing = { pingOpen = true },
                             onDismiss = { networkStatusOpen = false },
                         )
@@ -816,7 +869,13 @@ class MainActivity : ComponentActivity() {
         val fileActions = file.actions.map { it.id }
         val imported = file.order ?: (file.sensors.map { it.id } + fileActions)
         val entities = (haEntities + imported).distinct()
-        saveHaChoice(entities, (haTopBar + (file.topBar ?: fileActions.take(MAX_HA_ACTIONS))).distinct().filter { it in entities }.take(MAX_HA_ACTIONS))
+        saveHaChoice(entities, (haTopBar + (file.topBar ?: fileActions.take(MAX_HA_ACTIONS))).distinct().filter(::isHaAction).take(MAX_HA_ACTIONS))
+        file.dashboards?.let { importedLayouts ->
+            saveDashboardLayouts(DashboardLayouts(
+                importedLayouts.assistant ?: dashboardLayouts.assistant,
+                importedLayouts.home ?: dashboardLayouts.home,
+            ))
+        }
         file.frigate?.let(::saveFrigate)
         // The row becomes the apps in the file that are on this TV; the others can be unhidden later
         val apps = installed.orEmpty().map { it.key }
@@ -827,6 +886,11 @@ class MainActivity : ComponentActivity() {
             saveDockLayout(tileOrder, (hidden + apps).distinct() - shown.toSet())
         }
         Toast.makeText(this, "Settings imported", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveDashboardLayouts(value: DashboardLayouts) {
+        prefs.saveDashboardLayouts(value, dashboardLayouts)
+        dashboardLayouts = value
     }
 
     private fun saveHaChoice(entities: List<String>, topBar: List<String>) {
@@ -922,6 +986,11 @@ class MainActivity : ComponentActivity() {
         watchNextRefresh?.cancel()
         super.onPause()
         window.decorView.removeCallbacks(confirmStarted)
+    }
+
+    override fun onStop() {
+        dashboardEditorOpen = false
+        super.onStop()
     }
 
     override fun onDestroy() {
