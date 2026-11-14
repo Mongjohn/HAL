@@ -56,48 +56,73 @@
       </div>
       <p class="hint">Drag a card by its title to move or swap it. Resize it from the lower-right corner.</p>
     </section>
-    <aside id="inspector" hidden aria-label="Card settings">
+    <aside id="inspector" aria-label="Card settings">
       <h2>Card settings</h2>
-      <label>Card heading (optional) <input id="title" maxlength="160"></label>
-      <div id="dimensions">
-        <label>Column <input id="x" type="number" min="1"></label>
-        <label>Row <input id="y" type="number" min="1"></label>
-        <label>Width <input id="w" type="number" min="1"></label>
-        <label>Height <input id="h" type="number" min="1" max="15"></label>
+      <p id="inspector-empty" class="hint">Select a card in the preview to edit it.</p>
+      <div id="inspector-body" hidden>
+        <nav id="card-sections" aria-label="Card settings sections">
+          <button data-section="content" aria-controls="card-content" aria-pressed="true">Contents</button>
+          <button data-section="visibility" aria-controls="card-visibility" aria-pressed="false">Visibility</button>
+          <button data-section="layout" aria-controls="card-layout" aria-pressed="false">Layout</button>
+        </nav>
+        <section id="card-content" class="inspector-panel" aria-label="Contents">
+          <label>Card heading <input id="title" maxlength="160" placeholder="Optional"></label>
+          <section id="apps-settings" class="inspector-panel" hidden aria-label="Apps">
+            <ol id="selected-apps"></ol>
+            <div class="controls">
+              <label>Installed apps <select id="app-choice"></select></label>
+              <button id="add-app">Add app</button>
+            </div>
+          </section>
+          <section id="entity-settings" class="inspector-panel" aria-label="Entities">
+            <ol id="contents"></ol>
+            <details id="add-entities" class="inspector-disclosure">
+              <summary>Add an entity</summary>
+              <div class="inspector-panel">
+                <label>Search <input id="search" type="search" placeholder="Name or entity ID"></label>
+                <div class="controls">
+                  <label>Room <select id="room"></select></label>
+                  <label>Type <select id="domain"></select></label>
+                </div>
+                <ul id="entities"></ul>
+                <label>Entity ID <input id="manual" maxlength="255" placeholder="sensor.living_room_temperature"></label>
+                <div class="controls">
+                  <label>Display <select id="display"><option value="entity">Reading or action</option><option value="gauge">Gauge</option><option value="history">History</option></select></label>
+                  <button id="add-entity">Add</button>
+                </div>
+                <div id="gauge-fields" class="controls" hidden>
+                  <label>Minimum <input id="gauge-min" type="number" value="0"></label>
+                  <label>Maximum <input id="gauge-max" type="number" value="100"></label>
+                </div>
+                <label id="history-fields" hidden>History hours <input id="history-hours" type="number" min="1" max="8760" value="24"></label>
+              </div>
+            </details>
+            <details id="end-heading-settings" class="inspector-disclosure">
+              <summary>Subheading after the last item</summary>
+              <label>Subheading <input id="end-heading" maxlength="160"></label>
+            </details>
+          </section>
+        </section>
+        <section id="card-visibility" class="inspector-panel" hidden aria-label="Visibility">
+          <p class="hint" id="visibility-status"></p>
+          <div id="visibility-rules"></div>
+          <datalist id="visibility-entities"></datalist>
+        </section>
+        <section id="card-layout" class="inspector-panel" hidden aria-label="Layout">
+          <div id="dimensions">
+            <label>Column <input id="x" type="number" min="1"></label>
+            <label>Row <input id="y" type="number" min="1"></label>
+            <label>Width <input id="w" type="number" min="1"></label>
+            <label>Height <input id="h" type="number" min="1" max="15"></label>
+          </div>
+          <label id="apps-per-row-setting" hidden>Apps per row <input id="apps-per-row" type="number" min="1" max="8"></label>
+          <label><input id="home-focus" type="checkbox"> Focus on Home press</label>
+          <div class="controls card-actions">
+            <button id="duplicate">Duplicate card</button>
+            <button id="remove">Remove card</button>
+          </div>
+        </section>
       </div>
-      <label><input id="home-focus" type="checkbox"> Focus on Home press</label>
-      <div class="controls">
-        <button id="duplicate">Duplicate</button>
-        <button id="remove">Remove card</button>
-      </div>
-      <section id="apps-settings" hidden>
-        <label>Apps per row <input id="apps-per-row" type="number" min="1" max="8"></label>
-        <label>Installed apps <select id="app-choice"></select></label>
-        <button id="add-app">Add app</button>
-        <ol id="selected-apps"></ol>
-      </section>
-      <section id="entity-settings">
-      <h2>Card contents</h2>
-      <ol id="contents"></ol>
-      <label>Subheading at end of card (optional) <input id="end-heading" maxlength="160"></label>
-      <h2>Add an entity</h2>
-      <label>Search <input id="search" type="search" placeholder="Name or entity ID"></label>
-      <div class="controls">
-        <label>Room <select id="room"></select></label>
-        <label>Type <select id="domain"></select></label>
-      </div>
-      <ul id="entities"></ul>
-      <label>Entity ID <input id="manual" maxlength="255" placeholder="sensor.living_room_temperature"></label>
-      <div class="controls">
-        <label>Display <select id="display"><option value="entity">Reading or action</option><option value="gauge">Gauge</option><option value="history">History</option></select></label>
-        <button id="add-entity">Add</button>
-      </div>
-      <div id="gauge-fields" class="controls" hidden>
-        <label>Minimum <input id="gauge-min" type="number" value="0"></label>
-        <label>Maximum <input id="gauge-max" type="number" value="100"></label>
-      </div>
-      <label id="history-fields" hidden>History hours <input id="history-hours" type="number" min="1" max="8760" value="24"></label>
-      </section>
     </aside>
   </main>
 </body>

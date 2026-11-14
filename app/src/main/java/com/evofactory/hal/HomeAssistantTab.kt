@@ -2,6 +2,7 @@ package com.evofactory.hal
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,6 +42,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -79,6 +81,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.Border
 import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
@@ -103,9 +106,11 @@ class SensorCard(
     val gauges: Map<String, HaGauge> = emptyMap(),
     // A dashboard's history graphs, by their key in [ids] (see isGraphKey)
     val graphs: Map<String, HaGraph> = emptyMap(),
+    val visibility: CardVisibility? = null,
 ) {
     /** A weather alone: shown as a weather card, with its forecast */
     val isWeather get() = ids.size == 1 && isHaWeather(ids.first()) && subtitles.isEmpty()
+    val isMediaOnly = ids.isNotEmpty() && ids.all { isHaMediaPlayer(it) && it !in gauges && it !in graphs }
 
     fun entityRows(twoPerRow: Boolean, halfWidthItems: Set<Int>? = null): List<IntRange> = buildList {
         var first = 0
@@ -120,7 +125,7 @@ class SensorCard(
         }
     }
 
-    internal fun isFullWidth(id: String) = isHaWeather(id) || id in gauges || id in graphs
+    internal fun isFullWidth(id: String) = isHaWeather(id) || isMediaOnly || id in gauges || id in graphs
 }
 
 /**
@@ -291,8 +296,10 @@ fun HaAssistantTab(
     }
     val entities = connection.entities
     var viewIndex by remember(board, customLayout) { mutableIntStateOf(0) }
-    val targets = remember(customLayout) {
-        customLayout?.pages.orEmpty().flatMap { it.cards }.associate { it.card.key to FocusRequester() }
+    val targets = remember(customLayout, board) {
+        val keys = customLayout?.pages?.flatMap { page -> page.cards.map { it.card.key } }
+            ?: board?.views.orEmpty().flatMap { view -> view.cards.map { it.key } }
+        keys.associateWith { FocusRequester() }
     }
     LaunchedEffect(homeFocusRequest) {
         if (homeFocusRequest == 0) return@LaunchedEffect
@@ -302,7 +309,9 @@ fun HaAssistantTab(
             val target = customLayout?.pages?.get(index)?.cards?.first { it.focusOnHome }
             withFrameNanos { }
             withFrameNanos { }
-            runCatching { targets[target?.card?.key]?.requestFocus() }
+            if (target != null && target.card.visibility.isVisible(entities)) {
+                runCatching { targets[target.card.key]?.requestFocus() }
+            }
         }
     }
     // With something before the columns (the Home tab's camera), every view's cards follow each
@@ -312,7 +321,12 @@ fun HaAssistantTab(
     }
     val viewTabs = remember(views.size) { List(views.size) { FocusRequester() } }
     val page = customLayout?.pages?.getOrNull(viewIndex)
-    val cards = if (board != null || customLayout != null) views.getOrNull(viewIndex)?.cards.orEmpty() else layout.selectionCards(entityIds, entities)
+    val pageCards = page?.cards?.map(DashboardCard::card) ?: views.getOrNull(viewIndex)?.cards.orEmpty()
+    val cards = if (board != null || customLayout != null) {
+        pageCards.filter { it.visibility.isVisible(entities) }
+    } else layout.selectionCards(entityIds, entities)
+    val visibleKeys = cards.map { it.key }.toSet()
+    val visibleItems = page?.cards.orEmpty().filter { it.card.key in visibleKeys }
     val cardOptions = page?.cards.orEmpty().associateBy { it.card.key }
     val rowsByCard = cards.associate { card ->
         val options = cardOptions[card.key]
@@ -325,12 +339,31 @@ fun HaAssistantTab(
     // Roughly in rows of sensors: a weather takes about 5, with its next hours, and a heading 1
     val heights = cards.map { card ->
         if (card.isWeather) 5 else rowsByCard.getValue(card.key).size + 1 + card.subtitles.size + card.gauges.size + 4 * card.ids.count(::isHaWeather) +
-            card.graphs.values.sumOf { 2 + it.entities.size }
+            card.graphs.values.sumOf { 2 + it.entities.size } + if (card.isMediaOnly) 3 * card.ids.size else 0
     }
     val scroll = rememberScrollState()
     LaunchedEffect(viewIndex) { scroll.scrollTo(0) }
     // The card whose buttons the remote moves between, after OK on it; Back leaves it
     var entered by remember { mutableStateOf<String?>(null) }
+    var focusedCard by remember(customLayout, board, viewIndex) { mutableStateOf<String?>(null) }
+    val latestVisibleKeys by rememberUpdatedState(visibleKeys)
+    fun cardFocusChanged(key: String, hasFocus: Boolean) {
+        if (hasFocus) focusedCard = key
+        else if (focusedCard == key && key in latestVisibleKeys) focusedCard = null
+    }
+    LaunchedEffect(visibleKeys) {
+        if (entered !in visibleKeys) entered = null
+        val lost = focusedCard?.takeUnless { it in visibleKeys } ?: return@LaunchedEffect
+        focusedCard = null
+        val oldItem = cardOptions[lost]
+        val nearest = if (oldItem != null) {
+            visibleItems.minByOrNull { kotlin.math.abs(it.x - oldItem.x) + kotlin.math.abs(it.y - oldItem.y) }?.card?.key
+        } else cards.firstOrNull()?.key
+        withFrameNanos { }
+        if (focusedCard == null && runCatching { targets[nearest]?.requestFocus() }.getOrNull() != true) {
+            runCatching { cardsUp.requestFocus() }
+        }
+    }
     val message = haStatusMessage(connection)
         ?: "This dashboard is built by Home Assistant itself: your selection shows instead".takeIf { missing }
         ?: "Nothing on this dashboard can be shown here".takeIf { board != null && views.isEmpty() }
@@ -408,6 +441,7 @@ fun HaAssistantTab(
                 }
                 AssistantCard(
                     target = targets[card.key],
+                    onCardFocusChanged = { cardFocusChanged(card.key, it) },
                     up = up,
                     window = window,
                     buttonRows = buttonRows,
@@ -416,12 +450,14 @@ fun HaAssistantTab(
                     onLeave = { entered = null },
                     minHeight = minHeight,
                     maxHeight = maxHeight,
-                ) { raised, firstButton, onButtonFocused ->
+                    mediaOnly = card.isMediaOnly,
+                ) { raised, cardFocused, firstButton, onButtonFocused ->
                     if (weather != null) {
                         WeatherReading(entities[weather], connection.hourly[weather], connection.daily[weather])
                     } else {
                         CardContent(card, rows, connection, names, aliases, entered == card.key, raised, firstButton, onButtonFocused,
-                            cardOptions[card.key]?.halfWidthItems.orEmpty())
+                            cardOptions[card.key]?.halfWidthItems.orEmpty(), compactMedia = maxHeight != null && maxHeight < 120.dp,
+                            cardFocused = cardFocused)
                     }
                 }
             }
@@ -433,13 +469,13 @@ fun HaAssistantTab(
                 val usableHeight = (maxHeight - topMargin - bottomMargin).coerceAtLeast(0.dp)
                 val rowGap = minOf(4.dp, usableHeight / (DashboardScreenRows * 2))
                 val step = (usableHeight + rowGap) / DashboardScreenRows
-                val rows = page.cards.maxOfOrNull { it.y + it.height } ?: 0
+                val rows = visibleItems.maxOfOrNull { it.y + it.height } ?: 0
                 CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
                     Box(Modifier.fillMaxSize().verticalScroll(scroll).padding(
                         start = inset, end = inset, top = topMargin, bottom = bottomMargin,
                     )) {
                         Box(Modifier.fillMaxWidth().height((step * rows - rowGap).coerceAtLeast(0.dp))) {
-                            page.cards.sortedWith(compareBy(DashboardCard::y, DashboardCard::x)).forEach { item ->
+                            visibleItems.sortedWith(compareBy(DashboardCard::y, DashboardCard::x)).forEach { item ->
                                 key(item.card.key) {
                                     val height = step * item.height.coerceAtMost(DashboardScreenRows) - rowGap
                                     Box(
@@ -447,9 +483,11 @@ fun HaAssistantTab(
                                             .width((cell + gap) * item.width - gap),
                                     ) {
                                         if (item.apps != null && renderApps != null) {
-                                            renderApps(item, targets.getValue(item.card.key), height) { direction ->
-                                                neighboringCard(item, page.cards, direction)?.let { targets[it.card.key] }
-                                                    ?: FocusRequester.Cancel
+                                            Box(Modifier.onFocusChanged { cardFocusChanged(item.card.key, it.hasFocus) }.focusGroup()) {
+                                                renderApps(item, targets.getValue(item.card.key), height) { direction ->
+                                                    neighboringCard(item, visibleItems, direction)?.let { targets[it.card.key] }
+                                                        ?: if (direction == FocusDirection.Up) cardsUp else FocusRequester.Cancel
+                                                }
                                             }
                                         } else {
                                             Card(item.card, cardsUp.takeIf { item.y == 0 }, null, height, height)
@@ -537,10 +575,13 @@ private fun BoxWithConstraintsScope.SectionColumns(
     val sideways = rememberScrollState()
     // The column on the left of those shown whole, and the one selected
     var first by remember(viewIndex) { mutableIntStateOf(0) }
-    var selected by remember(viewIndex) { mutableStateOf<Int?>(null) }
+    var selected by remember(viewIndex) { mutableStateOf<String?>(null) }
+    val selectedIndex = selected?.let { selectedKey ->
+        if (selectedKey.isEmpty()) -1 else cards.indexOfFirst { it.key == selectedKey }.takeIf { it >= 0 }
+    }
     LaunchedEffect(viewIndex) { sideways.scrollTo(0) }
-    LaunchedEffect(selected) {
-        val index = selected ?: return@LaunchedEffect
+    LaunchedEffect(selectedIndex, cards.size) {
+        val index = selectedIndex ?: return@LaunchedEffect
         if (leading != null) {
             // Only as far as the column and a twentieth of each neighbour need; back to the start
             // beside what comes first
@@ -584,14 +625,14 @@ private fun BoxWithConstraintsScope.SectionColumns(
             horizontalArrangement = Arrangement.spacedBy(gap),
         ) {
             if (leading != null) {
-                Box(Modifier.width(leading.width).onFocusChanged { if (it.hasFocus) selected = -1 }) { leading.content() }
+                Box(Modifier.width(leading.width).onFocusChanged { if (it.hasFocus) selected = "" }) { leading.content() }
             }
             // The columns, as a group the remote can be sent to
             Row(
                 modifier = Modifier.then(if (columnsFocus != null) Modifier.focusRequester(columnsFocus) else Modifier).focusGroup(),
                 horizontalArrangement = Arrangement.spacedBy(gap),
             ) {
-            cards.forEachIndexed { index, item ->
+            cards.forEach { item ->
                 // Beside the camera: as tall as it, what doesn't fit scrolling inside the card
                 if (leading != null) {
                     key(item.key) {
@@ -600,12 +641,12 @@ private fun BoxWithConstraintsScope.SectionColumns(
                                 .width(columnWidth)
                                 .extendHorizontally(sideRoom)
                                 .padding(horizontal = sideRoom)
-                                .onFocusChanged { if (it.hasFocus) selected = index },
+                                .onFocusChanged { if (it.hasFocus) selected = item.key },
                         ) {
                             card(item, up, null, leading.height, leading.height)
                         }
                     }
-                    return@forEachIndexed
+                    return@forEach
                 }
                 key(item.key) {
                     val scroll = rememberScrollState()
@@ -621,7 +662,7 @@ private fun BoxWithConstraintsScope.SectionColumns(
                                 .extendHorizontally(sideRoom)
                                 .extendVertically(CardPeek, bottom.peek)
                                 .fillMaxHeight()
-                                .onFocusChanged { if (it.hasFocus) selected = index }
+                                .onFocusChanged { if (it.hasFocus) selected = item.key }
                                 .fadingEdges(scroll, bottom = bottom.fade)
                                 .verticalScroll(scroll)
                                 .padding(start = sideRoom, end = sideRoom, top = CardPeek, bottom = bottom.end),
@@ -774,7 +815,9 @@ private fun AssistantCard(
     minHeight: Dp? = null,
     maxHeight: Dp? = null,
     target: FocusRequester? = null,
-    content: @Composable (raised: Boolean, firstButton: FocusRequester, onButtonFocused: (Int) -> Unit) -> Unit,
+    onCardFocusChanged: (Boolean) -> Unit = {},
+    mediaOnly: Boolean = false,
+    content: @Composable (raised: Boolean, cardFocused: Boolean, firstButton: FocusRequester, onButtonFocused: (Int) -> Unit) -> Unit,
 ) {
     val card = target ?: remember { FocusRequester() }
     val firstButton = remember { FocusRequester() }
@@ -796,6 +839,7 @@ private fun AssistantCard(
     }
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(12.dp)
+    val appearance = LocalDashboardAppearance.current
     val inner = rememberScrollState()
     Column(
         modifier = Modifier
@@ -807,6 +851,8 @@ private fun AssistantCard(
                 scaleX = scale
                 scaleY = scale
             }
+            .onFocusChanged { onCardFocusChanged(it.hasFocus) }
+            .focusGroup()
             .onPreviewKeyEvent { event ->
                 val release = event.type == KeyEventType.KeyUp
                 val direction = ArrowDirections[event.key]
@@ -866,26 +912,28 @@ private fun AssistantCard(
             // Selected: a bright outline; gone into: a dim one, while its button is lit
             .then(
                 when {
+                    mediaOnly -> Modifier
                     focused -> Modifier.border(DashboardFocusStroke, shape)
                     entered -> Modifier.border(1.dp, DashboardPanelOutline, shape)
                     else -> Modifier
                 },
             )
             .heightIn(min = minHeight ?: Dp.Unspecified, max = maxHeight ?: Dp.Unspecified)
-            .dashboardCard(LocalDashboardAppearance.current, if (entered) RaisedSurface else colors.surfaceVariant, shape)
-            .padding(horizontal = CardSidePadding, vertical = if (maxHeight != null) 0.dp else 12.dp),
+            .then(if (mediaOnly) Modifier else Modifier
+                .dashboardCard(appearance, if (entered) RaisedSurface else colors.surfaceVariant, shape)
+                .padding(horizontal = CardSidePadding, vertical = if (maxHeight != null) 0.dp else 12.dp)),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (maxHeight == null) {
-            content(entered, firstButton) { focusedButton = it }
+            content(entered, focused, firstButton) { focusedButton = it }
         } else {
             // Scrolls inside the card, fading out at its edges; its buttons come into view as they're selected
             CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
                 Column(
-                    Modifier.fadingEdges(inner).verticalScroll(inner).padding(vertical = 12.dp),
+                    Modifier.fadingEdges(inner).verticalScroll(inner).padding(vertical = if (mediaOnly) 2.dp else 12.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    content(entered, firstButton) { focusedButton = it }
+                    content(entered, focused, firstButton) { focusedButton = it }
                 }
             }
         }
@@ -943,6 +991,8 @@ private fun CardContent(
     firstButton: FocusRequester,
     onButtonFocused: (Int) -> Unit,
     halfWidthItems: Set<Int> = emptySet(),
+    compactMedia: Boolean = false,
+    cardFocused: Boolean = false,
 ) {
     // What the remote lands on once in the card, in order: buttons and switches
     val interactive = card.ids.filter(card::hasControl)
@@ -972,7 +1022,7 @@ private fun CardContent(
             // Only once gone into the card
             .focusProperties { canFocus = entered }
         if (isHaStatefulControl(id)) {
-            StatefulControlRow(connection, id, names[id], modifier)
+            StatefulControlRow(connection, id, names[id], modifier, card.isMediaOnly, compactMedia, cardFocused && !entered)
         } else if (isHaSelect(id)) {
             SelectRow(connection, id, names[id], modifier)
         } else {
@@ -1019,29 +1069,49 @@ private fun CardHeading(text: String, modifier: Modifier = Modifier) {
 
 /** Entities that accept OK when displayed as readings or actions in a card. */
 private fun SensorCard.hasControl(id: String) =
-    !isFullWidth(id) && (isHaAction(id) || isHaStatefulControl(id) || isHaSelect(id))
+    isMediaOnly || (!isFullWidth(id) && (isHaAction(id) || isHaStatefulControl(id) || isHaSelect(id)))
 
 @Composable
-private fun StatefulControlRow(connection: HaConnection, id: String, name: String?, modifier: Modifier) {
+private fun StatefulControlRow(
+    connection: HaConnection,
+    id: String,
+    name: String?,
+    modifier: Modifier,
+    showMedia: Boolean,
+    compactMedia: Boolean,
+    groupFocused: Boolean,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
     val ready = connection.session != null
+    val border = when {
+        groupFocused && showMedia -> DashboardFocusBorder
+        showMedia -> Border(BorderStroke(1.dp, DashboardPanelOutline))
+        else -> Border.None
+    }
+    val container = if (showMedia) colors.surfaceVariant.copy(alpha = LocalDashboardAppearance.current.opacity / 100f)
+        else Color.Transparent
     Surface(
         onClick = { connection.control(id, scope, context) },
         modifier = modifier.fillMaxWidth(),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
+        border = ClickableSurfaceDefaults.border(border = border, focusedBorder = DashboardFocusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
+            containerColor = container,
             contentColor = if (ready) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
             focusedContainerColor = HigherSurface,
             focusedContentColor = colors.onSurface,
         ),
     ) {
         Box(Modifier.padding(horizontal = ControlRowInset, vertical = 4.dp)) {
-            SensorReading(id, connection.entities[id], name, textColor = LocalContentColor.current)
+            val entity = connection.entities[id]
+            if (showMedia) {
+                MediaPlayerReading(id, entity, name, connection.session, compactMedia)
+            } else {
+                SensorReading(id, entity, name, textColor = LocalContentColor.current)
+            }
         }
     }
 }
