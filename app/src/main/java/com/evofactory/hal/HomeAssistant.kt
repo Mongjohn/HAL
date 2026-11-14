@@ -194,8 +194,12 @@ class HaEntity(
     val attributes: JSONObject,
     val entityName: String? = null,
     val area: String? = null,
+    previous: HaEntity? = null,
 ) {
     val domain get() = id.substringBefore('.')
+    internal val mediaPlayback: MediaPlayback? = if (isHaMediaPlayer(id)) {
+        MediaPlayback.observe(state, attributes, previous?.mediaPlayback, mediaClockMillis(), System.currentTimeMillis())
+    } else null
     val fullName: String get() = attributes.string("friendly_name") ?: id
     val name: String get() = entityName ?: fullName
     val unit: String? get() = attributes.string("unit_of_measurement")
@@ -320,6 +324,21 @@ private val httpClient by lazy {
         .build()
 }
 
+private val mediaArtworkClient by lazy {
+    httpClient.newBuilder().callTimeout(8, TimeUnit.SECONDS).followRedirects(false).build()
+}
+
+internal fun mediaArtworkRequest(baseUrl: String, reference: String, token: String): Request? {
+    val base = baseUrl.toHttpUrlOrNull() ?: return null
+    val url = base.resolve(reference) ?: return null
+    if (url.username.isNotEmpty() || url.password.isNotEmpty()) return null
+    val sameOrigin = url.scheme == base.scheme && url.host == base.host && url.port == base.port
+    if (!sameOrigin && !url.isHttps) return null
+    return Request.Builder().url(url).apply {
+        if (sameOrigin) header("Authorization", "Bearer $token")
+    }.build()
+}
+
 /**
  * Address as typed → base URL, e.g. "192.168.1.20" → "http://192.168.1.20:8123": http:// is
  * assumed without a scheme, and Home Assistant's port 8123 without a port either. Null if invalid.
@@ -370,7 +389,7 @@ suspend fun <T> haSession(server: HaServer, block: suspend HaSession.() -> T): T
     try {
         logIn(socket, incoming, token)
         return coroutineScope {
-            val session = HaSession(socket)
+            val session = HaSession(socket, baseUrl, token)
             // A dropped connection ends this loop with an HaException, which cancels the block
             val reader = launch { for (message in incoming) session.dispatch(message) }
             block(session).also { reader.cancel() }
@@ -406,10 +425,26 @@ private fun describeFailure(baseUrl: String, t: Throwable, response: Response?):
 }
 
 /** A logged-in connection, see [haSession]. Use it on the main thread only. */
-class HaSession internal constructor(private val socket: WebSocket) {
+class HaSession internal constructor(
+    private val socket: WebSocket,
+    private val baseUrl: String,
+    private val token: String,
+) {
     private var lastId = 0
     private val results = mutableMapOf<Int, CompletableDeferred<Any>>()
     private val subscriptions = mutableMapOf<Int, (JSONObject) -> Unit>()
+
+    internal suspend fun mediaArtwork(reference: String): ByteArray? = withContext(Dispatchers.IO) {
+        val request = mediaArtworkRequest(baseUrl, reference, token) ?: return@withContext null
+        try {
+            mediaArtworkClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) response.body.byteStream().use { readLimited(it, 4 * 1024 * 1024) }
+                else null
+            }
+        } catch (_: IOException) {
+            null
+        }
+    }
 
     /** Sends a command and returns its result; throws [HaException] if Home Assistant reports an error */
     suspend fun command(type: String, fields: JSONObject.() -> Unit = {}): Any = send(++lastId, type, fields)
@@ -468,8 +503,14 @@ class HaSession internal constructor(private val socket: WebSocket) {
      */
     suspend fun followEntities(entityIds: List<String>, entities: MutableMap<String, HaEntity>) {
         val registry = registry()
+        var awaitingSnapshot = true
         subscribe("subscribe_entities", { put("entity_ids", JSONArray(entityIds)) }) { event ->
             event.optJSONObject("a")?.let { added ->
+                if (awaitingSnapshot) {
+                    // The first event is the complete subscription snapshot, even when it is empty.
+                    entities.keys.retainAll(added.keys().asSequence().toSet())
+                    awaitingSnapshot = false
+                }
                 for (id in added.keys()) {
                     val state = added.getJSONObject(id)
                     entities[id] = HaEntity(
@@ -489,7 +530,7 @@ class HaSession internal constructor(private val socket: WebSocket) {
                     val plus = diff.optJSONObject("+")
                     plus?.optJSONObject("a")?.let { for (key in it.keys()) attributes.put(key, it.get(key)) }
                     diff.optJSONObject("-")?.optJSONArray("a")?.let { for (i in 0 until it.length()) attributes.remove(it.getString(i)) }
-                    entities[id] = HaEntity(id, plus?.optString("s", old.state) ?: old.state, attributes, old.entityName, old.area)
+                    entities[id] = HaEntity(id, plus?.optString("s", old.state) ?: old.state, attributes, old.entityName, old.area, previous = old)
                 }
             }
             event.optJSONArray("r")?.let { for (i in 0 until it.length()) entities.remove(it.getString(i)) }

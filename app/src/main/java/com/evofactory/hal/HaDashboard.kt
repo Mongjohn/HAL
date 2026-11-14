@@ -18,7 +18,10 @@ class HaDashboard(val views: List<DashboardView>, val names: Map<String, String>
     /** Every entity on it, to follow */
     val entityIds
         get() = views.flatMap { view ->
-            view.cards.flatMap { card -> card.ids.filterNot(::isGraphKey) + card.graphs.values.flatMap { graph -> graph.entities.map { it.id } } }
+            view.cards.flatMap { card ->
+                card.ids.filterNot(::isGraphKey) + card.graphs.values.flatMap { graph -> graph.entities.map { it.id } } +
+                    card.visibility?.entityIds().orEmpty()
+            }
         }.distinct()
     val cardCount get() = views.sumOf { it.cards.size }
 }
@@ -106,6 +109,7 @@ private class CardBuilder(private val prefix: String, private val names: Mutable
     private val subtitles = mutableMapOf<Int, String>()
     private val gauges = mutableMapOf<String, HaGauge>()
     private val graphs = mutableMapOf<String, HaGraph>()
+    private var visibility: CardVisibility? = null
 
     fun add(id: String?, name: String? = null) {
         if (id == null || !id.contains('.')) return
@@ -116,7 +120,7 @@ private class CardBuilder(private val prefix: String, private val names: Mutable
     /** Ends the card being built, if it has anything; a heading with nothing after it is dropped */
     fun close() {
         if (ids.isNotEmpty()) {
-            cards += SensorCard("$prefix-${cards.size}", title.orEmpty(), ids.toList(), subtitles.filterKeys { it < ids.size }, gauges.toMap(), graphs.toMap())
+            cards += SensorCard("$prefix-${cards.size}", title.orEmpty(), ids.toList(), subtitles.filterKeys { it < ids.size }, gauges.toMap(), graphs.toMap(), visibility)
         }
         title = null
         ids.clear()
@@ -132,6 +136,40 @@ private class CardBuilder(private val prefix: String, private val names: Mutable
     }
 
     fun read(card: JSONObject) {
+        val conditional = card.optString("type") == "conditional"
+        val fields = listOfNotNull("conditions".takeIf { conditional }, "visibility".takeIf(card::has))
+        if (fields.isEmpty()) {
+            readContent(card)
+            return
+        }
+        val rule = try {
+            val local = fields.flatMap { field ->
+                val rules = card.getJSONArray(field)
+                List(rules.length()) { rules.getJSONObject(it) }
+            }
+            if (local.isEmpty()) null else {
+                val inherited = (visibility as? CardVisibility.Group)?.conditions.orEmpty()
+                val children = inherited + local.map { parseCardVisibility(it, fromHomeAssistant = true, depth = 1) }
+                require(children.size <= 32)
+                CardVisibility.Group(CardVisibility.Operation.And, children)
+            }
+        } catch (_: Exception) {
+            skipped += "card with invalid or unsupported visibility rules"
+            return
+        }
+        if (rule == null) {
+            if (conditional) card.optJSONObject("card")?.let(::read) else readContent(card)
+            return
+        }
+        if (ids.isNotEmpty()) close()
+        val previous = visibility
+        visibility = rule
+        if (conditional) card.optJSONObject("card")?.let(::read) else readContent(card)
+        close()
+        visibility = previous
+    }
+
+    private fun readContent(card: JSONObject) {
         when (val type = card.optString("type")) {
             "heading" -> {
                 heading(card.string("heading"))
@@ -141,7 +179,6 @@ private class CardBuilder(private val prefix: String, private val names: Mutable
                 heading(card.string("title"))
                 card.optJSONArray("cards").objects().forEach(::read)
             }
-            "conditional" -> card.optJSONObject("card")?.let(::read)
             "weather-forecast" -> add(card.string("entity"), card.string("name"))
             in ListCards -> {
                 heading(card.string("title"))

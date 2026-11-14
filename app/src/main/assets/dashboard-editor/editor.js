@@ -14,6 +14,8 @@ let camera = false;
 let surface = "home";
 let pageIndex = 0;
 let selected = null;
+let inspectedCard = null;
+let inspectorSection = "content";
 let catalog = [];
 let templates = [];
 let names = new Map();
@@ -56,10 +58,12 @@ function checkpoint() {
   dirty.add(surface);
 }
 
-function edit(change) {
+function edit(change, refresh = render) {
   checkpoint();
   change();
-  render();
+  $("apply").disabled = busy;
+  $("undo").disabled = busy;
+  refresh();
   say("Draft changes. Apply to update the TV.");
 }
 
@@ -136,7 +140,7 @@ function entityName(id, card) {
   return friendlyName(id);
 }
 
-function renameEntity(id) {
+function renameEntity(id, labelText, onRename) {
   const field = node("input");
   field.maxLength = 255;
   field.value = layout().aliases?.[id] || "";
@@ -144,10 +148,11 @@ function renameEntity(id) {
   field.onchange = () => edit(() => {
     layout().aliases ||= {};
     const value = field.value.trim();
+    field.value = value;
     if (value) layout().aliases[id] = value;
     else delete layout().aliases[id];
-  });
-  const label = node("label", id);
+  }, onRename);
+  const label = node("label", labelText);
   label.append(field);
   return label;
 }
@@ -291,7 +296,9 @@ function renderEntities() {
 }
 
 function canUseHalf(card, id) {
-  return !id.startsWith("weather.") && !card.graphs?.[id] && !card.gauges?.[id];
+  const mediaOnly = card.entities.length > 0 &&
+    card.entities.every(entity => entity.startsWith("media_player.") && !card.graphs?.[entity] && !card.gauges?.[entity]);
+  return !mediaOnly && !id.startsWith("weather.") && !card.graphs?.[id] && !card.gauges?.[id];
 }
 
 function halfWidths(card) {
@@ -338,25 +345,136 @@ function renderApps(card) {
   }));
 }
 
+const newStateRule = () => ({ condition: "state", entity: "", state: [""] });
+const newRuleGroup = () => ({ condition: "and", conditions: [newStateRule()] });
+
+function visibilityField(label, value, update) {
+  const field = node("input");
+  field.maxLength = 255;
+  field.value = value;
+  field.onchange = () => {
+    if (value === field.value) return;
+    checkpoint();
+    update(field.value);
+    value = field.value;
+    $("apply").disabled = false;
+    $("undo").disabled = false;
+    say("Draft changes. Apply to update the TV.");
+  };
+  const wrapper = node("label", label);
+  wrapper.append(field);
+  return wrapper;
+}
+
+function renderVisibilityRule(rule, remove, depth = 0) {
+  const panel = node("fieldset", null, "visibility-rule");
+  panel.append(node("legend", rule.condition === "state" ? "Entity state" : "Condition group"));
+  const select = node("select");
+  if (rule.condition === "state") {
+    const entity = visibilityField("Entity", rule.entity, value => { rule.entity = value.trim(); });
+    entity.querySelector("input").setAttribute("list", "visibility-entities");
+    panel.append(entity);
+    const comparison = "state_not" in rule ? "state_not" : "state";
+    const values = rule[comparison];
+    options(select, [["state", "Is any of"], ["state_not", "Is none of"]], comparison);
+    select.onchange = () => edit(() => {
+      delete rule[comparison];
+      rule[select.value] = values;
+    });
+    const label = node("label", "Comparison");
+    label.append(select);
+    panel.append(label);
+    values.forEach((value, index) => {
+      const row = node("div", null, "controls");
+      row.append(visibilityField(rule.homeAssistantComparison ? "State or entity ID" : "State", value, next => { values[index] = next; }));
+      if (values.length > 1) row.append(button("Remove state", () => edit(() => values.splice(index, 1))));
+      panel.append(row);
+    });
+    if (values.length < 32) panel.append(button("Add state", () => edit(() => values.push(""))));
+  } else {
+    options(select, [["and", "All conditions match"], ["or", "Any condition matches"], ["not", "At least one condition fails"]], rule.condition);
+    select.onchange = () => edit(() => { rule.condition = select.value; });
+    const label = node("label", "Show when");
+    label.append(select);
+    panel.append(label);
+    rule.conditions.forEach((child, index) => {
+      panel.append(renderVisibilityRule(child, () => rule.conditions.splice(index, 1), depth + 1));
+    });
+    if (depth < 8 && rule.conditions.length < 32) {
+      panel.append(button("Add condition", () => edit(() => rule.conditions.push(newStateRule()))));
+      if (depth < 7) panel.append(button("Add group", () => edit(() => rule.conditions.push(newRuleGroup()))));
+    }
+  }
+  panel.append(button(depth === 0 ? "Clear visibility rules" : "Remove rule", () => edit(remove)));
+  return panel;
+}
+
+function renderVisibility(card) {
+  $("visibility-status").textContent = card.visibility
+    ? "This card is visible on the TV when its rules match."
+    : "This card is always visible on the TV. Add rules to show it only in certain states.";
+  $("visibility-rules").replaceChildren(card.visibility
+    ? renderVisibilityRule(card.visibility, () => { delete card.visibility; })
+    : button("Add visibility rules", () => edit(() => { card.visibility = newRuleGroup(); })));
+}
+
+function validVisibility(rule) {
+  if (rule.condition === "state") {
+    return /^[a-z0-9_]+\.[a-z0-9_]+$/.test(rule.entity) &&
+      (rule.state || rule.state_not).every(value => value.length > 0);
+  }
+  return rule.conditions.length > 0 && rule.conditions.every(validVisibility);
+}
+
+const inspectorButtons = [...$("card-sections").querySelectorAll("button")];
+
+function showInspectorSection(section) {
+  inspectorSection = section;
+  for (const button of inspectorButtons) {
+    const current = button.dataset.section === section;
+    button.setAttribute("aria-pressed", String(current));
+    $(button.getAttribute("aria-controls")).hidden = !current;
+  }
+}
+
+for (const button of inspectorButtons) {
+  button.onclick = () => showInspectorSection(button.dataset.section);
+}
+
 function renderInspector() {
   const card = active();
-  $("inspector").hidden = !card;
+  $("inspector-empty").hidden = !!card;
+  $("inspector-body").hidden = !card;
+  const sameCard = card?.id === inspectedCard;
+  if (!sameCard) {
+    inspectedCard = card?.id;
+    $("contents").replaceChildren();
+    $("end-heading-settings").open = false;
+    $("add-entities").open = !!card && card.entities.length === 0;
+    inspectorSection = "content";
+  }
   if (!card) return;
+  showInspectorSection(inspectorSection);
   $("title").value = card.title;
   $("home-focus").checked = !!card.focusOnHome;
   $("entity-settings").hidden = !!card.apps;
   $("apps-settings").hidden = !card.apps;
+  $("apps-per-row-setting").hidden = !card.apps;
   $("duplicate").hidden = !!card.apps;
   for (const key of ["x", "y", "w", "h"]) $(key).value = card[key] + (key === "x" || key === "y" ? 1 : 0);
   $("x").max = page().columns;
   $("y").max = maxRows - card.h + 1;
   $("w").max = page().columns;
   $("h").max = Math.min(screenRows, maxRows - card.y);
+  renderVisibility(card);
   if (card.apps) return renderApps(card);
   $("end-heading").value = card.subtitles?.[card.entities.length] || "";
+  const openRows = new Set([...$("contents").querySelectorAll("details[open]")].map(details => details.dataset.row));
+  const refreshRowNames = [];
   $("contents").replaceChildren(...card.entities.map((id, index) => {
     const label = displayName(id, card);
     const row = node("li");
+    const name = node("span", label, "item-name");
     const indices = card.entities.map((_, i) => i);
     function move(by) {
       [indices[index], indices[index + by]] = [indices[index + by], indices[index]];
@@ -366,16 +484,35 @@ function renderInspector() {
     const down = button("↓", () => move(1), "Move " + label + " down");
     up.disabled = index === 0;
     down.disabled = index === indices.length - 1;
-    row.append(node("span", label), up, down,
-      button("Remove", () => edit(() => editContents(card, indices.filter(i => i !== index))), "Remove " + label));
+    const remove = button("Remove", () => edit(() => editContents(card, indices.filter(i => i !== index))), "Remove " + label);
+    const controls = node("div", null, "entity-actions");
+    controls.append(up, down, remove);
+    row.append(name, controls);
+    const details = node("details", null, "inspector-disclosure");
+    details.dataset.row = index + ":" + id;
+    details.open = openRows.has(details.dataset.row);
+    details.append(node("summary", "Friendly name & row settings"));
+    const settings = node("div", null, "inspector-panel");
+    const ids = card.graphs?.[id]?.entities.map(entity => entity.id) || [id];
+    refreshRowNames.push(() => {
+      const updated = displayName(id, card);
+      name.textContent = updated;
+      up.setAttribute("aria-label", "Move " + updated + " up");
+      down.setAttribute("aria-label", "Move " + updated + " down");
+      remove.setAttribute("aria-label", "Remove " + updated);
+    });
+    settings.append(...ids.map(entityId => renameEntity(entityId, ids.length === 1 ? "Friendly name" : "Friendly name for " + entityId, () => {
+      refreshRowNames.forEach(refresh => refresh());
+      renderGrid();
+    })));
     const heading = node("input");
     heading.maxLength = 160;
     heading.value = card.subtitles?.[index] || "";
     heading.onchange = () => setHeading(card, index, heading.value);
-    const headingLabel = node("label", "Optional subheading before " + label);
-    headingLabel.className = "entity-heading";
+    const headingLabel = node("label", "Subheading before this item");
+    heading.placeholder = "Optional";
     headingLabel.append(heading);
-    row.append(headingLabel);
+    settings.append(headingLabel);
     if (canUseHalf(card, id)) {
       const size = node("input");
       size.type = "checkbox";
@@ -387,13 +524,10 @@ function renderInspector() {
       });
       const width = node("label");
       width.append(size, document.createTextNode("Half width"));
-      row.append(width);
+      settings.append(width);
     }
-    const rename = node("details");
-    rename.append(node("summary", "Friendly name"));
-    const ids = card.graphs?.[id]?.entities.map(entity => entity.id) || [id];
-    rename.append(...ids.map(renameEntity));
-    row.append(rename);
+    details.append(settings);
+    row.append(details);
     return row;
   }));
 }
@@ -404,7 +538,7 @@ function setHeading(card, index, value) {
     const text = value.trim();
     if (text) card.subtitles[index] = text;
     else delete card.subtitles[index];
-  });
+  }, renderGrid);
 }
 
 $("end-heading").onchange = () => {
@@ -548,6 +682,8 @@ $("add-entity").onclick = () => {
   if (kind === "entity" && card.entities.includes(id)) return say("This entity is already in the card.");
   edit(() => {
     const last = card.entities.length;
+    if (last === 0 && kind === "entity" && id.startsWith("media_player.") && card.h === 2 &&
+        fits({ ...card, h: 5 }, card.id)) card.h = 5;
     if (kind === "history") {
       const key = "graph:" + newId();
       card.graphs ||= {};
@@ -606,6 +742,16 @@ $("apply").onclick = async () => {
     result.dataset.state = state;
     result.textContent = message;
   }
+  const invalidPage = layout().pages.findIndex(view => view.cards.some(card => card.visibility && !validVisibility(card.visibility)));
+  if (invalidPage >= 0) {
+    pageIndex = invalidPage;
+    selected = page().cards.find(card => card.visibility && !validVisibility(card.visibility)).id;
+    render();
+    showInspectorSection("visibility");
+    inspectorButtons.find(button => button.dataset.section === "visibility").focus();
+    report("error", "Complete each visibility rule with an entity ID and state, and add at least one rule to each group.");
+    return;
+  }
   busy = true;
   render();
   report("pending", `Applying ${label} to the TV…`);
@@ -651,6 +797,7 @@ async function start() {
     await loadState();
     const data = await request("catalog");
     catalog = data.entities;
+    options($("visibility-entities"), catalog.map(entity => [entity.id, entity.name]));
     names = new Map(catalog.map(entity => [entity.id, entity.name]));
     templates = data.templates;
     notice = data.notice || "";

@@ -50,6 +50,7 @@ data class DashboardLayout(
                         .put("apps", item.apps?.let { JSONArray(it) }).put("appsPerRow", item.appsPerRow)
                         .put("focusOnHome", item.focusOnHome).put("twoPerRow", item.twoPerRow).put("entities", JSONArray(card.ids))
                         .put("halfWidthItems", item.halfWidthItems?.let { JSONArray(it.toList()) })
+                        .put("visibility", card.visibility?.toJson())
                         .put("subtitles", JSONObject(card.subtitles.mapKeys { it.key.toString() }))
                         .put("gauges", JSONObject(card.gauges.mapValues { (_, gauge) ->
                             JSONObject().put("min", gauge.min).put("max", gauge.max).put("needle", gauge.needle)
@@ -143,6 +144,7 @@ internal fun dashboardLayoutFromJson(json: JSONObject): DashboardLayout {
                             graph.optDouble("minY").takeIf(Double::isFinite),
                             graph.optDouble("maxY").takeIf(Double::isFinite), graph.optBoolean("fitY"))
                     },
+                    item.takeIf { it.has("visibility") }?.getJSONObject("visibility")?.let { parseCardVisibility(it) },
                 ), x, y, width, height.coerceAtMost(DashboardScreenRows), item.optBoolean("twoPerRow"),
                 apps = item.optJSONArray("apps")?.items(250) { textId(it) }?.distinct(),
                 appsPerRow = if (item.has("appsPerRow")) item.number("appsPerRow", 1..8) else 4,
@@ -185,11 +187,13 @@ internal fun seedDashboardLayout(
             DashboardPage(title, columns, cards.map { card ->
                 val x = nextRow.indices.minBy { nextRow[it] }
                 val y = nextRow[x]
+                val mediaRows = if (card.isMediaOnly) card.ids.size * 3 else 0
                 val height = (1 + card.entityRows(twoPerRow).size + card.subtitles.size +
-                    card.graphs.size * 3 + card.ids.count(::isHaWeather) * 4).coerceIn(2, DashboardScreenRows)
+                    card.graphs.size * 3 + card.ids.count(::isHaWeather) * 4 +
+                    mediaRows).coerceIn(2, DashboardScreenRows)
                 nextRow[x] += height
                 DashboardCard(
-                    SensorCard(UUID.randomUUID().toString(), card.title.take(160), card.ids, card.subtitles, card.gauges, card.graphs),
+                    SensorCard(UUID.randomUUID().toString(), card.title.take(160), card.ids, card.subtitles, card.gauges, card.graphs, card.visibility),
                     x, y, 1, height, twoPerRow,
                 )
             })
