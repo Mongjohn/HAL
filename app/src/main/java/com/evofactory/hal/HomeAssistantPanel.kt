@@ -273,7 +273,7 @@ fun HomeAssistantPanel(
                 modifier = Modifier
                     .fillMaxWidth()
                     .selectableTile(if (index == 0) upFocus else null, onOpen)
-                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+                    .dashboardCard(LocalDashboardAppearance.current, MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 WeatherReading(entities[id], connection.hourly[id], connection.daily[id])
@@ -288,7 +288,7 @@ fun HomeAssistantPanel(
                 .focusRequester(sensorsFocus)
                 .selectableTile(if (weatherIds.isEmpty()) upFocus else null, onOpen)
                 .clip(RoundedCornerShape(12.dp))
-                .background(cardColor),
+                .dashboardCard(LocalDashboardAppearance.current, cardColor, RoundedCornerShape(12.dp)),
         ) {
             Column(
                 modifier = Modifier

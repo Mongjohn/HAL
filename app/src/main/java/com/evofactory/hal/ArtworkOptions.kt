@@ -1,6 +1,5 @@
 package com.evofactory.hal
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,44 +15,34 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 
-private val tmdbReadToken = Regex("[A-Za-z0-9._~-]{1,2048}")
-
 @Composable
 internal fun ArtworkOptions(
     settings: ArtworkSettings,
-    savedToken: String,
     onEnabled: (Boolean) -> Unit,
-    onSave: (String, String) -> Boolean,
+    onSourceChanged: (Boolean) -> Unit,
+    onSave: (String, Set<String>) -> Unit,
     rowModifier: (String) -> Modifier,
 ) {
     var country by remember { mutableStateOf(settings.region) }
-    var token by remember { mutableStateOf(savedToken) }
+    var services by remember { mutableStateOf(settings.services) }
     var feedback by remember { mutableStateOf("") }
 
     fun save() {
-        val region = artworkRegion(country).orEmpty()
-        val credential = token.trim().removePrefix("Bearer ").trim()
-        feedback = when {
-            region.isEmpty() && (country.isNotBlank() || credential.isNotEmpty()) ->
-                "Enter a two-letter streaming country code, such as DK."
-            credential.isNotEmpty() && !tmdbReadToken.matches(credential) ->
-                "Enter a TMDB API Read Access Token."
-            !onSave(region, credential) -> "Couldn’t save the catalog settings."
-            else -> {
-                country = region
-                token = credential
-                "Saved"
-            }
+        val region = artworkRegion(country)
+        if (region == null && (country.isNotBlank() || services.isNotEmpty())) {
+            feedback = "Enter a two-letter streaming country code, such as DK."
+            return
         }
+        country = region.orEmpty()
+        onSave(country, services)
+        feedback = "Saved"
     }
 
     Column(
@@ -61,14 +50,23 @@ internal fun ArtworkOptions(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         HomeOption(
-            title = "Media artwork",
-            description = "Rotate artwork from streaming apps shown in the dock.",
+            title = "Artwork slideshow",
+            description = "Show rotating backgrounds on the dashboard.",
             checked = settings.enabled,
             onClick = { onEnabled(!settings.enabled) },
             modifier = rowModifier("artwork"),
         )
+        HomeOption(
+            title = "Use local artwork",
+            description = if (settings.useLocal) "Source: images uploaded in the web editor."
+                else "Source: recent streaming releases and Watch Next.",
+            checked = settings.useLocal,
+            onClick = { onSourceChanged(!settings.useLocal) },
+            modifier = rowModifier("local-artwork"),
+        )
+        if (settings.useLocal) return@Column
         Text(
-            "Watch Next is used when available. Add a TMDB API Read Access Token for more artwork from your streaming country.",
+            "Set your streaming country and select your subscriptions. JustWatch refreshes daily without an API key.",
             style = MaterialTheme.typography.bodySmall,
         )
         Row(
@@ -84,24 +82,21 @@ internal fun ArtworkOptions(
                 onImeAction = {},
                 modifier = rowModifier("country").width(152.dp),
             )
-            TvTextField(
-                value = token,
-                onValueChange = { token = it; feedback = "" },
-                placeholder = "TMDB API Read Access Token",
-                keyboardType = KeyboardType.Password,
-                imeAction = ImeAction.Done,
-                onImeAction = {},
-                modifier = rowModifier("tmdb-token").weight(1f),
-                visualTransformation = PasswordVisualTransformation(),
-            )
             Button(onClick = ::save, modifier = rowModifier("save-catalog")) { Text("Save") }
+            if (feedback.isNotEmpty()) Text(feedback, style = MaterialTheme.typography.bodySmall)
         }
-        if (feedback.isNotEmpty()) Text(feedback, style = MaterialTheme.typography.bodySmall)
-        Text("Credits", style = MaterialTheme.typography.labelMedium)
-        Image(painterResource(R.drawable.tmdb_logo), "TMDB", Modifier.width(96.dp))
-        Text(
-            "This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability data by JustWatch.",
-            style = MaterialTheme.typography.bodySmall,
-        )
+        for (service in streamingServices) {
+            HomeOption(
+                title = service.name,
+                description = "Include recent releases in this subscription.",
+                checked = service.name in services,
+                onClick = {
+                    services = if (service.name in services) services - service.name else services + service.name
+                    feedback = ""
+                },
+                modifier = rowModifier(service.name),
+            )
+        }
+        Text("Streaming availability and artwork from JustWatch.", style = MaterialTheme.typography.bodySmall)
     }
 }

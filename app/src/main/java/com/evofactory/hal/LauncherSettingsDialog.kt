@@ -37,6 +37,8 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Button
@@ -54,6 +56,7 @@ import java.util.Date
 private enum class LauncherSettingsTab(val label: String) {
     Launcher("Launcher"),
     Background("Background"),
+    Appearance("Appearance"),
     Advanced("Advanced"),
 }
 
@@ -68,9 +71,11 @@ internal fun LauncherSettingsDialog(
     autoTurnedOff: Boolean,
     showFreeMemory: Boolean,
     artworkSettings: ArtworkSettings,
-    artworkToken: String,
+    appearance: DashboardAppearance,
+    onAppearanceChanged: (DashboardAppearance) -> Unit,
     onArtworkEnabled: (Boolean) -> Unit,
-    onSaveArtworkCatalog: (String, String) -> Boolean,
+    onArtworkSourceChanged: (Boolean) -> Unit,
+    onSaveArtworkCatalog: (String, Set<String>) -> Unit,
     onCatchHomeKeyChange: (Boolean) -> Unit,
     onReopenAfterHomeChange: (Boolean) -> Unit,
     onShowFreeMemoryChange: (Boolean) -> Unit,
@@ -90,8 +95,11 @@ internal fun LauncherSettingsDialog(
     val items = remember(tab) { ListFocus() }
     val itemKeys = when (tab) {
         LauncherSettingsTab.Launcher -> listOf("catch", "reopen", "accessibility", "dashboard", "export", "import")
-        LauncherSettingsTab.Background -> listOf("artwork", "country", "tmdb-token", "save-catalog")
+        LauncherSettingsTab.Background -> listOf("artwork", "local-artwork") +
+            if (artworkSettings.useLocal) emptyList()
+            else listOf("country", "save-catalog") + streamingServices.map { it.name }
         LauncherSettingsTab.Advanced -> listOf("hours-", "hours+", "memory")
+        LauncherSettingsTab.Appearance -> DashboardTheme.entries.map { it.id } + listOf("opacity-", "opacity+", "opacity-default")
     }
     val prefs = remember { LauncherPrefs(context) }
     // An option turned on, once its explanation is accepted
@@ -142,17 +150,20 @@ internal fun LauncherSettingsDialog(
             )
             return@TopDialog
         }
+        if (tab == LauncherSettingsTab.Appearance) {
+            AppearanceOptions(appearance, onAppearanceChanged) { key, left, right ->
+                items.row(key).ringToTop(left, right)
+            }
+            return@TopDialog
+        }
         if (tab == LauncherSettingsTab.Background) {
             ArtworkOptions(
                 settings = artworkSettings,
-                savedToken = artworkToken,
                 onEnabled = onArtworkEnabled,
+                onSourceChanged = onArtworkSourceChanged,
                 onSave = onSaveArtworkCatalog,
                 rowModifier = { key ->
-                    items.row(key).ringToTop(
-                        left = key == "artwork" || key == "country",
-                        right = key == "artwork" || key == "save-catalog",
-                    )
+                    items.row(key).ringToTop(left = key != "save-catalog", right = key != "country")
                 },
             )
             return@TopDialog
@@ -226,6 +237,45 @@ internal fun LauncherSettingsDialog(
             },
             onDecline = { pendingOption = null },
         )
+    }
+}
+
+@Composable
+private fun AppearanceOptions(
+    appearance: DashboardAppearance,
+    onChange: (DashboardAppearance) -> Unit,
+    rowModifier: (String, Boolean, Boolean) -> Modifier,
+) {
+    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Theme", style = MaterialTheme.typography.titleSmall)
+            DashboardTheme.entries.forEachIndexed { index, theme ->
+                val modifier = rowModifier(theme.id, index == 0, index == DashboardTheme.entries.lastIndex)
+                val active = appearance.theme == theme
+                OutlinedButton(
+                    onClick = { if (!active) onChange(appearance.copy(theme = theme)) },
+                    modifier = modifier.semantics { selected = active },
+                ) {
+                    Text(if (active) "✓ ${theme.label}" else theme.label)
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Card opacity", style = MaterialTheme.typography.titleSmall)
+            OutlinedButton(
+                onClick = { onChange(appearance.copy(cardOpacity = (appearance.opacity - 10).coerceAtLeast(0))) },
+                modifier = rowModifier("opacity-", true, false),
+            ) { Text("−") }
+            Text("${appearance.opacity}%")
+            OutlinedButton(
+                onClick = { onChange(appearance.copy(cardOpacity = (appearance.opacity + 10).coerceAtMost(100))) },
+                modifier = rowModifier("opacity+", false, false),
+            ) { Text("+") }
+            OutlinedButton(
+                onClick = { onChange(appearance.copy(cardOpacity = null)) },
+                modifier = rowModifier("opacity-default", false, true),
+            ) { Text("Use theme default") }
+        }
     }
 }
 

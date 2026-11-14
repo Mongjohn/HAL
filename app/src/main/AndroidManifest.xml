@@ -10,6 +10,8 @@
     <!-- Camera: checks the TV has an IP address before connecting, e.g. after standby -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- Network status: whether Wi-Fi is on, its signal and speed -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
@@ -81,6 +83,11 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".ArtworkRefreshJob"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- Optional home override (Launcher settings); the user must also enable it in Accessibility -->
         <service

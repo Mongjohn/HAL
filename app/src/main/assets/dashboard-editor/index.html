@@ -11,6 +11,7 @@
   <header>
     <h1>HAL Dashboard Editor</h1>
     <div class="controls">
+      <a href="/api/logs" download="hal-logs.txt">Download HAL logs</a>
       <button id="undo" disabled>Undo</button>
       <button id="restore" disabled>Restore previous layout</button>
       <button id="apply" class="primary" disabled>Apply to TV</button>
@@ -18,6 +19,16 @@
   </header>
   <p id="apply-result" role="status" hidden></p>
   <p id="status" role="status">Loading dashboard…</p>
+  <details id="artwork-library">
+    <summary>Slideshow artwork</summary>
+    <p class="hint">On the TV, open HAL settings → Background and enable Artwork slideshow and Use local artwork. JPEG, PNG, or WebP, up to 8 MB each.</p>
+    <div class="controls">
+      <label>Images <input id="artwork-files" type="file" accept="image/jpeg,image/png,image/webp" multiple></label>
+      <button id="artwork-upload" disabled>Upload</button>
+    </div>
+    <p id="artwork-status" role="status"></p>
+    <ul id="artwork-list"></ul>
+  </details>
   <main id="workspace" hidden>
     <section class="preview" aria-label="Dashboard preview">
       <div class="controls">

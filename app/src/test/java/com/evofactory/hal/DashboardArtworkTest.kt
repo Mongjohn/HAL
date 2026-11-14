@@ -2,12 +2,13 @@ package com.evofactory.hal
 
 import android.media.tv.TvContract
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DashboardArtworkTest {
     private val netflix = "com.netflix.ninja"
     private val disney = "com.disney.disneyplus"
-    private val prime = "com.amazon.amazonvideo.livingroom"
 
     @Test
     fun watchNextRequiresVisibleStreamingAppAndSkipsPaidContent() {
@@ -20,21 +21,19 @@ class DashboardArtworkTest {
         )
         val result = watchNextArtwork(setOf(netflix, "local.game"), watchNextByApp(cards, emptyList()))
 
-        assertEquals(listOf("https://example.test/movie.jpg"), result)
+        assertEquals(listOf("https://example.test/movie.jpg"), result.map { it.posterUri })
+        assertEquals(listOf("movie"), result.map { it.title })
     }
 
     @Test
-    fun cachedArtworkMustStillMatchDockAndCountryAndBeUnexpired() {
-        val shared = CatalogArtwork("/shared.jpg", setOf(netflix, disney))
-        val hidden = CatalogArtwork("/hidden.jpg", setOf(prime))
-        val cached = ArtworkCatalogSnapshot("DK", setOf(netflix, disney, prime), 1_000L, listOf(shared, hidden))
+    fun cachedArtworkMustMatchCountryAndSubscriptions() {
+        val services = setOf("Netflix")
+        val cached = ArtworkCatalogSnapshot("DK", services, 1_000L, emptyList())
 
-        assertEquals(listOf(shared.uri), cached.eligible("DK", setOf(disney), cached.expiresAt - 1))
-        assertEquals(emptyList<String>(), cached.eligible("DK", emptySet(), 1_001L))
-        assertEquals(emptyList<String>(), cached.eligible("SE", setOf(disney), 1_001L))
-        assertEquals(emptyList<String>(), cached.eligible("DK", setOf(disney), cached.expiresAt))
+        assertTrue(cached.matches(ArtworkSettings(true, "DK", services)))
+        assertFalse(cached.matches(ArtworkSettings(true, "SE", services)))
+        assertFalse(cached.matches(ArtworkSettings(true, "DK", setOf("Disney+"))))
     }
-
     private fun card(
         app: String,
         title: String,
