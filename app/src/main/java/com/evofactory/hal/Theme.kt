@@ -1,9 +1,18 @@
 package com.evofactory.hal
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Border
+import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 
 /**
@@ -21,6 +30,65 @@ val AppColorScheme = darkColorScheme(
     onSurfaceVariant = Color(0xFF9A979D),
     inverseSurface = Color(0xFFC4C1C6),
 )
+
+internal enum class DashboardTheme(val id: String, val label: String, val defaultOpacity: Int) {
+    Classic("classic", "Classic", 100),
+    Glass("glass", "Glass", 50);
+
+    val colors get() = when (this) {
+        Classic -> AppColorScheme
+        Glass -> GlassColorScheme
+    }
+}
+
+private val GlassColorScheme = darkColorScheme(
+    background = Color(0xFF101526),
+    surface = Color(0xFF151A2B),
+    surfaceVariant = Color(0xFF29354D),
+    onSurface = Color(0xFFF6F8FF),
+    onSurfaceVariant = Color(0xFFDDE5F5),
+    inverseSurface = Color(0xFFE8EFFF),
+    primary = Color(0xFFB2D5FF),
+)
+
+internal data class DashboardAppearance(
+    val theme: DashboardTheme = DashboardTheme.Classic,
+    val cardOpacity: Int? = null,
+) {
+    val opacity get() = cardOpacity ?: theme.defaultOpacity
+}
+
+internal val LocalDashboardAppearance = staticCompositionLocalOf { DashboardAppearance() }
+
+@Composable
+internal fun HalTheme(appearance: DashboardAppearance, content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalDashboardAppearance provides appearance) {
+        MaterialTheme(colorScheme = appearance.theme.colors, content = content)
+    }
+}
+
+internal fun Modifier.dashboardCard(
+    appearance: DashboardAppearance,
+    color: Color,
+    shape: Shape,
+): Modifier {
+    val alpha = appearance.opacity / 100f
+    return when (appearance.theme) {
+        DashboardTheme.Classic -> background(color.copy(alpha = alpha), shape)
+        DashboardTheme.Glass -> background(
+            Brush.verticalGradient(
+                0f to Color(0xFF536681).copy(alpha = alpha),
+                0.4f to color.copy(alpha = alpha),
+                1f to Color(0xFF141D30).copy(alpha = alpha),
+            ),
+            shape,
+        ).border(
+            1.dp,
+            Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.48f), Color.White.copy(alpha = 0.12f))),
+            shape,
+        )
+    }
+}
 
 internal val DashboardFocusColor = Color(0xFFA49DAA)
 internal val DashboardFocusStroke = BorderStroke(2.dp, DashboardFocusColor)

@@ -872,7 +872,7 @@ private fun AssistantCard(
                 },
             )
             .heightIn(min = minHeight ?: Dp.Unspecified, max = maxHeight ?: Dp.Unspecified)
-            .background(if (entered) RaisedSurface else colors.surfaceVariant, shape)
+            .dashboardCard(LocalDashboardAppearance.current, if (entered) RaisedSurface else colors.surfaceVariant, shape)
             .padding(horizontal = CardSidePadding, vertical = if (maxHeight != null) 0.dp else 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1029,7 +1029,7 @@ private fun StatefulControlRow(connection: HaConnection, id: String, name: Strin
     val ready = connection.session != null
     Surface(
         onClick = { connection.control(id, scope, context) },
-        modifier = modifier.widenBy(ControlRowInset),
+        modifier = modifier.fillMaxWidth(),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
@@ -1071,7 +1071,7 @@ private fun SelectRow(connection: HaConnection, id: String, name: String?, modif
     }
     Surface(
         onClick = { if (options.isNotEmpty()) menuOpen = true },
-        modifier = modifier.focusRequester(row).widenBy(ControlRowInset),
+        modifier = modifier.focusRequester(row).fillMaxWidth(),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
@@ -1127,17 +1127,7 @@ private fun SelectRow(connection: HaConnection, id: String, name: String?, modif
     }
 }
 
-// How far a control row reaches into the card's padding on each side
 private val ControlRowInset = 8.dp
-
-/** Measured [by] wider on each side and placed as much to the left: the same width as the others, plus [by] on each side */
-private fun Modifier.widenBy(by: Dp) = layout { measurable, constraints ->
-    val extra = by.roundToPx()
-    val placeable = measurable.measure(
-        constraints.copy(minWidth = constraints.maxWidth + extra * 2, maxWidth = constraints.maxWidth + extra * 2),
-    )
-    layout(constraints.maxWidth, placeable.height) { placeable.place(-extra, 0) }
-}
 
 /**
  * A small switch: filled in [color] with a [knob] on the right when [on], an outline with the knob

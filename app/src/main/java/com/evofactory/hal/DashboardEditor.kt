@@ -34,6 +34,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.DataInputStream
+import java.io.IOException
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.UUID
@@ -49,6 +50,7 @@ private class DashboardEditorServer(
     private val address = link.address.hostAddress
     private val localBytes = link.address.address
     private val prefixLength = link.prefixLength
+    private val localArtwork = LocalArtwork(context)
 
     private fun isLocal(peer: InetAddress): Boolean {
         val bytes = peer.address
@@ -68,13 +70,14 @@ private class DashboardEditorServer(
     }
 
     override fun serve(session: IHTTPSession): Response {
-        fun reply(status: Response.Status, message: String, mime: String = "application/json") =
-            newFixedLengthResponse(status, "$mime; charset=utf-8", message).apply {
+        fun Response.editorHeaders() = apply {
                 addHeader("Cache-Control", "no-store")
                 addHeader("X-Content-Type-Options", "nosniff")
                 addHeader("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; base-uri 'none'")
                 closeConnection(true)
-            }
+        }
+        fun reply(status: Response.Status, message: String, mime: String = "application/json") =
+            newFixedLengthResponse(status, "$mime; charset=utf-8", message).editorHeaders()
         fun error(status: Response.Status, message: String) =
             reply(status, JSONObject().put("error", message).toString())
 
@@ -93,6 +96,42 @@ private class DashboardEditorServer(
         }
         if (asset != null && session.method == Method.GET) {
             return reply(Response.Status.OK, context.assets.open("dashboard-editor/${asset.first}").bufferedReader().use { it.readText() }, asset.second)
+        }
+        if (session.uri == "/api/logs" && session.method == Method.GET) {
+            val logs = AppLog.openDownload()
+            val response = if (logs == null) {
+                newFixedLengthResponse(Response.Status.OK, "text/plain; charset=utf-8", "No retained HAL logs.\n")
+            } else {
+                newChunkedResponse(Response.Status.OK, "text/plain; charset=utf-8", logs)
+            }
+            return response.editorHeaders().apply {
+                addHeader("Content-Disposition", "attachment; filename=\"hal-logs.txt\"")
+            }
+        }
+        if (session.uri == "/api/artwork" && session.method == Method.GET) {
+            return reply(Response.Status.OK, localArtwork.listing().toString())
+        }
+        if (session.uri in listOf("/api/artwork/upload", "/api/artwork/delete") && session.method == Method.POST) {
+            val length = headers["content-length"]?.toIntOrNull() ?: 0
+            val upload = session.uri.endsWith("/upload")
+            val maxLength = if (upload) MAX_LOCAL_ARTWORK_BYTES else 200
+            if (headers["origin"] != url || headers["content-type"] != "application/octet-stream" ||
+                headers.containsKey("transfer-encoding") || length !in 1..maxLength
+            ) return error(Response.Status.BAD_REQUEST, "Invalid artwork request.")
+            return try {
+                val bytes = ByteArray(length)
+                DataInputStream(session.inputStream).readFully(bytes)
+                if (upload) {
+                    localArtwork.upload(bytes, headers["x-artwork-name"].orEmpty())
+                } else if (!localArtwork.delete(bytes.decodeToString())) {
+                    return error(Response.Status.NOT_FOUND, "That image has already been removed.")
+                }
+                reply(Response.Status.OK, localArtwork.listing().toString())
+            } catch (e: IllegalArgumentException) {
+                error(Response.Status.BAD_REQUEST, e.message ?: "Invalid artwork.")
+            } catch (_: IOException) {
+                error(Response.Status.INTERNAL_ERROR, "HAL could not update the artwork library.")
+            }
         }
         val read = session.method == Method.GET && session.uri in listOf("/api/state", "/api/catalog")
         val write = session.method == Method.POST && session.uri in listOf("/api/apply", "/api/restore")

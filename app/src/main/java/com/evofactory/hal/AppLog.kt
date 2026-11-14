@@ -4,6 +4,10 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.Executors
@@ -19,6 +23,7 @@ private const val MS_PER_HOUR = 3_600_000L
 // A loop of errors must not fill the TV: the rest of that hour is dropped
 private const val LOG_CHUNK_MAX_BYTES = 2L * 1024 * 1024
 private const val CRASH_FLUSH_WAIT_S = 1L
+private val LOG_FILE_NAME = Regex("""\d{4}-\d{2}-\d{2}_\d{2}\.log""")
 
 // Camera addresses can hold a login, e.g. rtsp://user:password@camera/
 private val URL_LOGIN = Regex("://[^/\\s:@]+:[^/\\s@]+@")
@@ -85,6 +90,48 @@ object AppLog {
 
     /** What the kept hours take up. Reads the disk. */
     fun sizeBytes(): Long = chunks(folder ?: return 0).sumOf { it.length() }
+
+    /** Streams retained log files in order, one open file at a time. */
+    internal fun openDownload(): InputStream? {
+        val dir = folder ?: return null
+        val oldest = System.currentTimeMillis() - hoursKept * MS_PER_HOUR
+        val files = chunks(dir).filter {
+            LOG_FILE_NAME.matches(it.name) && Files.isRegularFile(it.toPath(), NOFOLLOW_LINKS) && it.lastModified() >= oldest
+        }.sortedBy { it.name }
+        val streams = files.asSequence().mapNotNull {
+            try {
+                it.inputStream()
+            } catch (_: IOException) {
+                // Retention can remove a chunk during the download.
+                null
+            }
+        }.iterator()
+        if (!streams.hasNext()) return null
+        return object : InputStream() {
+            private var current: InputStream? = streams.next()
+
+            override fun read(): Int {
+                val byte = ByteArray(1)
+                return if (read(byte, 0, 1) < 0) -1 else byte[0].toInt() and 0xff
+            }
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (length == 0) return 0
+                while (true) {
+                    val stream = current ?: return -1
+                    val count = stream.read(buffer, offset, length)
+                    if (count >= 0) return count
+                    stream.close()
+                    current = if (streams.hasNext()) streams.next() else null
+                }
+            }
+
+            override fun close() {
+                current?.close()
+                current = null
+            }
+        }
+    }
 
     private fun write(level: String, tag: String, message: String) {
         val now = LocalDateTime.now()

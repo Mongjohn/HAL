@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
-import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -104,7 +103,7 @@ class MainActivity : ComponentActivity() {
     private var importOpen by mutableStateOf(false)
     private var watchNext by mutableStateOf(emptyList<WatchNextCard>())
     private var artworkSettings by mutableStateOf(ArtworkSettings())
-    private var artworkToken by mutableStateOf("")
+    private var dashboardAppearance by mutableStateOf(DashboardAppearance())
     private var resumed by mutableStateOf(false)
     private var watchNextRefresh: Job? = null
 
@@ -134,7 +133,8 @@ class MainActivity : ComponentActivity() {
         dashboardLayouts = prefs.dashboardLayouts
         frigate = prefs.frigate
         artworkSettings = prefs.artworkSettings
-        artworkToken = prefs.readArtworkToken()
+        dashboardAppearance = prefs.dashboardAppearance
+        scheduleArtwork(this, artworkSettings)
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
         if (!canReadWatchNext()) requestPermissions(arrayOf(READ_TV_LISTINGS), 0)
         setContent {
@@ -153,7 +153,7 @@ class MainActivity : ComponentActivity() {
                 }
                 onDispose { if (registered) contentResolver.unregisterContentObserver(observer) }
             }
-            MaterialTheme(colorScheme = AppColorScheme) {
+            HalTheme(dashboardAppearance) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val all = installed
                     val visible = remember(all, order, hidden) { all?.let { arrange(it, order, hidden) } }
@@ -310,12 +310,13 @@ class MainActivity : ComponentActivity() {
                         }
                         return true
                     }
+                    var currentArtwork by remember { mutableStateOf<ArtworkLabel?>(null) }
                     DashboardArtwork(
                         settings = artworkSettings,
-                        token = artworkToken,
-                        visiblePackages = remember(visible) { visible.orEmpty().map { it.key }.toSet() },
+                        visibleApps = remember(visible) { visible.orEmpty().associate { it.key to it.label } },
                         watchNext = watchNextByPackage,
                         active = resumed,
+                        onArtworkChanged = { currentArtwork = it },
                     )
                     Column(modifier = Modifier.fillMaxSize().onPreviewKeyEvent(::onRemoteButton)) {
                         HomeTopBar(
@@ -344,6 +345,9 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.weight(1f, fill = false),
                                 )
                                 if (haServer.isSet) HaActionButtons(haConnection, actions)
+                                currentArtwork?.takeIf { it.title.isNotBlank() }?.let {
+                                    ArtworkCaption(it, Modifier.weight(1f, fill = false))
+                                }
                                 NetworkButton(
                                     onClick = { networkStatusOpen = true },
                                     modifier = Modifier.focusRequester(networkFocus),
@@ -589,20 +593,27 @@ class MainActivity : ComponentActivity() {
                             },
                             showFreeMemory = showFreeMemory,
                             artworkSettings = artworkSettings,
-                            artworkToken = artworkToken,
+                            appearance = dashboardAppearance,
+                            onAppearanceChanged = { appearance ->
+                                dashboardAppearance = appearance
+                                prefs.dashboardAppearance = appearance
+                            },
                             onArtworkEnabled = { enabled ->
                                 artworkSettings = artworkSettings.copy(enabled = enabled)
                                 prefs.artworkSettings = artworkSettings
+                                scheduleArtwork(this@MainActivity, artworkSettings)
                             },
-                            onSaveArtworkCatalog = { region, token ->
-                                if (!prefs.saveArtworkToken(token)) {
-                                    false
-                                } else {
-                                    artworkSettings = artworkSettings.copy(region = region)
-                                    prefs.artworkSettings = artworkSettings
-                                    artworkToken = token
-                                    true
-                                }
+                            onSaveArtworkCatalog = { region, services ->
+                                val updated = artworkSettings.copy(region = region, services = services)
+                                val changed = updated != artworkSettings
+                                artworkSettings = updated
+                                prefs.artworkSettings = updated
+                                scheduleArtwork(this@MainActivity, updated, settingsChanged = changed)
+                            },
+                            onArtworkSourceChanged = { useLocal ->
+                                artworkSettings = artworkSettings.copy(useLocal = useLocal)
+                                prefs.artworkSettings = artworkSettings
+                                scheduleArtwork(this@MainActivity, artworkSettings)
                             },
                             onShowFreeMemoryChange = { on ->
                                 prefs.showFreeMemory = on
@@ -783,6 +794,11 @@ class MainActivity : ComponentActivity() {
             val apps = withContext(Dispatchers.IO) { loadInstalledApps(this@MainActivity) }
             if (apps != installed) prefs.installedApps = apps
             installed = apps
+            val settings = prefs.artworkSettings
+            if (settings != artworkSettings) {
+                artworkSettings = settings
+                scheduleArtwork(this@MainActivity, settings, settingsChanged = true)
+            }
         }
         refreshWatchNext()
     }

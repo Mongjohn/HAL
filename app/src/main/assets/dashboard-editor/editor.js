@@ -666,3 +666,81 @@ async function start() {
   }
 }
 start();
+
+const artworkPanel = $("artwork-library");
+const artworkInput = $("artwork-files");
+const artworkUpload = $("artwork-upload");
+const artworkStatus = $("artwork-status");
+const artworkList = $("artwork-list");
+let artworkBusy = false;
+
+function updateArtworkControls() {
+  artworkInput.disabled = artworkBusy;
+  artworkUpload.disabled = artworkBusy || !artworkInput.files.length;
+  for (const button of artworkList.querySelectorAll("button")) button.disabled = artworkBusy;
+}
+
+async function artworkRequest(action, body, name) {
+  const response = await fetch("/api/artwork" + (action ? "/" + action : ""), {
+    signal: AbortSignal.timeout(30_000),
+    ...(action ? {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", ...(name ? { "X-Artwork-Name": name } : {}) },
+      body,
+    } : {}),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok || !json) throw new Error(json?.error || "HAL could not read the artwork library.");
+  return json;
+}
+
+function renderArtwork({ files, limit }) {
+  artworkList.replaceChildren();
+  for (const file of files) {
+    const row = document.createElement("li");
+    const button = document.createElement("button");
+    button.textContent = "Delete";
+    button.setAttribute("aria-label", "Delete " + file.name);
+    button.addEventListener("click", () => changeArtwork(() => artworkRequest("delete", file.id)));
+    row.append(document.createTextNode(file.name + " "), button);
+    artworkList.append(row);
+  }
+  artworkStatus.textContent = files.length + " of " + limit + " images";
+}
+
+async function changeArtwork(action) {
+  if (artworkBusy) return;
+  artworkBusy = true;
+  updateArtworkControls();
+  try {
+    renderArtwork(await action());
+  } catch (error) {
+    artworkStatus.textContent = error.message;
+  } finally {
+    artworkBusy = false;
+    updateArtworkControls();
+  }
+}
+
+artworkPanel.addEventListener("toggle", () => {
+  if (artworkPanel.open) changeArtwork(() => artworkRequest());
+});
+artworkInput.addEventListener("change", updateArtworkControls);
+artworkUpload.addEventListener("click", () => changeArtwork(async () => {
+  let listing;
+  let failures = [];
+  for (const file of artworkInput.files) {
+    try {
+      const name = file.name.replace(/[^a-zA-Z0-9_. -]/g, "_").slice(0, 120);
+      listing = await artworkRequest("upload", file, name);
+    } catch (error) {
+      failures.push(file.name + ": " + error.message);
+    }
+  }
+  artworkInput.value = "";
+  if (failures.length) {
+    if (listing) renderArtwork(listing);
+    throw new Error(failures.join(" "));
+  }
+  return listing;
+}));

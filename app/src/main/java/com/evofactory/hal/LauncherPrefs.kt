@@ -2,10 +2,7 @@ package com.evofactory.hal
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.util.AtomicFile
 import androidx.core.content.edit
-import java.io.File
-import java.io.IOException
 import java.util.Locale
 
 internal const val ALL_APPS_TILE_KEY = "dock:all_apps"
@@ -23,43 +20,44 @@ internal fun dockTileKeys(appKeys: List<String>, order: List<String>, showAllApp
  */
 class LauncherPrefs(context: Context) {
     private val prefs = context.getSharedPreferences("launcher", Context.MODE_PRIVATE)
-    private val artworkCredential = AtomicFile(File(context.noBackupFilesDir, "tmdb-token"))
+
+    internal var lastDashboardArtwork: String?
+        get() = prefs.getString("last_dashboard_artwork", null)
+        set(value) = prefs.edit { putString("last_dashboard_artwork", value) }
+
+    internal var dashboardAppearance: DashboardAppearance
+        get() = DashboardAppearance(
+            theme = DashboardTheme.entries.firstOrNull { it.id == prefs.getString("dashboard_theme", null) }
+                ?: DashboardTheme.Classic,
+            cardOpacity = prefs.getInt("dashboard_card_opacity", -1).takeIf { it in 0..100 },
+        )
+        set(value) = prefs.edit {
+            putString("dashboard_theme", value.theme.id)
+            if (value.cardOpacity == null) remove("dashboard_card_opacity")
+            else putInt("dashboard_card_opacity", value.cardOpacity)
+        }
 
     internal var artworkSettings: ArtworkSettings
-        get() = ArtworkSettings(
-            enabled = prefs.getBoolean("media_artwork", false),
-            region = artworkRegion(prefs.getString("artwork_region", null) ?: Locale.getDefault().country).orEmpty(),
-        )
+        get() {
+            val services = prefs.getStringSet("artwork_services", null)?.toSet() ?: run {
+                val hiddenPackages = hidden.toSet()
+                val visiblePackages = installedApps.map { it.key }.toSet() - hiddenPackages
+                streamingServices.filter { service -> service.packages.any { it in visiblePackages } }
+                    .map { it.name }.toSet()
+            }
+            return ArtworkSettings(
+                enabled = prefs.getBoolean("media_artwork", false),
+                region = artworkRegion(prefs.getString("artwork_region", null) ?: Locale.getDefault().country).orEmpty(),
+                services = services,
+                useLocal = prefs.getBoolean("local_artwork", false),
+            )
+        }
         set(value) = prefs.edit {
             putBoolean("media_artwork", value.enabled)
             putString("artwork_region", value.region)
+            putStringSet("artwork_services", value.services)
+            putBoolean("local_artwork", value.useLocal)
         }
-
-    internal fun readArtworkToken(): String = try {
-        artworkCredential.readFully().decodeToString()
-    } catch (_: IOException) {
-        ""
-    }
-
-    internal fun saveArtworkToken(token: String): Boolean {
-        if (token.isEmpty()) {
-            artworkCredential.delete()
-            return !artworkCredential.baseFile.exists()
-        }
-        val stream = try {
-            artworkCredential.startWrite()
-        } catch (_: IOException) {
-            return false
-        }
-        return try {
-            stream.write(token.encodeToByteArray())
-            artworkCredential.finishWrite(stream)
-            true
-        } catch (_: IOException) {
-            artworkCredential.failWrite(stream)
-            false
-        }
-    }
 
     /** Package names of visible apps, in row order */
     var order: List<String>

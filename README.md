@@ -10,21 +10,26 @@ Project repository: https://github.com/Mongjohn/HAL
 - **Home Assistant:** build dashboards for the Assistant tab and the Home panel with sensors, weather, scenes and scripts. Up to three scenes or scripts can also appear as buttons in the launcher top bar.
 - **Frigate alerts:** the last seven days of alerts, with clips that play full screen.
 - **Apps card:** choose and arrange the Android apps on HAL Home in the web editor. Use the remote to focus and launch individual app tiles.
+- **Media artwork.** In HAL settings under **Background**, enable the artwork slideshow, enter your streaming country, and save your subscriptions. HAL refreshes its library of up to 20 recent releases daily using JustWatch. No API key is required.
 - **Home button helper:** optionally makes the Home button bring you to HAL. Choose one dashboard card in the web editor to receive focus.
 - **TV to TV:** send your settings to another TV on your network.
 - **Diagnostics:** a built-in ping tool, network status, and debug logs with logins and tokens stripped out.
 
 Cameras, Home Assistant and Frigate are all optional. HAL shows your selected apps on the Home tab.
 
+In **HAL settings → Appearance**, choose Classic or Glass and adjust dashboard card opacity. **Use theme default** restores the opacity defined by the selected theme.
+
 ## Privacy
 
-HAL has no account or analytics. Its dashboard editor uses a temporary HTTP server on the TV. The app connects to the addresses you enter, to other TVs on your network when you transfer settings, and to the artwork URLs supplied by apps through Android TV. Your Home Assistant password isn't stored: the TV keeps a login you can revoke from your Home Assistant profile.
+HAL has no account or analytics. Its dashboard editor uses a temporary HTTP server on the TV. The app connects to the addresses you enter and to other TVs on your network when you transfer settings. With the media artwork source selected and the slideshow enabled, it fetches regional release pages and images from JustWatch using your selected services, and can load artwork URLs supplied through Android TV. The TV stores a Home Assistant login you can revoke from your profile.
 
 ## Edit dashboards
 
 On the TV, open the Settings cog and turn on **Enable Web Editor**. Scan the QR code or open the displayed HTTP address on port 8765 from a phone or computer on the same Wi-Fi or Ethernet network. Choose the Assistant tab or Home panel, arrange and resize cards, and select their entities. Open **Friendly name** next to an entity in a card to set the name HAL uses throughout that surface. Use a Home Assistant dashboard as a template to start with a copy you can edit independently. Select **Apply to TV** to save the current surface.
 
 The editor is accessible on the local network without pairing while it is enabled. Closing the QR popup leaves the listener running and HAL keeps the screen awake while in the foreground. Toggle **Enable Web Editor** off in the cog menu to stop the listener.
+
+Open **Slideshow artwork** in the web editor to upload or delete images. HAL stores up to 20 JPEG, PNG, or WebP files in its private `files/slideshow-artwork` directory. In **HAL settings → Background**, turn on **Artwork slideshow** and **Use local artwork** to display the uploads. Turn off **Use local artwork** to show media artwork from streaming releases and Watch Next.
 
 ## Requirements
 

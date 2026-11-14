@@ -1,6 +1,5 @@
 package com.evofactory.hal
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -52,7 +51,7 @@ internal fun DashboardAppsCard(
     var menuApp by remember { mutableStateOf<String?>(null) }
     BoxWithConstraints(
         Modifier.fillMaxWidth().height(height)
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+            .dashboardCard(LocalDashboardAppearance.current, MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
             .padding(10.dp),
     ) {
         val gap = minOf(8.dp, maxHeight / (rows.size * 2))
