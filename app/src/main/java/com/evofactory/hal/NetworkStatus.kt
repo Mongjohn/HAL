@@ -100,8 +100,15 @@ fun Context.readNetworkStatus(): NetworkStatus {
     val network = connectivity.activeNetwork
     val capabilities = network?.let(connectivity::getNetworkCapabilities)
     val link = network?.let(connectivity::getLinkProperties)
-    if (network == null || capabilities == null || link == null) return noNetworkStatus(prefs)
+    if (capabilities == null || link == null) return noNetworkStatus(prefs)
+    return networkStatus(capabilities, link, prefs)
+}
 
+private fun Context.networkStatus(
+    capabilities: NetworkCapabilities,
+    link: LinkProperties,
+    prefs: LauncherPrefs,
+): NetworkStatus {
     val kind = when {
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetworkKind.Ethernet
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkKind.Wifi
@@ -195,23 +202,52 @@ private fun subnetMask(prefixLength: Int): String {
 @Composable
 fun NetworkButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var status by remember { mutableStateOf(context.readNetworkStatus()) }
+    var status by remember(context) { mutableStateOf(context.readNetworkStatus()) }
     var focused by remember { mutableStateOf(false) }
     DisposableEffect(context) {
         val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val prefs = LauncherPrefs(context)
         val callback = object : ConnectivityManager.NetworkCallback() {
-            private fun refresh() {
-                val new = context.readNetworkStatus()
+            private var current: Network? = null
+            private var capabilities: NetworkCapabilities? = null
+            private var link: LinkProperties? = null
+
+            private fun publish(new: NetworkStatus) {
                 if (new.kind != status.kind || new.problem != status.problem) {
                     AppLog.i(TAG, "${new.kind.label}: ${new.problem ?: "connected"}")
                 }
                 status = new
             }
 
-            override fun onAvailable(network: Network) = refresh()
-            override fun onLost(network: Network) = refresh()
-            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
-            override fun onLinkPropertiesChanged(network: Network, link: LinkProperties) = refresh()
+            private fun publishCurrent() {
+                val capabilities = capabilities ?: return
+                val link = link ?: return
+                publish(context.networkStatus(capabilities, link, prefs))
+            }
+
+            override fun onAvailable(network: Network) {
+                current = network
+                capabilities = null
+                link = null
+            }
+
+            override fun onLost(network: Network) {
+                if (current != network) return
+                current = null
+                publish(context.noNetworkStatus(prefs))
+            }
+
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                if (current != network) return
+                this.capabilities = capabilities
+                publishCurrent()
+            }
+
+            override fun onLinkPropertiesChanged(network: Network, links: LinkProperties) {
+                if (current != network) return
+                link = links
+                publishCurrent()
+            }
         }
         connectivity.registerDefaultNetworkCallback(callback, Handler(Looper.getMainLooper()))
         onDispose { connectivity.unregisterNetworkCallback(callback) }

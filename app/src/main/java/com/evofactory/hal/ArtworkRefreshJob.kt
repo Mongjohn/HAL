@@ -62,7 +62,7 @@ class ArtworkRefreshJob : JobService() {
                 val cached = catalog.cached()
                 val age = cached?.let { System.currentTimeMillis() - it.checkedAt }
                 val fresh = params.jobId == IMMEDIATE_ARTWORK_JOB && cached?.matches(settings) == true &&
-                    cached.hasLabels && age != null && age in 0 until CATALOG_INTERVAL
+                    cached.hasYearMetadata && age != null && age in 0 until CATALOG_INTERVAL
                 if (fresh) return@withLock true
                 catalog.refresh(settings).also { if (it) catalogChanges.value++ }
             }

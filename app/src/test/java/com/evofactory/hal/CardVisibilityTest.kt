@@ -86,6 +86,29 @@ class CardVisibilityTest {
     }
 
     @Test
+    fun itemRulesRoundTripAndFollowTheirEntitiesOnBothCardTypes() {
+        val layout = dashboardLayoutFromJson(JSONObject("""
+            {"pages":[{"title":"Home","columns":2,"cards":[
+                {"id":"readings","x":0,"y":0,"w":1,"h":3,"entities":["sensor.temperature"],"visibility":null,
+                    "itemVisibility":{"0":{"keepSpace":true,"rule":{"condition":"state","entity":"sensor.mode","state":"home"}}}},
+                {"id":"apps","x":1,"y":0,"w":1,"h":3,"entities":[],"apps":["app.one","app.two"],
+                    "itemVisibility":{"app.one":{"rule":{"condition":"state","entity":"light.hall","state_not":"off"}}}}
+            ]}]}
+        """.trimIndent()))
+        val saved = dashboardLayoutFromJson(layout.toJson())
+        val (readings, apps) = saved.pages.single().cards
+        assertNull(readings.card.visibility)
+        assertTrue(readings.itemVisibility.getValue("0").keepSpace)
+        assertFalse(apps.itemVisibility.getValue("app.one").keepSpace)
+        assertEquals(setOf("sensor.temperature", "sensor.mode", "light.hall"), saved.entityIds.toSet())
+
+        val reordered = saved.replaceApps(listOf("app.two", "app.one"))
+        assertEquals(apps.itemVisibility, reordered.pages.single().cards.last().itemVisibility)
+        val removed = saved.replaceApps(listOf("app.two"))
+        assertTrue(removed.pages.single().cards.last().itemVisibility.isEmpty())
+    }
+
+    @Test
     fun importerReportsUnsupportedStateOptionsWithoutChangingSiblingCards() {
         val board = requireNotNull(parseDashboard(JSONObject("""
             {"views":[{"cards":[

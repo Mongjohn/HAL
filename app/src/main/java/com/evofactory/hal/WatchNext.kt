@@ -27,6 +27,7 @@ data class WatchNextCard(
     val engagedMillis: Long,
     val programType: Int? = null,
     val availability: Int? = null,
+    val releaseYear: Int? = null,
 ) {
     val key: String get() = intentUri
     // Match the key used by the old Watch Next row, including devices that reported seconds.
@@ -79,6 +80,8 @@ private fun readWatchNext(context: Context): List<WatchNextCard> = buildList {
                 engagedMillis = if (engaged in 1 until 100_000_000_000L) engaged * 1000 else engaged,
                 programType = number(TvContract.WatchNextPrograms.COLUMN_TYPE)?.toInt(),
                 availability = number(TvContract.WatchNextPrograms.COLUMN_AVAILABILITY)?.toInt(),
+                releaseYear = text(TvContract.WatchNextPrograms.COLUMN_RELEASE_DATE)
+                    ?.substringBefore('-')?.toIntOrNull()?.takeIf { it in 1000..9999 },
             ))
         }
     }

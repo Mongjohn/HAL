@@ -62,6 +62,16 @@ class JustWatchReleasesTest {
     }
 
     @Test
+    fun readsTheOriginalYearForTheTitleInsteadOfASeasonOrRelatedTitle() {
+        val page = """<script id="__NUXT_DATA__" type="application/json">[
+            "/dk/tv-series/example/season-2", 2026, {"fullPath":0,"originalReleaseYear":1},
+            "/dk/tv-series/example", 2019, {"fullPath":3,"originalReleaseYear":4}
+        ]</script>"""
+        assertEquals(2019, titleReleaseYear(page, "/dk/tv-series/example"))
+        assertEquals(null, titleReleaseYear(page, "/dk/movie/other"))
+    }
+
+    @Test
     fun keepsAtMostTwentyUniqueTitlesOrderedByStreamingDate() {
         val today = LocalDate.parse("2026-11-13")
         val older = (1..22).map { StreamingRelease("/dk/movie/title-$it", today.minusDays(it.toLong()), null) }

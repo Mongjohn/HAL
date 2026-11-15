@@ -25,6 +25,17 @@ class HaCardLayoutTest {
     }
 
     @Test
+    fun releasedHalfWidthSlotsCanReflowWithoutCrossingSubheadings() {
+        val card = SensorCard(
+            "room", "Living room",
+            listOf("light.ceiling", "switch.fan", "sensor.temperature", "light.floor", "light.desk"),
+            subtitles = mapOf(3 to "Lamps"),
+        )
+        assertEquals(listOf(listOf(0, 2), listOf(4)), card.itemRows(listOf(0, 2, 4), true, null))
+        assertEquals(listOf(listOf(0, 1), listOf(2), listOf(4)), card.itemRows(listOf(0, 1, 2, 4), true, null))
+    }
+
+    @Test
     fun sortsCardTitlesWithoutReorderingEntitiesInsideCards() {
         val ids = listOf("switch.fan", "light.floor", "switch.heater", "light.desk")
         val layout = HaCardLayout(grouping = HaCardGrouping.Type)

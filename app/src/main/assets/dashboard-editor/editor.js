@@ -280,20 +280,143 @@ function renderGrid() {
   }
 }
 
-function renderEntities() {
-  const search = $("search").value.trim().toLowerCase();
-  const room = $("room").value;
-  const domain = $("domain").value;
-  const matches = catalog.filter(entity =>
-    (!room || entity.area === room) && (!domain || entity.domain === domain) &&
-    (entity.name.toLowerCase().includes(search) || entity.id.includes(search)));
-  $("entities").replaceChildren(...matches.slice(0, 80).map(entity => {
-    const row = node("li");
-    row.append(button(entity.name + " · " + entity.id, () => { $("manual").value = entity.id; }));
-    return row;
-  }));
-  if (matches.length > 80) $("entities").append(node("li", "Search or filter to see more entities."));
+const entityIdPattern = /^[a-z0-9_]+\.[a-z0-9_]+$/;
+let pickerCount = 0;
+
+function entityPicker(value = "", update = null) {
+  const wrapper = node("div", null, "entity-picker");
+  const label = node("label", "Entity");
+  const input = node("input");
+  input.value = value;
+  input.maxLength = 255;
+  input.autocomplete = "off";
+  input.placeholder = "Search or enter entity ID";
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-autocomplete", "list");
+  label.append(input);
+
+  const popup = node("div", null, "entity-picker-options");
+  const filters = node("div", null, "controls");
+  const room = node("select");
+  const type = node("select");
+  for (const [name, select] of [["Room", room], ["Type", type]]) {
+    const field = node("label", name);
+    field.append(select);
+    filters.append(field);
+  }
+  const results = node("div", null, "entity-picker-results");
+  results.id = "entity-picker-" + ++pickerCount;
+  results.tabIndex = -1;
+  results.setAttribute("role", "listbox");
+  results.setAttribute("aria-label", "Matching entities");
+  input.setAttribute("aria-controls", results.id);
+  const status = node("div", null, "hint");
+  status.setAttribute("role", "status");
+  popup.append(filters, results, status);
+  wrapper.append(label, popup);
+  let matches = [];
+  let highlighted = -1;
+  let query = "";
+
+  function commit(id) {
+    input.value = id;
+    if (update && id !== value) {
+      value = id;
+      update(id);
+    }
+  }
+  function close() {
+    popup.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+  }
+  function choose(id) {
+    commit(id);
+    input.focus();
+    close();
+  }
+  function resultsForQuery() {
+    const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    const found = catalog.filter(entity =>
+      (!room.value || entity.area === room.value) && (!type.value || entity.domain === type.value) &&
+      words.every(word => (entity.name + " " + entity.id).toLowerCase().includes(word)));
+    matches = found.slice(0, 60);
+    highlighted = -1;
+    input.removeAttribute("aria-activedescendant");
+    results.replaceChildren(...matches.map((entity, index) => {
+      const option = node("div");
+      option.id = results.id + "-" + index;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+      option.append(node("span", entity.name), node("small", entity.id));
+      option.onpointerdown = event => event.preventDefault();
+      option.onclick = () => choose(entity.id);
+      return option;
+    }));
+    status.textContent = !found.length ? "No matching entities." :
+      found.length > matches.length ? "Search or filter to see more entities." : "";
+  }
+  function open() {
+    for (const [select, field, all] of [[room, "area", "All rooms"], [type, "domain", "All types"]]) {
+      const values = [...new Set(catalog.map(entity => entity[field]).filter(Boolean))].sort();
+      options(select, [["", all], ...values.map(value => [value, value])]);
+    }
+    popup.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    resultsForQuery();
+  }
+  input.onfocus = input.onclick = () => {
+    if (popup.hidden) {
+      query = entityIdPattern.test(input.value) ? "" : input.value;
+      open();
+    }
+  };
+  input.oninput = () => {
+    query = input.value;
+    if (popup.hidden) open();
+    else resultsForQuery();
+  };
+  input.onchange = () => {
+    const id = input.value.trim();
+    if (!id || entityIdPattern.test(id)) commit(id);
+  };
+  room.onchange = type.onchange = resultsForQuery;
+  wrapper.onfocusout = event => {
+    if (wrapper.contains(event.relatedTarget)) return;
+    const id = input.value.trim();
+    if (!id || entityIdPattern.test(id)) commit(id);
+    else if (update) input.value = value;
+    close();
+  };
+  input.onkeydown = event => {
+    if (event.key === "Escape" && !popup.hidden) {
+      event.preventDefault();
+      if (update) input.value = value;
+      close();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (popup.hidden) open();
+      if (!matches.length) return;
+      const shift = event.key === "ArrowDown" ? 1 : -1;
+      const next = highlighted < 0 && shift < 0 ? matches.length - 1 : highlighted + shift;
+      results.children[highlighted]?.setAttribute("aria-selected", "false");
+      highlighted = Math.max(0, Math.min(matches.length - 1, next));
+      const option = results.children[highlighted];
+      option.setAttribute("aria-selected", "true");
+      input.setAttribute("aria-activedescendant", option.id);
+      option.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter" && !popup.hidden) {
+      event.preventDefault();
+      if (highlighted >= 0) choose(matches[highlighted].id);
+      else if (entityIdPattern.test(input.value.trim())) choose(input.value.trim());
+    }
+  };
+  close();
+  return { wrapper, input };
 }
+
+const contentEntity = entityPicker();
+$("content-entity-picker").replaceChildren(contentEntity.wrapper);
 
 function canUseHalf(card, id) {
   const mediaOnly = card.entities.length > 0 &&
@@ -315,6 +438,9 @@ function editContents(card, order) {
   if (trailing) subtitles[order.length] = trailing;
   card.halfWidthItems = order.flatMap((old, index) => half.includes(old) ? [index] : []);
   card.entities = order.map(index => card.entities[index]);
+  const visibility = card.itemVisibility || {};
+  card.itemVisibility = Object.fromEntries(order.flatMap((old, index) =>
+    visibility[old] ? [[index, visibility[old]]] : []));
   card.subtitles = subtitles;
   for (const map of [card.graphs, card.gauges]) {
     for (const id of Object.keys(map || {})) if (!card.entities.includes(id)) delete map[id];
@@ -330,6 +456,7 @@ function renderApps(card) {
   const choices = installedApps.filter(app => !card.apps.includes(app.id));
   options($("app-choice"), choices.map(app => [app.id, app.name]));
   $("add-app").disabled = choices.length === 0 || card.apps.length >= 250;
+  const openItems = openItemVisibility($("selected-apps"));
   $("selected-apps").replaceChildren(...card.apps.map((id, index) => {
     const row = node("li");
     const name = appName(id);
@@ -340,7 +467,12 @@ function renderApps(card) {
     const down = button("↓", () => move(1), "Move " + name + " down");
     up.disabled = index === 0;
     down.disabled = index === card.apps.length - 1;
-    row.append(node("span", name), up, down, button("Remove", () => edit(() => card.apps.splice(index, 1))));
+    const controls = node("div", null, "entity-actions");
+    controls.append(up, down, button("Remove", () => edit(() => {
+      card.apps.splice(index, 1);
+      if (card.itemVisibility) delete card.itemVisibility[id];
+    }), "Remove " + name));
+    row.append(node("span", name, "item-name"), controls, itemVisibilityEditor(card, id, openItems));
     return row;
   }));
 }
@@ -371,9 +503,7 @@ function renderVisibilityRule(rule, remove, depth = 0) {
   panel.append(node("legend", rule.condition === "state" ? "Entity state" : "Condition group"));
   const select = node("select");
   if (rule.condition === "state") {
-    const entity = visibilityField("Entity", rule.entity, value => { rule.entity = value.trim(); });
-    entity.querySelector("input").setAttribute("list", "visibility-entities");
-    panel.append(entity);
+    panel.append(entityPicker(rule.entity, value => edit(() => { rule.entity = value; }, () => {})).wrapper);
     const comparison = "state_not" in rule ? "state_not" : "state";
     const values = rule[comparison];
     options(select, [["state", "Is any of"], ["state_not", "Is none of"]], comparison);
@@ -398,30 +528,67 @@ function renderVisibilityRule(rule, remove, depth = 0) {
     label.append(select);
     panel.append(label);
     rule.conditions.forEach((child, index) => {
-      panel.append(renderVisibilityRule(child, () => rule.conditions.splice(index, 1), depth + 1));
+      panel.append(renderVisibilityRule(child, () => {
+        rule.conditions.splice(index, 1);
+        if (!rule.conditions.length) remove();
+      }, depth + 1));
     });
     if (depth < 8 && rule.conditions.length < 32) {
       panel.append(button("Add condition", () => edit(() => rule.conditions.push(newStateRule()))));
       if (depth < 7) panel.append(button("Add group", () => edit(() => rule.conditions.push(newRuleGroup()))));
     }
   }
-  panel.append(button(depth === 0 ? "Clear visibility rules" : "Remove rule", () => edit(remove)));
+  panel.append(button(depth === 0 ? "Clear rules" : "Remove rule", () => edit(remove)));
   return panel;
 }
 
+function visibilityEditor(rule, setRule) {
+  return rule
+    ? renderVisibilityRule(rule, () => setRule(null))
+    : button("Add visibility rules", () => edit(() => setRule(newRuleGroup())));
+}
+
 function renderVisibility(card) {
-  $("visibility-status").textContent = card.visibility
-    ? "This card is visible on the TV when its rules match."
-    : "This card is always visible on the TV. Add rules to show it only in certain states.";
-  $("visibility-rules").replaceChildren(card.visibility
-    ? renderVisibilityRule(card.visibility, () => { delete card.visibility; })
-    : button("Add visibility rules", () => edit(() => { card.visibility = newRuleGroup(); })));
+  $("visibility-status").textContent = card.visibility ? "Show this card when its rules match." : "This card is always visible.";
+  $("visibility-rules").replaceChildren(visibilityEditor(card.visibility, rule => {
+    if (rule) card.visibility = rule;
+    else delete card.visibility;
+  }));
+}
+
+function openItemVisibility(list) {
+  return new Set([...list.querySelectorAll("details[data-item-visibility][open]")].map(details => details.dataset.itemVisibility));
+}
+
+function itemVisibilityEditor(card, key, openItems) {
+  const details = node("details", null, "inspector-disclosure");
+  details.dataset.itemVisibility = key;
+  details.open = openItems.has(key);
+  const setting = card.itemVisibility?.[key];
+  details.append(node("summary", setting ? "Visibility · conditional" : "Visibility"));
+  details.append(visibilityEditor(setting?.rule, rule => {
+    if (rule) {
+      card.itemVisibility ||= {};
+      card.itemVisibility[key] = { rule, keepSpace: false };
+    } else {
+      delete card.itemVisibility[key];
+    }
+  }));
+  if (setting) {
+    const space = node("select");
+    options(space, [["release", "Release space"], ["keep", "Keep space empty"]], setting.keepSpace ? "keep" : "release");
+    space.onchange = () => edit(() => { setting.keepSpace = space.value === "keep"; }, () => {});
+    const label = node("label", "When this item is hidden");
+    label.append(space);
+    details.append(label);
+  }
+  return details;
 }
 
 function validVisibility(rule) {
   if (rule.condition === "state") {
-    return /^[a-z0-9_]+\.[a-z0-9_]+$/.test(rule.entity) &&
-      (rule.state || rule.state_not).every(value => value.length > 0);
+    const values = rule.state || rule.state_not;
+    return entityIdPattern.test(rule.entity) && values.length > 0 && values.every(value => value.length > 0);
   }
   return rule.conditions.length > 0 && rule.conditions.every(validVisibility);
 }
@@ -449,6 +616,8 @@ function renderInspector() {
   if (!sameCard) {
     inspectedCard = card?.id;
     $("contents").replaceChildren();
+    $("selected-apps").replaceChildren();
+    contentEntity.input.value = "";
     $("end-heading-settings").open = false;
     $("add-entities").open = !!card && card.entities.length === 0;
     inspectorSection = "content";
@@ -470,6 +639,7 @@ function renderInspector() {
   if (card.apps) return renderApps(card);
   $("end-heading").value = card.subtitles?.[card.entities.length] || "";
   const openRows = new Set([...$("contents").querySelectorAll("details[open]")].map(details => details.dataset.row));
+  const openItems = openItemVisibility($("contents"));
   const refreshRowNames = [];
   $("contents").replaceChildren(...card.entities.map((id, index) => {
     const label = displayName(id, card);
@@ -527,7 +697,7 @@ function renderInspector() {
       settings.append(width);
     }
     details.append(settings);
-    row.append(details);
+    row.append(details, itemVisibilityEditor(card, String(index), openItems));
     return row;
   }));
 }
@@ -663,15 +833,14 @@ for (const key of ["x", "y", "w", "h"]) {
     else { renderInspector(); say("That size or position does not fit."); }
   };
 }
-$("search").oninput = $("room").onchange = $("domain").onchange = renderEntities;
 $("display").onchange = () => {
   $("gauge-fields").hidden = $("display").value !== "gauge";
   $("history-fields").hidden = $("display").value !== "history";
 };
 $("add-entity").onclick = () => {
   const card = active();
-  const id = $("manual").value.trim();
-  if (!/^[a-z0-9_]+\.[a-z0-9_]+$/.test(id)) return say("Enter a Home Assistant entity ID.");
+  const id = contentEntity.input.value.trim();
+  if (!entityIdPattern.test(id)) return say("Enter a Home Assistant entity ID.");
   if (card.entities.length >= 250) return say("This card has reached its entity limit.");
   const kind = $("display").value;
   const min = $("gauge-min").valueAsNumber;
@@ -701,7 +870,7 @@ $("add-entity").onclick = () => {
       delete card.subtitles[last];
     }
   });
-  $("manual").value = "";
+  contentEntity.input.value = "";
 };
 $("template").onchange = () => { $("use-template").disabled = $("template").value === ""; };
 $("use-template").onclick = () => {
@@ -742,13 +911,27 @@ $("apply").onclick = async () => {
     result.dataset.state = state;
     result.textContent = message;
   }
-  const invalidPage = layout().pages.findIndex(view => view.cards.some(card => card.visibility && !validVisibility(card.visibility)));
-  if (invalidPage >= 0) {
-    pageIndex = invalidPage;
-    selected = page().cards.find(card => card.visibility && !validVisibility(card.visibility)).id;
+  const invalid = layout().pages.flatMap((view, index) => view.cards.flatMap(card => {
+    if (card.visibility && !validVisibility(card.visibility)) return [{ index, card, item: null }];
+    const item = Object.keys(card.itemVisibility || {}).find(key => !validVisibility(card.itemVisibility[key].rule));
+    return item === undefined ? [] : [{ index, card, item }];
+  }))[0];
+  if (invalid) {
+    pageIndex = invalid.index;
+    selected = invalid.card.id;
     render();
-    showInspectorSection("visibility");
-    inspectorButtons.find(button => button.dataset.section === "visibility").focus();
+    if (invalid.item === null) {
+      showInspectorSection("visibility");
+      inspectorButtons.find(button => button.dataset.section === "visibility").focus();
+    } else {
+      showInspectorSection("content");
+      const item = [...$("inspector-body").querySelectorAll("details[data-item-visibility]")]
+        .find(details => details.dataset.itemVisibility === invalid.item);
+      if (item) {
+        item.open = true;
+        item.querySelector("summary").focus();
+      }
+    }
     report("error", "Complete each visibility rule with an entity ID and state, and add at least one rule to each group.");
     return;
   }
@@ -797,15 +980,10 @@ async function start() {
     await loadState();
     const data = await request("catalog");
     catalog = data.entities;
-    options($("visibility-entities"), catalog.map(entity => [entity.id, entity.name]));
     names = new Map(catalog.map(entity => [entity.id, entity.name]));
     templates = data.templates;
     notice = data.notice || "";
-    const filterOptions = field => [...new Set(catalog.map(entity => entity[field]).filter(Boolean))].sort().map(value => [value, value]);
-    options($("room"), [["", "All rooms"], ...filterOptions("area")]);
-    options($("domain"), [["", "All types"], ...filterOptions("domain")]);
     options($("template"), [["", "Choose a template"], ...templates.map((template, index) => [String(index), template.title])]);
-    renderEntities();
     render();
     say("");
   } catch (error) {

@@ -58,7 +58,9 @@ private val watchNextServices = catalogServices + setOf(
     "tv.emby.embyatv",
 )
 
-internal data class ArtworkLabel(val title: String, val service: String)
+internal data class ArtworkLabel(val title: String, val service: String, val year: Int? = null) {
+    val captionTitle get() = if (year == null || title.isBlank()) title else "$title ($year)"
+}
 private data class ArtworkSlide(val uri: String, val label: ArtworkLabel)
 
 internal fun watchNextArtwork(visible: Set<String>, cards: Map<String, List<WatchNextCard>>): List<WatchNextCard> =
@@ -82,7 +84,7 @@ internal fun DashboardArtwork(
     val context = LocalContext.current.applicationContext
     val native = remember(visibleApps, watchNext) {
         watchNextArtwork(visibleApps.keys, watchNext).mapNotNull { card ->
-            card.posterUri?.let { ArtworkSlide(it, ArtworkLabel(card.title, visibleApps[card.packageName].orEmpty())) }
+            card.posterUri?.let { ArtworkSlide(it, ArtworkLabel(card.title, visibleApps[card.packageName].orEmpty(), card.releaseYear)) }
         }
     }
     val changes by artworkCatalogChanges.collectAsState()
@@ -104,7 +106,7 @@ internal fun DashboardArtwork(
                 val catalog by produceState<List<ArtworkSlide>?>(null, changes) {
                     val snapshot = ArtworkCatalog(context, catalogHttpClient).cached()
                     value = snapshot?.takeIf { it.matches(settings) }?.artwork?.map {
-                        ArtworkSlide(it.uri, ArtworkLabel(it.title, it.service))
+                        ArtworkSlide(it.uri, ArtworkLabel(it.title, it.service, it.year))
                     }.orEmpty()
                 }
                 val cached = catalog
