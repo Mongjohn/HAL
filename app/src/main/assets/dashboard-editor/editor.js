@@ -3,6 +3,8 @@
 const $ = id => document.getElementById(id);
 const maxRows = 360;
 const screenRows = 15;
+const maxScreenColumns = 6;
+const viewport = $("grid-viewport");
 const drafts = {};
 const history = { assistant: [], home: [] };
 const dirty = new Set();
@@ -15,6 +17,7 @@ let surface = "home";
 let pageIndex = 0;
 let selected = null;
 let inspectedCard = null;
+let displayedPage = null;
 let inspectorSection = "content";
 let catalog = [];
 let templates = [];
@@ -26,6 +29,7 @@ let notice = "";
 const copy = value => JSON.parse(JSON.stringify(value));
 const layout = () => drafts[surface];
 const page = () => layout().pages[pageIndex];
+const visibleColumns = view => view.columnsPerScreen ?? Math.min(view.columns, maxScreenColumns);
 const active = () => page().cards.find(card => card.id === selected);
 const say = message => { $("status").textContent = message || notice; };
 
@@ -129,6 +133,7 @@ function addCard(source) {
     page().cards.push(Object.assign(card, position));
     selected = card.id;
   });
+  revealCard(card);
 }
 
 function friendlyName(id, templateName) {
@@ -169,6 +174,27 @@ function positionTile(tile, card) {
   tile.style.gridRow = (card.y + 1) + " / span " + card.h;
 }
 
+function revealCard(card) {
+  const tile = [...$("grid").children].find(element => element.dataset.card === card.id);
+  const bounds = tile.getBoundingClientRect();
+  const view = viewport.getBoundingClientRect();
+  const left = bounds.left - view.left;
+  const right = bounds.right - view.left - viewport.clientWidth;
+  const top = bounds.top - view.top;
+  const bottom = bounds.bottom - view.top - viewport.clientHeight;
+  viewport.scrollBy(left < 0 ? left : Math.max(0, Math.min(left, right)),
+    top < 0 ? top : Math.max(0, Math.min(top, bottom)));
+}
+
+function edgeSpeed(position, start, size) {
+  const edge = Math.min(36, size / 4);
+  if (!edge) return 0;
+  const offset = position - start;
+  if (offset < edge) return -Math.min(18, Math.ceil((edge - offset) / 2));
+  if (offset > size - edge) return Math.min(18, Math.ceil((offset - size + edge) / 2));
+  return 0;
+}
+
 function attachGesture(handle, tile, card, resize) {
   handle.onpointerdown = event => {
     if (busy || gesture || !event.isPrimary || event.button !== 0) return;
@@ -188,11 +214,13 @@ function attachGesture(handle, tile, card, resize) {
     handle.setPointerCapture(event.pointerId);
     const startX = event.clientX;
     const startY = event.clientY;
-    const startScroll = viewport.scrollTop;
-    handle.onpointermove = next => {
-      if (next.pointerId !== gesture) return;
-      const x = Math.round((next.clientX - startX) / dx);
-      const y = Math.round((next.clientY - startY + viewport.scrollTop - startScroll) / dy);
+    const startLeft = viewport.scrollLeft;
+    const startTop = viewport.scrollTop;
+    let frame = 0;
+    let pointer = event;
+    function updatePreview() {
+      const x = Math.round((pointer.clientX - startX + viewport.scrollLeft - startLeft) / dx);
+      const y = Math.round((pointer.clientY - startY + viewport.scrollTop - startTop) / dy);
       moved ||= x !== 0 || y !== 0;
       const clamp = (value, max, min = 0) => Math.max(min, Math.min(max, value));
       candidate = resize ? { ...card, w: clamp(card.w + x, page().columns - card.x, 1), h: clamp(card.h + y, Math.min(screenRows, maxRows - card.y), 1) }
@@ -209,10 +237,31 @@ function attachGesture(handle, tile, card, resize) {
           positionTile(otherTile, result.from);
         }
       }
+    }
+    function scrollAtEdge() {
+      frame = 0;
+      const bounds = viewport.getBoundingClientRect();
+      const left = viewport.scrollLeft;
+      const top = viewport.scrollTop;
+      viewport.scrollBy(edgeSpeed(pointer.clientX, bounds.left, viewport.clientWidth),
+        edgeSpeed(pointer.clientY, bounds.top, viewport.clientHeight));
+      if (left !== viewport.scrollLeft || top !== viewport.scrollTop) {
+        updatePreview();
+        frame = requestAnimationFrame(scrollAtEdge);
+      }
+    }
+    handle.onpointermove = next => {
+      if (next.pointerId !== gesture) return;
+      pointer = next;
+      updatePreview();
+      if (!frame && (moved || Math.hypot(next.clientX - startX, next.clientY - startY) > 4)) {
+        frame = requestAnimationFrame(scrollAtEdge);
+      }
     };
     function finish(next) {
       if (next.pointerId !== gesture) return;
       gesture = null;
+      cancelAnimationFrame(frame);
       handle.onpointermove = handle.onpointerup = handle.onpointercancel = handle.onlostpointercapture = null;
       tile.classList.remove("invalid");
       resetPreview();
@@ -233,6 +282,7 @@ function attachGesture(handle, tile, card, resize) {
 function renderGrid() {
   const grid = $("grid");
   grid.style.setProperty("--screen-rows", screenRows);
+  grid.style.setProperty("--column-ratio", page().columns / visibleColumns(page()));
   grid.style.gridTemplateColumns = "repeat(" + page().columns + ", minmax(0, 1fr))";
   grid.replaceChildren();
   for (const card of [...page().cards].sort((a, b) => a.y - b.y || a.x - b.x)) {
@@ -722,6 +772,10 @@ function render() {
   options($("page"), layout().pages.map((view, index) => [String(index), view.title || "Untitled view"]), String(pageIndex));
   $("page-title").value = page().title;
   $("columns").value = page().columns;
+  const available = Math.min(maxScreenColumns, page().columns);
+  options($("columns-per-screen"), [["", "Auto (" + available + ")"],
+    ...Array.from({ length: available }, (_, index) => [String(index + 1), String(index + 1)])],
+  String(page().columnsPerScreen ?? ""));
   $("remove-page").disabled = layout().pages.length === 1;
   $("add-page").disabled = layout().pages.length >= 32;
   $("dock-label").hidden = surface !== "assistant";
@@ -733,6 +787,10 @@ function render() {
   $("undo").disabled = busy || history[surface].length === 0;
   $("workspace").inert = busy;
   renderGrid();
+  if (displayedPage !== page()) {
+    displayedPage = page();
+    viewport.scrollTo(0, 0);
+  }
   renderInspector();
 }
 
@@ -782,17 +840,29 @@ $("surface").onchange = () => {
 $("page").onchange = () => { pageIndex = Number($("page").value); selected = null; render(); };
 $("page-title").onchange = () => edit(() => { page().title = $("page-title").value.trim(); });
 $("columns").onchange = () => {
-  const columns = $("columns").valueAsNumber;
-  if (!Number.isInteger(columns) || columns < 1 || columns > 6 ||
-      page().cards.some(card => card.x + card.w > columns)) {
+  const input = $("columns");
+  const columns = input.valueAsNumber;
+  if (!input.validity.valid || !Number.isInteger(columns)) {
+    input.value = page().columns;
+    return say("Enter a total between 1 and " + input.max + " columns.");
+  }
+  if (page().cards.some(card => card.x + card.w > columns)) {
     $("columns").value = page().columns;
     return say("Move or narrow the cards before removing their columns.");
   }
-  edit(() => { page().columns = columns; });
+  edit(() => {
+    page().columns = columns;
+    if (page().columnsPerScreen > columns) page().columnsPerScreen = columns;
+  });
 };
+$("columns-per-screen").onchange = () => edit(() => {
+  const value = $("columns-per-screen").value;
+  if (value) page().columnsPerScreen = Number(value);
+  else delete page().columnsPerScreen;
+});
 $("dock").onchange = () => edit(() => { layout().bottomRow = $("dock").checked; });
 $("add-page").onclick = () => edit(() => {
-  layout().pages.push({ title: "New view", columns: page().columns, cards: [] });
+  layout().pages.push({ title: "New view", columns: page().columns, columnsPerScreen: page().columnsPerScreen, cards: [] });
   pageIndex = layout().pages.length - 1;
   selected = null;
 });
@@ -801,7 +871,7 @@ $("remove-page").onclick = () => {
   edit(() => { layout().pages.splice(pageIndex, 1); pageIndex = Math.max(0, pageIndex - 1); selected = null; });
 };
 $("add-card").onclick = () => addCard();
-$("add-apps").onclick = () => addCard({ title: "Apps", w: page().columns, h: 4, entities: [], apps: [], appsPerRow: 4 });
+$("add-apps").onclick = () => addCard({ title: "Apps", w: visibleColumns(page()), h: 4, entities: [], apps: [], appsPerRow: 4 });
 $("app-choice").onchange = () => { $("add-app").disabled = !$("app-choice").value; };
 $("add-app").onclick = () => {
   const id = $("app-choice").value;
@@ -829,7 +899,10 @@ for (const key of ["x", "y", "w", "h"]) {
     const card = active();
     const value = $(key).valueAsNumber - (key === "x" || key === "y" ? 1 : 0);
     const result = placement(card, { ...card, [key]: value }, key === "x" || key === "y");
-    if (result) commitPlacement(card, result);
+    if (result) {
+      commitPlacement(card, result);
+      revealCard(card);
+    }
     else { renderInspector(); say("That size or position does not fit."); }
   };
 }

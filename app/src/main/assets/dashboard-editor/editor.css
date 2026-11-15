@@ -32,8 +32,17 @@ input[type=number] { width: 74px; }
 #dimensions input { width: 100%; }
 .screen { display: flex; width: 100%; aspect-ratio: 16 / 9; gap: 2%; align-items: stretch; overflow: hidden; border: 1px solid #303e54; border-radius: 16px; padding: 2%; background: #121924; }
 #camera { flex: 2 1 0; min-width: 0; align-self: start; max-height: 100%; display: grid; place-items: center; aspect-ratio: 16 / 9; border: 1px solid #526785; border-radius: 8px; background: #252e3b; color: #c5d2e5; }
-#grid-viewport { flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; container-type: size; }
-#grid { --row-gap: 8px; display: grid; min-width: 0; min-height: 100%; align-content: start; gap: var(--row-gap) 12px; grid-auto-rows: max(0px, calc((100cqh + var(--row-gap)) / var(--screen-rows) - var(--row-gap))); }
+#grid-viewport { flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; overflow-anchor: none; scrollbar-gutter: stable; container-type: size; }
+#grid {
+  --row-gap: 8px;
+  --column-gap: 12px;
+  display: grid;
+  width: calc((100% + var(--column-gap)) * var(--column-ratio, 1) - var(--column-gap));
+  min-height: 100%;
+  align-content: start;
+  gap: var(--row-gap) var(--column-gap);
+  grid-auto-rows: max(0px, calc((100cqh + var(--row-gap)) / var(--screen-rows) - var(--row-gap)));
+}
 .tile-readings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .tile-readings > p { grid-column: 1 / -1; }
 .tile-readings > .half { grid-column: 1; }
