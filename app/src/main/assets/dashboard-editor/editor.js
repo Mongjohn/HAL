@@ -23,7 +23,7 @@ let catalog = [];
 let templates = [];
 let names = new Map();
 let busy = false;
-let gesture = null;
+let cancelGesture = null;
 let notice = "";
 
 const copy = value => JSON.parse(JSON.stringify(value));
@@ -95,6 +95,18 @@ function placement(card, candidate, allowSwap) {
   return !overlaps(to, from) && fits(to, card.id, remaining) && fits(from, other.id, remaining)
     ? { candidate: to, other, from }
     : null;
+}
+
+function columnPlacement(card, x) {
+  if (!Number.isInteger(x) || x < 0 || x + card.w > page().columns) return null;
+  for (let distance = 0; distance <= maxRows - card.h; distance++) {
+    const below = { ...card, x, y: card.y + distance };
+    if (fits(below, card.id)) return { candidate: below };
+    if (distance === 0) continue;
+    const above = { ...card, x, y: card.y - distance };
+    if (fits(above, card.id)) return { candidate: above };
+  }
+  return null;
 }
 
 function commitPlacement(card, result) {
@@ -174,8 +186,12 @@ function positionTile(tile, card) {
   tile.style.gridRow = (card.y + 1) + " / span " + card.h;
 }
 
+function cardTile(card) {
+  return [...$("grid").children].find(element => element.dataset.card === card.id);
+}
+
 function revealCard(card) {
-  const tile = [...$("grid").children].find(element => element.dataset.card === card.id);
+  const tile = cardTile(card);
   const bounds = tile.getBoundingClientRect();
   const view = viewport.getBoundingClientRect();
   const left = bounds.left - view.left;
@@ -195,13 +211,18 @@ function edgeSpeed(position, start, size) {
   return 0;
 }
 
-function attachGesture(handle, tile, card, resize) {
+function attachGesture(handle, card, resize) {
   handle.onpointerdown = event => {
-    if (busy || gesture || !event.isPrimary || event.button !== 0) return;
-    const grid = $("grid");
-    const style = getComputedStyle(grid);
-    const dx = (grid.clientWidth + parseFloat(style.columnGap)) / page().columns;
-    const dy = parseFloat(style.gridAutoRows) + parseFloat(style.rowGap);
+    if (busy || cancelGesture || !event.isPrimary || event.button !== 0) return;
+    event.preventDefault();
+    // A pending field edit can replace the card's DOM as it commits on blur.
+    document.activeElement?.blur();
+    const tile = cardTile(card);
+    if (!tile || !page().cards.includes(card)) return;
+    const style = getComputedStyle($("grid"));
+    const dx = parseFloat(style.gridTemplateColumns) + parseFloat(style.columnGap);
+    const dy = parseFloat(style.gridTemplateRows) + parseFloat(style.rowGap);
+    if (!(dx > 0 && dy > 0)) return;
     let candidate = card;
     let moved = false;
     let preview = null;
@@ -210,8 +231,10 @@ function attachGesture(handle, tile, card, resize) {
       preview = null;
       positionTile(tile, card);
     }
-    gesture = event.pointerId;
-    handle.setPointerCapture(event.pointerId);
+    const pointerId = event.pointerId;
+    viewport.setPointerCapture(pointerId);
+    const listeners = new AbortController();
+    const listen = { signal: listeners.signal };
     const startX = event.clientX;
     const startY = event.clientY;
     const startLeft = viewport.scrollLeft;
@@ -231,7 +254,7 @@ function attachGesture(handle, tile, card, resize) {
       if (!result) return;
       positionTile(tile, result.candidate);
       if (result.other) {
-        const otherTile = [...grid.children].find(item => item.dataset.card === result.other.id);
+        const otherTile = cardTile(result.other);
         if (otherTile) {
           preview = { tile: otherTile, card: result.other };
           positionTile(otherTile, result.from);
@@ -250,22 +273,30 @@ function attachGesture(handle, tile, card, resize) {
         frame = requestAnimationFrame(scrollAtEdge);
       }
     }
-    handle.onpointermove = next => {
-      if (next.pointerId !== gesture) return;
+    document.addEventListener("pointermove", next => {
+      if (next.pointerId !== pointerId) return;
       pointer = next;
       updatePreview();
       if (!frame && (moved || Math.hypot(next.clientX - startX, next.clientY - startY) > 4)) {
         frame = requestAnimationFrame(scrollAtEdge);
       }
-    };
-    function finish(next) {
-      if (next.pointerId !== gesture) return;
-      gesture = null;
+    }, listen);
+    cancelGesture = () => {
       cancelAnimationFrame(frame);
-      handle.onpointermove = handle.onpointerup = handle.onpointercancel = handle.onlostpointercapture = null;
+      listeners.abort();
+      cancelGesture = null;
+      if (viewport.hasPointerCapture(pointerId)) viewport.releasePointerCapture(pointerId);
       tile.classList.remove("invalid");
       resetPreview();
-      if (next.type !== "pointerup" || !moved) return;
+    };
+    function finish(next) {
+      if (next.pointerId !== pointerId) return;
+      cancelGesture();
+      if (next.type !== "pointerup") return;
+      if (!moved) {
+        handle.click();
+        return;
+      }
       selected = card.id;
       const result = placement(card, candidate, !resize);
       if (result && ["x", "y", "w", "h"].some(key => result.candidate[key] !== card[key])) {
@@ -275,11 +306,15 @@ function attachGesture(handle, tile, card, resize) {
         if (!result) say("The cards do not fit in those positions.");
       }
     }
-    handle.onpointerup = handle.onpointercancel = handle.onlostpointercapture = finish;
+    document.addEventListener("pointerup", finish, listen);
+    document.addEventListener("pointercancel", finish, listen);
+    viewport.addEventListener("lostpointercapture", finish, listen);
+    window.addEventListener("blur", cancelGesture, listen);
   };
 }
 
 function renderGrid() {
+  cancelGesture?.();
   const grid = $("grid");
   grid.style.setProperty("--screen-rows", screenRows);
   grid.style.setProperty("--column-ratio", page().columns / visibleColumns(page()));
@@ -297,6 +332,7 @@ function renderGrid() {
     const resize = button("↘", () => {
       selected = card.id;
       render();
+      showInspectorSection("layout");
       $("w").focus();
     }, "Resize " + (card.title || "card"));
     resize.className = "resize";
@@ -324,8 +360,8 @@ function renderGrid() {
     }
     tile.append(resize);
     positionTile(tile, card);
-    attachGesture(title, tile, card, false);
-    attachGesture(resize, tile, card, true);
+    attachGesture(title, card, false);
+    attachGesture(resize, card, true);
     grid.append(tile);
   }
 }
@@ -898,10 +934,13 @@ for (const key of ["x", "y", "w", "h"]) {
   $(key).onchange = () => {
     const card = active();
     const value = $(key).valueAsNumber - (key === "x" || key === "y" ? 1 : 0);
-    const result = placement(card, { ...card, [key]: value }, key === "x" || key === "y");
+    const result = key === "x" ? columnPlacement(card, value) :
+      placement(card, { ...card, [key]: value }, key === "y");
     if (result) {
+      const shifted = key === "x" && result.candidate.y !== card.y;
       commitPlacement(card, result);
       revealCard(card);
+      if (shifted) say("Moved to column " + (card.x + 1) + ", row " + (card.y + 1) + ". Apply to update the TV.");
     }
     else { renderInspector(); say("That size or position does not fit."); }
   };
