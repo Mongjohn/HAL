@@ -85,7 +85,7 @@ internal fun DashboardAppsCard(
     val shape = RoundedCornerShape(12.dp)
     BoxWithConstraints(
         Modifier.fillMaxWidth().height(height)
-            .dashboardCard(LocalDashboardAppearance.current, MaterialTheme.colorScheme.surfaceVariant, shape)
+            .dashboardCard(MaterialTheme.colorScheme.surfaceVariant, shape)
             .then(if (first == null) Modifier.focusRequester(target).focusRequester(homeTarget)
                 .onFocusChanged { if (it.isFocused || currentVisible.isEmpty()) emptyFocused = it.isFocused }
                 .focusProperties {

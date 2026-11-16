@@ -88,6 +88,28 @@ data class DashboardLayout(
 }
 
 data class DashboardLayouts(val assistant: DashboardLayout? = null, val home: DashboardLayout? = null) {
+    fun surface(name: String): DashboardLayout? = when (name) {
+        "home" -> home
+        "assistant" -> assistant
+        else -> throw IllegalArgumentException("Unknown surface")
+    }
+
+    /** Apply and restore share normalization and the unique Home-focus constraint. */
+    fun withSurface(name: String, layout: DashboardLayout): DashboardLayouts = when (name) {
+        "home" -> copy(home = layout.copy(bottomRow = false, appsConfigured = true),
+            assistant = assistant?.let { if (layout.hasHomeFocus) it.withoutHomeFocus() else it })
+        "assistant" -> copy(assistant = layout,
+            home = home?.let { if (layout.hasHomeFocus) it.withoutHomeFocus() else it })
+        else -> throw IllegalArgumentException("Unknown surface")
+    }
+
+    fun visibleHomeFocusSurface(entities: Map<String, HaEntity>): String? =
+        listOf("assistant", "home").firstOrNull { name ->
+            surface(name)?.pages.orEmpty().any { page ->
+                page.cards.any { it.focusOnHome && it.card.visibility.isVisible(entities) }
+            }
+        }
+
     init {
         require(assistant?.pages.orEmpty().none { page -> page.cards.any { it.apps != null } })
         require(home?.pages.orEmpty().sumOf { page -> page.cards.count { it.apps != null } } <= 1)

@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -37,8 +36,6 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Button
@@ -71,8 +68,8 @@ internal fun LauncherSettingsDialog(
     autoTurnedOff: Boolean,
     showFreeMemory: Boolean,
     artworkSettings: ArtworkSettings,
-    appearance: DashboardAppearance,
-    onAppearanceChanged: (DashboardAppearance) -> Unit,
+    cardOpacity: Int,
+    onCardOpacityChanged: (Int?) -> Unit,
     onArtworkEnabled: (Boolean) -> Unit,
     onArtworkSourceChanged: (Boolean) -> Unit,
     onSaveArtworkCatalog: (String, Set<String>) -> Unit,
@@ -80,8 +77,6 @@ internal fun LauncherSettingsDialog(
     onReopenAfterHomeChange: (Boolean) -> Unit,
     onShowFreeMemoryChange: (Boolean) -> Unit,
     onEditDashboard: () -> Unit,
-    onExport: () -> Unit,
-    onImport: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val replaceHome = catchHomeKey || reopenAfterHome
@@ -94,12 +89,12 @@ internal fun LauncherSettingsDialog(
     // The item last on, to come back to from the top row
     val items = remember(tab) { ListFocus() }
     val itemKeys = when (tab) {
-        LauncherSettingsTab.Launcher -> listOf("catch", "reopen", "accessibility", "dashboard", "export", "import")
+        LauncherSettingsTab.Launcher -> listOf("catch", "reopen", "accessibility", "dashboard")
         LauncherSettingsTab.Background -> listOf("artwork", "local-artwork") +
             if (artworkSettings.useLocal) emptyList()
             else listOf("country", "save-catalog") + streamingServices.map { it.name }
         LauncherSettingsTab.Advanced -> listOf("hours-", "hours+", "memory")
-        LauncherSettingsTab.Appearance -> DashboardTheme.entries.map { it.id } + listOf("opacity-", "opacity+", "opacity-default")
+        LauncherSettingsTab.Appearance -> listOf("opacity-", "opacity+", "opacity-default")
     }
     val prefs = remember { LauncherPrefs(context) }
     // An option turned on, once its explanation is accepted
@@ -151,7 +146,7 @@ internal fun LauncherSettingsDialog(
             return@TopDialog
         }
         if (tab == LauncherSettingsTab.Appearance) {
-            AppearanceOptions(appearance, onAppearanceChanged) { key, left, right ->
+            AppearanceOptions(cardOpacity, onCardOpacityChanged) { key, left, right ->
                 items.row(key).ringToTop(left, right)
             }
             return@TopDialog
@@ -214,16 +209,12 @@ internal fun LauncherSettingsDialog(
         OutlinedButton(
             onClick = onEditDashboard,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).then(items.row("dashboard")).ringToTop(),
-        ) { Text("Edit dashboard in browser") }
+        ) { Text("Dashboard and file import/export in browser") }
         MenuDivider()
-        Row(
+        Box(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            contentAlignment = Alignment.CenterEnd,
         ) {
-            OutlinedButton(onClick = onExport, modifier = items.row("export").ringToTop(right = false)) { Text("Export settings") }
-            OutlinedButton(onClick = onImport, modifier = items.row("import").ringToTop(left = false)) { Text("Import settings") }
-            Spacer(Modifier.weight(1f))
             BuildInfo()
         }
     }
@@ -242,37 +233,28 @@ internal fun LauncherSettingsDialog(
 
 @Composable
 private fun AppearanceOptions(
-    appearance: DashboardAppearance,
-    onChange: (DashboardAppearance) -> Unit,
+    cardOpacity: Int,
+    onChange: (Int?) -> Unit,
     rowModifier: (String, Boolean, Boolean) -> Modifier,
 ) {
     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Theme", style = MaterialTheme.typography.titleSmall)
-            DashboardTheme.entries.forEachIndexed { index, theme ->
-                val modifier = rowModifier(theme.id, index == 0, index == DashboardTheme.entries.lastIndex)
-                val active = appearance.theme == theme
-                OutlinedButton(
-                    onClick = { if (!active) onChange(appearance.copy(theme = theme)) },
-                    modifier = modifier.semantics { selected = active },
-                ) {
-                    Text(if (active) "✓ ${theme.label}" else theme.label)
-                }
-            }
+            Text("Glass")
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Card opacity", style = MaterialTheme.typography.titleSmall)
             OutlinedButton(
-                onClick = { onChange(appearance.copy(cardOpacity = (appearance.opacity - 10).coerceAtLeast(0))) },
+                onClick = { onChange((cardOpacity - 10).coerceAtLeast(0)) },
                 modifier = rowModifier("opacity-", true, false),
             ) { Text("−") }
-            Text("${appearance.opacity}%")
+            Text("$cardOpacity%")
             OutlinedButton(
-                onClick = { onChange(appearance.copy(cardOpacity = (appearance.opacity + 10).coerceAtMost(100))) },
+                onClick = { onChange((cardOpacity + 10).coerceAtMost(100)) },
                 modifier = rowModifier("opacity+", false, false),
             ) { Text("+") }
             OutlinedButton(
-                onClick = { onChange(appearance.copy(cardOpacity = null)) },
+                onClick = { onChange(null) },
                 modifier = rowModifier("opacity-default", false, true),
             ) { Text("Use theme default") }
         }

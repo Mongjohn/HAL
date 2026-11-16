@@ -133,12 +133,17 @@ private class DashboardEditorServer(
                 error(Response.Status.INTERNAL_ERROR, "HAL could not update the artwork library.")
             }
         }
-        val read = session.method == Method.GET && session.uri in listOf("/api/state", "/api/catalog")
-        val write = session.method == Method.POST && session.uri in listOf("/api/apply", "/api/restore")
+        val read = session.method == Method.GET && session.uri in listOf("/api/state", "/api/catalog", "/api/settings/options")
+        val write = session.method == Method.POST && session.uri in listOf("/api/apply", "/api/restore",
+            "/api/settings/export", "/api/settings/preview", "/api/settings/import")
         if (!read && !write) return error(Response.Status.NOT_FOUND, "Page not found.")
+        val settingsRequest = session.uri.startsWith("/api/settings/")
 
         val body = if (write) {
             val length = headers["content-length"]?.toIntOrNull() ?: 0
+            if (settingsRequest && length > EditorMaxBytes) {
+                return error(Response.Status.PAYLOAD_TOO_LARGE, "The settings request exceeds 4 MiB.")
+            }
             if (headers["origin"] != url || headers["content-type"]?.substringBefore(';') != "application/json" ||
                 headers.containsKey("transfer-encoding") ||
                 length !in 1..EditorMaxBytes
@@ -149,7 +154,7 @@ private class DashboardEditorServer(
                 DataInputStream(session.inputStream).readFully(bytes)
                 JSONObject(bytes.decodeToString(throwOnInvalidSequence = true))
             } catch (_: Exception) {
-                return error(Response.Status.BAD_REQUEST, "Invalid dashboard data.")
+                return error(Response.Status.BAD_REQUEST, if (settingsRequest) "Invalid settings data." else "Invalid dashboard data.")
             }
         } else null
         return try {
@@ -158,10 +163,12 @@ private class DashboardEditorServer(
                     withContext(Dispatchers.Main) { if (closed) null else api(session.uri, body) }
                 }
             }
-            if (result == null) error(Response.Status.CONFLICT, "The layout changed. Reload the editor and try again.")
+            if (result == null) error(Response.Status.CONFLICT, "HAL could not confirm the request. Reload the editor to check the saved settings.")
             else reply(Response.Status.OK, result.toString())
         } catch (_: Exception) {
-            error(Response.Status.BAD_REQUEST, "The dashboard could not be saved. Check the card positions and sizes.")
+            val message = if (settingsRequest) "Check that the file contains valid HAL settings and that the selection is current."
+                else "The dashboard could not be saved. Check the card positions and sizes."
+            error(Response.Status.BAD_REQUEST, message)
         }
     }
 }
@@ -180,13 +187,15 @@ private fun editorAddress(context: Context): LinkAddress? {
 internal fun DashboardEditor(
     haServer: HaServer,
     layouts: () -> DashboardLayouts,
-    canRestore: () -> Boolean,
+    savedLayouts: () -> DashboardLayouts,
+    previousSurface: (String) -> DashboardLayout?,
     legacyDisplay: HaDisplay,
     legacyEntities: List<String>,
     cameraVisible: Boolean,
     installedApps: List<InstalledApp>,
-    save: (DashboardLayouts) -> Unit,
-    restore: () -> Unit,
+    save: (DashboardLayouts, DashboardLayouts, String, Boolean) -> Unit,
+    exportSettings: () -> SettingsFile,
+    importSettings: (SettingsFile) -> Unit,
     showInfo: Boolean,
     onDismissInfo: () -> Unit,
     onStartFailed: (String) -> Unit,
@@ -195,9 +204,15 @@ internal fun DashboardEditor(
     val view = LocalView.current
     val apps by rememberUpdatedState(installedApps)
     val readLayouts by rememberUpdatedState(layouts)
-    val readCanRestore by rememberUpdatedState(canRestore)
+    val readSavedLayouts by rememberUpdatedState(savedLayouts)
+    val currentLegacyDisplay by rememberUpdatedState(legacyDisplay)
+    val currentLegacyEntities by rememberUpdatedState(legacyEntities)
+    val currentCameraVisible by rememberUpdatedState(cameraVisible)
+    val currentHaServer by rememberUpdatedState(haServer)
+    val readPrevious by rememberUpdatedState(previousSurface)
     val currentSave by rememberUpdatedState(save)
-    val currentRestore by rememberUpdatedState(restore)
+    val currentExport by rememberUpdatedState(exportSettings)
+    val currentImport by rememberUpdatedState(importSettings)
     var editor by remember { mutableStateOf<DashboardEditorServer?>(null) }
     var revision by remember { mutableStateOf(UUID.randomUUID().toString()) }
     var catalog by remember { mutableStateOf<List<HaEntity>>(emptyList()) }
@@ -206,18 +221,25 @@ internal fun DashboardEditor(
     var catalogError by remember { mutableStateOf<String?>(null) }
 
     fun initial(home: Boolean): DashboardLayout {
-        val key = if (home) legacyDisplay.homeDashboard else legacyDisplay.dashboard
-        val settings = if (home) legacyDisplay.homeLayout else legacyDisplay.layout
-        val selection = if (home) legacyEntities.filterNot(::isHaAction) else legacyEntities
+        val display = currentLegacyDisplay
+        val key = if (home) display.homeDashboard else display.dashboard
+        val settings = if (home) display.homeLayout else display.layout
+        val entities = currentLegacyEntities
+        val selection = if (home) entities.filterNot(::isHaAction) else entities
         val board = templates.firstOrNull { it.first.key == key }?.second
         return seedDashboardLayout(
             board, settings.selectionCards(selection, catalog.associateBy { it.id }),
-            if (home) 1 else 3, settings.twoPerRow, !home && legacyDisplay.bottomRow,
+            if (home) 1 else 3, settings.twoPerRow, !home && display.bottomRow,
         )
     }
 
-    fun state() = JSONObject().put("revision", revision).put("canRestore", readCanRestore())
-        .put("camera", cameraVisible)
+    fun effectiveLayouts() = readLayouts().let {
+        it.copy(assistant = it.assistant ?: initial(false), home = it.home ?: initial(true))
+    }
+    fun restoreState() = JSONObject().put("home", readPrevious("home") != null)
+        .put("assistant", readPrevious("assistant") != null)
+    fun state() = JSONObject().put("revision", revision).put("canRestore", restoreState())
+        .put("camera", currentCameraVisible)
         .put("apps", JSONArray(apps.map { JSONObject().put("id", it.key).put("name", it.label) }))
         .put("assistant", (readLayouts().assistant ?: initial(false)).toJson())
         .put("home", (readLayouts().home ?: initial(true)).toJson())
@@ -231,6 +253,7 @@ internal fun DashboardEditor(
             val server = DashboardEditorServer(address, context.applicationContext) { path, body ->
                 when (path) {
                     "/api/state" -> if (loading) JSONObject().put("loading", true) else state()
+                    "/api/settings/options" -> JSONObject().put("choices", settingsChoices(currentExport()))
                     "/api/catalog" -> JSONObject().put("loading", loading).put("notice", catalogError)
                         .put("entities", JSONArray(catalog.map { entity ->
                             JSONObject().put("id", entity.id).put("name", entity.name)
@@ -243,22 +266,39 @@ internal fun DashboardEditor(
                         }))
                     else -> {
                         if (body == null || body.optString("revision") != revision) null else {
-                            if (path == "/api/restore") {
-                                check(readCanRestore())
-                                currentRestore()
-                            } else {
-                                val layout = dashboardLayoutFromJson(body.getJSONObject("layout"))
-                                val previous = readLayouts()
-                                val claimsFocus = layout.pages.any { page -> page.cards.any { it.focusOnHome } }
-                                val next = when (body.getString("surface")) {
-                                    "assistant" -> previous.copy(assistant = layout, home = previous.home?.let { if (claimsFocus) it.withoutHomeFocus() else it })
-                                    "home" -> previous.copy(home = layout.copy(bottomRow = false, appsConfigured = true), assistant = previous.assistant?.let { if (claimsFocus) it.withoutHomeFocus() else it })
-                                    else -> throw IllegalArgumentException("Unknown surface")
+                            when (path) {
+                                "/api/settings/export" -> JSONObject().put("settings",
+                                    selectedSettings(currentExport(), body.getJSONArray("keys")).toJson())
+                                "/api/settings/preview" -> {
+                                    val file = settingsFromJson(body.getJSONObject("settings"))
+                                        ?: throw IllegalArgumentException("Invalid settings file")
+                                    JSONObject().put("choices", settingsChoices(file))
                                 }
-                                currentSave(next)
+                                "/api/settings/import" -> {
+                                    val file = settingsFromJson(body.getJSONObject("settings"))
+                                        ?: throw IllegalArgumentException("Invalid settings file")
+                                    val selected = selectedSettings(file, body.getJSONArray("keys"))
+                                    currentImport(selected)
+                                    if (selected.login != null && selected.login != currentHaServer) loading = true
+                                    revision = UUID.randomUUID().toString()
+                                    JSONObject().put("revision", revision).put("imported", true)
+                                }
+                                else -> {
+                                    check(!loading)
+                                    val surface = body.getString("surface")
+                                    val previous = effectiveLayouts()
+                                    val restoring = path == "/api/restore"
+                                    val layout = if (restoring) requireNotNull(readPrevious(surface))
+                                        else dashboardLayoutFromJson(body.getJSONObject("layout"))
+                                    val next = readSavedLayouts().withSurface(surface, layout)
+                                    currentSave(next, previous, surface, restoring)
+                                    revision = UUID.randomUUID().toString()
+                                    JSONObject().put("revision", revision).put("applied", path == "/api/apply")
+                                        .put("restored", path == "/api/restore").put("surface", surface)
+                                        .put("layout", next.surface(surface)!!.toJson())
+                                        .put("canRestore", restoreState())
+                                }
                             }
-                            revision = UUID.randomUUID().toString()
-                            JSONObject().put("revision", revision).put("applied", path == "/api/apply")
                         }
                     }
                 }

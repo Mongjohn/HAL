@@ -18,23 +18,18 @@ internal fun dockTileKeys(appKeys: List<String>, order: List<String>, showAllApp
  * Remembers the order chosen with "Move" and which apps are hidden, across restarts.
  * Stored in shared_prefs/launcher.xml in the app's private data on the TV.
  */
-class LauncherPrefs(context: Context) {
-    private val prefs = context.getSharedPreferences("launcher", Context.MODE_PRIVATE)
+class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
+    constructor(context: Context) : this(context.getSharedPreferences("launcher", Context.MODE_PRIVATE))
 
     internal var lastDashboardArtwork: String?
         get() = prefs.getString("last_dashboard_artwork", null)
         set(value) = prefs.edit { putString("last_dashboard_artwork", value) }
 
-    internal var dashboardAppearance: DashboardAppearance
-        get() = DashboardAppearance(
-            theme = DashboardTheme.entries.firstOrNull { it.id == prefs.getString("dashboard_theme", null) }
-                ?: DashboardTheme.Classic,
-            cardOpacity = prefs.getInt("dashboard_card_opacity", -1).takeIf { it in 0..100 },
-        )
+    internal var dashboardCardOpacity: Int?
+        get() = prefs.getInt("dashboard_card_opacity", -1).takeIf { it in 0..100 }
         set(value) = prefs.edit {
-            putString("dashboard_theme", value.theme.id)
-            if (value.cardOpacity == null) remove("dashboard_card_opacity")
-            else putInt("dashboard_card_opacity", value.cardOpacity)
+            if (value == null) remove("dashboard_card_opacity")
+            else putInt("dashboard_card_opacity", value)
         }
 
     internal var artworkSettings: ArtworkSettings
@@ -147,18 +142,37 @@ class LauncherPrefs(context: Context) {
         get() = if (prefs.contains("ha_top_bar")) readList("ha_top_bar") else oldHaActions().take(MAX_HA_ACTIONS)
 
     val dashboardLayouts get() = readDashboardLayouts("dashboard_layouts") ?: DashboardLayouts()
-    val previousDashboardLayouts get() = readDashboardLayouts("dashboard_layouts_previous")
+    private val previousDashboardLayouts get() = readDashboardLayouts("dashboard_layouts_previous")
+
+    fun previousDashboardSurface(surface: String): DashboardLayout? {
+        require(surface in listOf("home", "assistant"))
+        val key = "dashboard_previous_$surface"
+        return (if (prefs.contains(key)) readDashboardLayouts(key) else previousDashboardLayouts)?.surface(surface)
+    }
 
     private fun readDashboardLayouts(key: String): DashboardLayouts? =
         prefs.getString(key, null)?.let { raw ->
             runCatching { DashboardLayouts.fromJson(org.json.JSONObject(raw)) }.getOrNull()
         }
 
-    fun saveDashboardLayouts(value: DashboardLayouts, previous: DashboardLayouts) {
-        prefs.edit()
+    fun saveDashboardLayouts(value: DashboardLayouts, previous: DashboardLayouts, surface: String? = null, restoring: Boolean = false) {
+        val edit = prefs.edit()
             .putString("dashboard_layouts", value.toJson().toString())
-            .putString("dashboard_layouts_previous", previous.toJson().toString())
-            .apply()
+        for (name in listOf("home", "assistant")) {
+            val key = "dashboard_previous_$name"
+            val changed = if (surface != null) surface == name else value.surface(name) != previous.surface(name)
+            if (changed || !prefs.contains(key)) {
+                // Restore consumes the checkpoint. Imports invalidate checkpoints on replaced layouts.
+                val old = when {
+                    !changed -> previousDashboardSurface(name)
+                    restoring || surface == null -> null
+                    else -> previous.surface(name)
+                }
+                val snapshot = if (name == "home") DashboardLayouts(home = old) else DashboardLayouts(assistant = old)
+                edit.putString(key, snapshot.toJson().toString())
+            }
+        }
+        edit.remove("dashboard_layouts_previous").apply()
     }
 
     /** What the Assistant tab and the Home tab's panel show of Home Assistant */
