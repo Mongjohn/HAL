@@ -7,6 +7,8 @@ import org.json.JSONObject
 import java.util.UUID
 
 private const val DashboardMaxRows = 360
+private const val DashboardMaxColumns = 24
+private const val DashboardMaxScreenColumns = 6
 internal const val DashboardScreenRows = 15
 
 data class DashboardCard(
@@ -20,9 +22,18 @@ data class DashboardCard(
     val appsPerRow: Int = 4,
     val focusOnHome: Boolean = false,
     val halfWidthItems: Set<Int>? = null,
+    // Entity positions for sensor cards, app IDs for the Apps card.
+    val itemVisibility: Map<String, ItemVisibility> = emptyMap(),
 )
 
-data class DashboardPage(val title: String, val columns: Int, val cards: List<DashboardCard>)
+data class DashboardPage(
+    val title: String,
+    val columns: Int,
+    val cards: List<DashboardCard>,
+    val columnsPerScreen: Int? = null,
+) {
+    val visibleColumns get() = columnsPerScreen ?: minOf(columns, DashboardMaxScreenColumns)
+}
 
 data class DashboardLayout(
     val pages: List<DashboardPage>,
@@ -34,7 +45,9 @@ data class DashboardLayout(
     val hasHomeFocus get() = pages.any { page -> page.cards.any { it.focusOnHome } }
     val entityIds get() = HaDashboard(
         pages.map { DashboardView(it.title, it.cards.map(DashboardCard::card)) }, names, emptyList(),
-    ).entityIds
+    ).entityIds.plus(pages.flatMap { page ->
+        page.cards.flatMap { card -> card.itemVisibility.values.flatMap { it.rule.entityIds() } }
+    }).distinct()
 
     fun toJson() = JSONObject()
         .put("bottomRow", bottomRow)
@@ -43,6 +56,7 @@ data class DashboardLayout(
         .put("appsConfigured", appsConfigured)
         .put("pages", JSONArray(pages.map { page ->
             JSONObject().put("title", page.title).put("columns", page.columns)
+                .put("columnsPerScreen", page.columnsPerScreen)
                 .put("cards", JSONArray(page.cards.map { item ->
                     val card = item.card
                     JSONObject().put("id", card.key).put("title", card.title)
@@ -51,6 +65,9 @@ data class DashboardLayout(
                         .put("focusOnHome", item.focusOnHome).put("twoPerRow", item.twoPerRow).put("entities", JSONArray(card.ids))
                         .put("halfWidthItems", item.halfWidthItems?.let { JSONArray(it.toList()) })
                         .put("visibility", card.visibility?.toJson())
+                        .put("itemVisibility", item.itemVisibility.takeIf { it.isNotEmpty() }?.let { rules ->
+                            JSONObject(rules.mapValues { it.value.toJson() })
+                        })
                         .put("subtitles", JSONObject(card.subtitles.mapKeys { it.key.toString() }))
                         .put("gauges", JSONObject(card.gauges.mapValues { (_, gauge) ->
                             JSONObject().put("min", gauge.min).put("max", gauge.max).put("needle", gauge.needle)
@@ -106,7 +123,9 @@ private fun <T> JSONArray.items(max: Int, read: JSONArray.(Int) -> T): List<T> {
 internal fun dashboardLayoutFromJson(json: JSONObject): DashboardLayout {
     val pages = json.getJSONArray("pages").items(32) { index ->
         val page = getJSONObject(index)
-        val columns = page.number("columns", 1..6)
+        val columns = page.number("columns", 1..DashboardMaxColumns)
+        val columnsPerScreen = if (page.isNull("columnsPerScreen")) null else
+            page.number("columnsPerScreen", 1..minOf(columns, DashboardMaxScreenColumns))
         val cards = page.getJSONArray("cards").items(150) { cardIndex ->
             val item = getJSONObject(cardIndex)
             val x = item.number("x", 0 until columns)
@@ -117,6 +136,9 @@ internal fun dashboardLayoutFromJson(json: JSONObject): DashboardLayout {
             val subtitles = item.optJSONObject("subtitles") ?: JSONObject()
             val gauges = item.optJSONObject("gauges") ?: JSONObject()
             val graphs = item.optJSONObject("graphs") ?: JSONObject()
+            val apps = item.optJSONArray("apps")?.items(250) { textId(it) }?.distinct()
+            val visibility = item.optJSONObject("itemVisibility") ?: JSONObject()
+            val itemKeys = apps ?: ids.indices.map(Int::toString)
             DashboardCard(
                 SensorCard(
                     item.text("id", 255).also { require(it.isNotBlank()) }, item.optString("title").trim().also { require(it.length <= 160) }, ids,
@@ -144,14 +166,18 @@ internal fun dashboardLayoutFromJson(json: JSONObject): DashboardLayout {
                             graph.optDouble("minY").takeIf(Double::isFinite),
                             graph.optDouble("maxY").takeIf(Double::isFinite), graph.optBoolean("fitY"))
                     },
-                    item.takeIf { it.has("visibility") }?.getJSONObject("visibility")?.let { parseCardVisibility(it) },
+                    item.takeUnless { it.isNull("visibility") }?.getJSONObject("visibility")?.let { parseCardVisibility(it) },
                 ), x, y, width, height.coerceAtMost(DashboardScreenRows), item.optBoolean("twoPerRow"),
-                apps = item.optJSONArray("apps")?.items(250) { textId(it) }?.distinct(),
+                apps = apps,
                 appsPerRow = if (item.has("appsPerRow")) item.number("appsPerRow", 1..8) else 4,
                 focusOnHome = item.optBoolean("focusOnHome"),
                 halfWidthItems = item.optJSONArray("halfWidthItems")?.items(250) {
                     getInt(it).also { index -> require(index in ids.indices) }
                 }?.toSet(),
+                itemVisibility = itemKeys.filter(visibility::has).associateWith { key ->
+                    val setting = visibility.getJSONObject(key)
+                    ItemVisibility(parseCardVisibility(setting.getJSONObject("rule")), setting.optBoolean("keepSpace"))
+                },
             )
         }
         require(cards.map { it.card.key }.distinct().size == cards.size)
@@ -159,7 +185,7 @@ internal fun dashboardLayoutFromJson(json: JSONObject): DashboardLayout {
         for (card in cards) for (y in card.y until card.y + card.height) for (x in card.x until card.x + card.width) {
             require(occupied.add(y * columns + x)) { "Cards overlap" }
         }
-        DashboardPage(page.text("title"), columns, cards)
+        DashboardPage(page.text("title"), columns, cards, columnsPerScreen)
     }
     require(pages.isNotEmpty())
     require(pages.flatMap { it.cards }.let { cards -> cards.map { it.card.key }.distinct().size == cards.size })
@@ -212,8 +238,11 @@ internal fun DashboardLayout.migrateAppsCard(appKeys: List<String>): DashboardLa
     if (appsConfigured) this else withAppsCard(appKeys)
 
 internal fun DashboardLayout.replaceApps(appKeys: List<String>): DashboardLayout = withAppsCard(appKeys).let { layout ->
+    val apps = appKeys.take(250)
     layout.copy(pages = layout.pages.map { page ->
-        page.copy(cards = page.cards.map { card -> if (card.apps == null) card else card.copy(apps = appKeys.take(250)) })
+        page.copy(cards = page.cards.map { card ->
+            if (card.apps == null) card else card.copy(apps = apps, itemVisibility = card.itemVisibility.filterKeys { it in apps })
+        })
     })
 }
 
@@ -222,7 +251,7 @@ private fun DashboardLayout.withAppsCard(appKeys: List<String>): DashboardLayout
     val first = pages.first()
     val height = 4
     val card = DashboardCard(SensorCard(UUID.randomUUID().toString(), "Apps", emptyList()),
-        0, 0, first.columns, height, apps = appKeys.take(250))
+        0, 0, first.visibleColumns, height, apps = appKeys.take(250))
     val shifted = first.cards.map { it.copy(y = it.y + height) }
     return copy(appsConfigured = true, pages = if (shifted.size < 150 && shifted.all { it.y + it.height <= DashboardMaxRows }) {
         listOf(first.copy(cards = listOf(card) + shifted)) + pages.drop(1)
@@ -233,10 +262,10 @@ private fun DashboardLayout.withAppsCard(appKeys: List<String>): DashboardLayout
         when {
             available >= 0 -> pages.mapIndexed { index, page ->
                 if (index != available) page else page.copy(cards = page.cards + card.copy(
-                    width = page.columns, y = page.cards.maxOfOrNull { it.y + it.height } ?: 0,
+                    width = page.visibleColumns, y = page.cards.maxOfOrNull { it.y + it.height } ?: 0,
                 ))
             }
-            pages.size < 32 -> listOf(DashboardPage("Apps", first.columns, listOf(card))) + pages
+            pages.size < 32 -> listOf(first.copy(title = "Apps", cards = listOf(card))) + pages
             else -> pages
         }
     })

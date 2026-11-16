@@ -221,16 +221,17 @@ class MainActivity : ComponentActivity() {
                             1, haDisplay.homeLayout.twoPerRow,
                         )).migrateAppsCard(dockKeys)
                     }
-                    var focusHomeSurface by remember { mutableIntStateOf(0) }
+                    var focusHomeSurface by remember { mutableStateOf<Int?>(null) }
                     var focusAssistantSurface by remember { mutableIntStateOf(0) }
                     LaunchedEffect(homeFocusRequest) {
-                        if (homeFocusRequest == 0) return@LaunchedEffect
+                        val request = homeFocusRequest
+                        if (request == 0) return@LaunchedEffect
                         val assistantTarget = dashboardLayouts.assistant?.pages.orEmpty().any { page -> page.cards.any { it.focusOnHome } }
                         tab = if (assistantTarget) HomeTab.Assistant else HomeTab.Home
                         withFrameNanos { }
                         val fallback = if (assistantTarget) assistantTabFocus else homeTabFocus
                         runCatching { fallback.requestFocus() }
-                        if (assistantTarget) focusAssistantSurface++ else focusHomeSurface++
+                        if (assistantTarget) focusAssistantSurface++ else focusHomeSurface = request
                     }
                     var lastApp by remember { mutableStateOf<String?>(null) }
                     val watchNextByPackage = remember(watchNext) {
@@ -438,6 +439,9 @@ class MainActivity : ComponentActivity() {
                                 val columnWidth = dashboardColumnWidth(maxWidth)
                                 val cameraWidth = minOf(maxHeight * 16f / 9f, maxWidth - columnWidth - EdgePadding)
                                     .coerceAtLeast(0.dp)
+                                val waitingForApps = all == null && homeLayout.pages.any { page ->
+                                    page.cards.any { it.apps != null && it.focusOnHome }
+                                }
                                 Row(horizontalArrangement = Arrangement.spacedBy(EdgePadding)) {
                                     if (camera != null) CameraBox(cameraWidth)
                                     HaAssistantTab(
@@ -446,9 +450,10 @@ class MainActivity : ComponentActivity() {
                                         entityIds = emptyList(),
                                         dashboard = null,
                                         customLayout = homeLayout,
-                                        homeFocusRequest = focusHomeSurface,
-                                        renderApps = { card, target, height, neighbor ->
-                                            DashboardAppsCard(card, all.orEmpty(), target, height, lastApp, neighbor,
+                                        homeFocusRequest = if (waitingForApps) 0 else focusHomeSurface ?: 0,
+                                        onHomeFocusHandled = { if (focusHomeSurface == it) focusHomeSurface = null },
+                                        renderApps = { card, target, homeTarget, height, neighbor ->
+                                            DashboardAppsCard(card, all.orEmpty(), haConnection.entities, target, homeTarget, height, lastApp, neighbor,
                                                 { lastApp = it }, { allAppsOpen = true })
                                         },
                                         tabFocus = networkFocus,

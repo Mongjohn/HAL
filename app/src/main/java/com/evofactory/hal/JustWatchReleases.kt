@@ -30,6 +30,21 @@ internal fun regionalReleasePage(index: String, region: String): HttpUrl? =
 
 internal fun titleBackdrop(html: String): String? = backdrop.find(html)?.value
 
+internal fun titleReleaseYear(html: String, path: String): Int? {
+    val payload = pageData.find(html)?.groupValues?.get(1) ?: return null
+    val values = try {
+        JSONArray(payload)
+    } catch (_: JSONException) {
+        return null
+    }
+    return (0 until values.length()).asSequence().mapNotNull(values::optJSONObject)
+        .filter { values.opt(it.optInt("fullPath", -1)) == path }
+        .mapNotNull { content ->
+            (values.opt(content.optInt("originalReleaseYear", -1)) as? Number)?.toInt()
+                ?.takeIf { it in 1000..9999 }
+        }.firstOrNull()
+}
+
 internal fun catalogImage(url: String): Boolean = backdrop.matches(url) || isCatalogPoster(url)
 
 internal fun isCatalogPoster(url: String): Boolean = posterImage.matches(url)

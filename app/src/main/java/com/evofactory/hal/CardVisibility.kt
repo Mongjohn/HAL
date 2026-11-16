@@ -63,6 +63,10 @@ sealed interface CardVisibility {
 internal fun CardVisibility?.isVisible(entities: Map<String, HaEntity>): Boolean =
     this == null || matches { entities[it]?.state } == true
 
+data class ItemVisibility(val rule: CardVisibility, val keepSpace: Boolean = false) {
+    fun toJson(): JSONObject = JSONObject().put("rule", rule.toJson()).put("keepSpace", keepSpace)
+}
+
 internal fun parseCardVisibility(json: JSONObject, fromHomeAssistant: Boolean = false, depth: Int = 0): CardVisibility {
     require(depth <= 8) { "Visibility rules can be nested up to 8 levels." }
     val type = if (fromHomeAssistant && !json.has("condition")) "state" else json.optString("condition")

@@ -112,16 +112,22 @@ class SensorCard(
     val isWeather get() = ids.size == 1 && isHaWeather(ids.first()) && subtitles.isEmpty()
     val isMediaOnly = ids.isNotEmpty() && ids.all { isHaMediaPlayer(it) && it !in gauges && it !in graphs }
 
-    fun entityRows(twoPerRow: Boolean, halfWidthItems: Set<Int>? = null): List<IntRange> = buildList {
-        var first = 0
-        while (first < ids.size) {
-            val second = first + 1
+    fun entityRows(twoPerRow: Boolean, halfWidthItems: Set<Int>? = null): List<IntRange> =
+        itemRows(ids.indices.toList(), twoPerRow, halfWidthItems).map { it.first()..it.last() }
+
+    internal fun itemRows(positions: List<Int>, twoPerRow: Boolean, halfWidthItems: Set<Int>?): List<List<Int>> = buildList {
+        var index = 0
+        while (index < positions.size) {
+            val first = positions[index++]
+            val second = positions.getOrNull(index)
             val bothHalf = halfWidthItems?.let { first in it && second in it } ?: twoPerRow
-            val pair = bothHalf && second < ids.size && second !in subtitles &&
-                !isFullWidth(ids[first]) && !isFullWidth(ids[second])
-            val last = if (pair) second else first
-            add(first..last)
-            first = last + 1
+            if (second != null && bothHalf && ((first + 1)..second).none(subtitles::containsKey) &&
+                !isFullWidth(ids[first]) && !isFullWidth(ids[second])) {
+                add(listOf(first, second))
+                index++
+            } else {
+                add(listOf(first))
+            }
         }
     }
 
@@ -269,7 +275,8 @@ fun HaAssistantTab(
     columnsFocus: FocusRequester? = null,
     customLayout: DashboardLayout? = null,
     homeFocusRequest: Int = 0,
-    renderApps: (@Composable (DashboardCard, FocusRequester, Dp, (FocusDirection) -> FocusRequester) -> Unit)? = null,
+    onHomeFocusHandled: (Int) -> Unit = {},
+    renderApps: (@Composable (DashboardCard, FocusRequester, FocusRequester, Dp, (FocusDirection) -> FocusRequester) -> Unit)? = null,
 ) {
     val board = connection.dashboard(dashboard)
     val missing = connection.dashboardMissing(dashboard)
@@ -301,6 +308,8 @@ fun HaAssistantTab(
             ?: board?.views.orEmpty().flatMap { view -> view.cards.map { it.key } }
         keys.associateWith { FocusRequester() }
     }
+    val homeAppsTarget = remember { FocusRequester() }
+    val homeAppsFocus = remember { object { var requested = false } }
     LaunchedEffect(homeFocusRequest) {
         if (homeFocusRequest == 0) return@LaunchedEffect
         val index = customLayout?.pages?.indexOfFirst { page -> page.cards.any { it.focusOnHome } } ?: -1
@@ -310,9 +319,16 @@ fun HaAssistantTab(
             withFrameNanos { }
             withFrameNanos { }
             if (target != null && target.card.visibility.isVisible(entities)) {
-                runCatching { targets[target.card.key]?.requestFocus() }
+                homeAppsFocus.requested = target.apps != null
+                try {
+                    val requester = if (homeAppsFocus.requested) homeAppsTarget else targets[target.card.key]
+                    runCatching { requester?.requestFocus() }
+                } finally {
+                    homeAppsFocus.requested = false
+                }
             }
         }
+        onHomeFocusHandled(homeFocusRequest)
     }
     // With something before the columns (the Home tab's camera), every view's cards follow each
     // other, without the views' names above them
@@ -328,9 +344,16 @@ fun HaAssistantTab(
     val visibleKeys = cards.map { it.key }.toSet()
     val visibleItems = page?.cards.orEmpty().filter { it.card.key in visibleKeys }
     val cardOptions = page?.cards.orEmpty().associateBy { it.card.key }
+    val hiddenItems = cards.associate { card ->
+        card.key to cardOptions[card.key]?.itemVisibility.orEmpty().mapNotNull { (key, setting) ->
+            key.toIntOrNull()?.takeUnless { setting.rule.isVisible(entities) }?.let { it to setting.keepSpace }
+        }.toMap()
+    }
     val rowsByCard = cards.associate { card ->
         val options = cardOptions[card.key]
-        card.key to card.entityRows(options?.twoPerRow ?: layout.twoPerRow, options?.halfWidthItems)
+        val hidden = hiddenItems.getValue(card.key)
+        val slots = card.ids.indices.filter { hidden[it] != false }
+        card.key to card.itemRows(slots, options?.twoPerRow ?: layout.twoPerRow, options?.halfWidthItems)
     }
     val aliases = customLayout?.aliases.orEmpty()
     val names = (customLayout?.names ?: board?.names.orEmpty()) + aliases
@@ -342,7 +365,11 @@ fun HaAssistantTab(
             card.graphs.values.sumOf { 2 + it.entities.size } + if (card.isMediaOnly) 3 * card.ids.size else 0
     }
     val scroll = rememberScrollState()
-    LaunchedEffect(viewIndex) { scroll.scrollTo(0) }
+    val sideways = rememberScrollState()
+    LaunchedEffect(viewIndex) {
+        scroll.scrollTo(0)
+        sideways.scrollTo(0)
+    }
     // The card whose buttons the remote moves between, after OK on it; Back leaves it
     var entered by remember { mutableStateOf<String?>(null) }
     var focusedCard by remember(customLayout, board, viewIndex) { mutableStateOf<String?>(null) }
@@ -432,17 +459,28 @@ fun HaAssistantTab(
             }
             // One card, selected as a whole, with its buttons once gone into
             @Composable
-            fun Card(card: SensorCard, up: FocusRequester?, window: CardWindow?, minHeight: Dp? = null, maxHeight: Dp? = null) {
+            fun Card(
+                card: SensorCard,
+                up: FocusRequester?,
+                window: CardWindow?,
+                minHeight: Dp? = null,
+                maxHeight: Dp? = null,
+                left: FocusRequester? = null,
+                right: FocusRequester? = null,
+            ) {
                 // Selection's weather cards have the weather's name as title, which its reading says already
                 val weather = card.ids.firstOrNull()?.takeIf { card.isWeather && board == null && customLayout == null }
                 val rows = rowsByCard.getValue(card.key)
+                val hidden = hiddenItems.getValue(card.key)
                 val buttonRows = rows.flatMapIndexed { row, positions ->
-                    positions.filter { card.hasControl(card.ids[it]) }.map { row }
-                }
+                    positions.filter { it !in hidden && card.hasControl(card.ids[it]) }.map { it to row }
+                }.toMap()
                 AssistantCard(
                     target = targets[card.key],
                     onCardFocusChanged = { cardFocusChanged(card.key, it) },
                     up = up,
+                    left = left,
+                    right = right,
                     window = window,
                     buttonRows = buttonRows,
                     entered = entered == card.key,
@@ -455,15 +493,18 @@ fun HaAssistantTab(
                     if (weather != null) {
                         WeatherReading(entities[weather], connection.hourly[weather], connection.daily[weather])
                     } else {
-                        CardContent(card, rows, connection, names, aliases, entered == card.key, raised, firstButton, onButtonFocused,
+                        CardContent(card, rows, hidden.keys, buttonRows.keys.firstOrNull(), connection, names, aliases,
+                            entered == card.key, raised, firstButton, onButtonFocused,
                             cardOptions[card.key]?.halfWidthItems.orEmpty(), compactMedia = maxHeight != null && maxHeight < 120.dp,
                             cardFocused = cardFocused)
                     }
                 }
             }
             if (page != null) {
-                val gap = minOf(PanelItemSpacing, width.coerceAtLeast(0.dp) / (page.columns * 2))
-                val cell = ((width - gap * (page.columns - 1)) / page.columns).coerceAtLeast(0.dp)
+                val gap = minOf(PanelItemSpacing, width.coerceAtLeast(0.dp) / (page.visibleColumns * 2))
+                val cell = ((width - gap * (page.visibleColumns - 1)) / page.visibleColumns).coerceAtLeast(0.dp)
+                val wide = page.columns > page.visibleColumns
+                val gridWidth = (cell + gap) * page.columns - gap
                 val topMargin = minOf(CardPeek, maxHeight / 4)
                 val bottomMargin = minOf(EdgePadding, maxHeight / 4)
                 val usableHeight = (maxHeight - topMargin - bottomMargin).coerceAtLeast(0.dp)
@@ -471,10 +512,12 @@ fun HaAssistantTab(
                 val step = (usableHeight + rowGap) / DashboardScreenRows
                 val rows = visibleItems.maxOfOrNull { it.y + it.height } ?: 0
                 CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
-                    Box(Modifier.fillMaxSize().verticalScroll(scroll).padding(
+                    Box(Modifier.fillMaxSize()
+                        .then(if (wide) Modifier.horizontalScroll(sideways) else Modifier)
+                        .verticalScroll(scroll).padding(
                         start = inset, end = inset, top = topMargin, bottom = bottomMargin,
                     )) {
-                        Box(Modifier.fillMaxWidth().height((step * rows - rowGap).coerceAtLeast(0.dp))) {
+                        Box(Modifier.width(gridWidth).height((step * rows - rowGap).coerceAtLeast(0.dp))) {
                             visibleItems.sortedWith(compareBy(DashboardCard::y, DashboardCard::x)).forEach { item ->
                                 key(item.card.key) {
                                     val height = step * item.height.coerceAtMost(DashboardScreenRows) - rowGap
@@ -483,14 +526,26 @@ fun HaAssistantTab(
                                             .width((cell + gap) * item.width - gap),
                                     ) {
                                         if (item.apps != null && renderApps != null) {
-                                            Box(Modifier.onFocusChanged { cardFocusChanged(item.card.key, it.hasFocus) }.focusGroup()) {
-                                                renderApps(item, targets.getValue(item.card.key), height) { direction ->
+                                            val target = targets.getValue(item.card.key)
+                                            Box(Modifier.onFocusChanged { cardFocusChanged(item.card.key, it.hasFocus) }
+                                                .focusProperties {
+                                                    onEnter = {
+                                                        if (!homeAppsFocus.requested) target.requestFocus()
+                                                    }
+                                                }.focusGroup()) {
+                                                renderApps(item, target, homeAppsTarget, height) { direction ->
                                                     neighboringCard(item, visibleItems, direction)?.let { targets[it.card.key] }
                                                         ?: if (direction == FocusDirection.Up) cardsUp else FocusRequester.Cancel
                                                 }
                                             }
                                         } else {
-                                            Card(item.card, cardsUp.takeIf { item.y == 0 }, null, height, height)
+                                            fun beside(direction: FocusDirection): FocusRequester? =
+                                                if (wide) neighboringCard(item, visibleItems, direction)?.let { targets[it.card.key] }
+                                                else null
+                                            Card(
+                                                item.card, cardsUp.takeIf { item.y == 0 }, null, height, height,
+                                                left = beside(FocusDirection.Left), right = beside(FocusDirection.Right),
+                                            )
                                         }
                                     }
                                 }
@@ -808,7 +863,7 @@ private fun Modifier.scrollsThrough(window: CardWindow, active: Boolean): Modifi
 private fun AssistantCard(
     up: FocusRequester?,
     window: CardWindow?,
-    buttonRows: List<Int>,
+    buttonRows: Map<Int, Int>,
     entered: Boolean,
     onEnter: () -> Unit,
     onLeave: () -> Unit,
@@ -817,13 +872,15 @@ private fun AssistantCard(
     target: FocusRequester? = null,
     onCardFocusChanged: (Boolean) -> Unit = {},
     mediaOnly: Boolean = false,
+    left: FocusRequester? = null,
+    right: FocusRequester? = null,
     content: @Composable (raised: Boolean, cardFocused: Boolean, firstButton: FocusRequester, onButtonFocused: (Int) -> Unit) -> Unit,
 ) {
     val card = target ?: remember { FocusRequester() }
     val firstButton = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     var focused by remember { mutableStateOf(false) }
-    var focusedButton by remember { mutableIntStateOf(0) }
+    var focusedButton by remember { mutableIntStateOf(-1) }
     // Selected, it comes into view clear of the fades
     val bringer = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
@@ -831,8 +888,14 @@ private fun AssistantCard(
     val scale by animateFloatAsState(if (entered) EnteredCardScale else 1f, label = "card scale")
     // Once the buttons can take the selection, or the card again
     var moveFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(entered, moveFocus) {
-        if (!moveFocus) return@LaunchedEffect
+    LaunchedEffect(entered, moveFocus, buttonRows.keys) {
+        val lostButton = entered && focusedButton >= 0 && focusedButton !in buttonRows
+        if (!moveFocus && !lostButton) return@LaunchedEffect
+        if (entered && buttonRows.isEmpty()) {
+            onLeave()
+            moveFocus = true
+            return@LaunchedEffect
+        }
         withFrameNanos { }
         runCatching { (if (entered) firstButton else card).requestFocus() }
         moveFocus = false
@@ -859,21 +922,26 @@ private fun AssistantCard(
                 when {
                     // Past the edge: on to the next card that way, if there's one
                     entered && direction != null -> {
-                        val row = buttonRows.getOrNull(focusedButton)
+                        val row = buttonRows[focusedButton]
+                        val buttons = buttonRows.keys.toList()
+                        val index = buttons.indexOf(focusedButton)
                         val edge = when (event.key) {
-                            Key.DirectionUp -> row == buttonRows.firstOrNull()
-                            Key.DirectionDown -> row == buttonRows.lastOrNull()
-                            Key.DirectionLeft -> buttonRows.getOrNull(focusedButton - 1) != row
-                            Key.DirectionRight -> buttonRows.getOrNull(focusedButton + 1) != row
+                            Key.DirectionUp -> row == buttonRows.values.firstOrNull()
+                            Key.DirectionDown -> row == buttonRows.values.lastOrNull()
+                            Key.DirectionLeft -> buttons.getOrNull(index - 1)?.let(buttonRows::get) != row
+                            Key.DirectionRight -> buttons.getOrNull(index + 1)?.let(buttonRows::get) != row
                             else -> true
                         }
                         if (!edge) return@onPreviewKeyEvent false
                         if (!release) {
-                            val moved = if (event.key == Key.DirectionUp && up != null) {
-                                runCatching { up.requestFocus() }.isSuccess
-                            } else {
-                                focusManager.moveFocus(direction)
+                            val next = when (direction) {
+                                FocusDirection.Up -> up
+                                FocusDirection.Left -> left
+                                FocusDirection.Right -> right
+                                else -> null
                             }
+                            val moved = next?.let { runCatching { it.requestFocus() }.getOrDefault(false) }
+                                ?: focusManager.moveFocus(direction)
                             if (moved) onLeave()
                         }
                         true
@@ -905,6 +973,8 @@ private fun AssistantCard(
             }
             .focusProperties {
                 if (up != null) this.up = up
+                if (left != null) this.left = left
+                if (right != null) this.right = right
                 // Inside, only the buttons take the selection
                 canFocus = !entered
             }
@@ -981,7 +1051,9 @@ private const val EnteredCardScale = 1.03f
 @Composable
 private fun CardContent(
     card: SensorCard,
-    rows: List<IntRange>,
+    rows: List<List<Int>>,
+    hidden: Set<Int>,
+    firstControl: Int?,
     connection: HaConnection,
     // The names a dashboard's cards give entities, in place of their own
     names: Map<String, String>,
@@ -994,11 +1066,9 @@ private fun CardContent(
     compactMedia: Boolean = false,
     cardFocused: Boolean = false,
 ) {
-    // What the remote lands on once in the card, in order: buttons and switches
-    val interactive = card.ids.filter(card::hasControl)
     @Composable
-    fun Entity(id: String) {
-        val index = interactive.indexOf(id)
+    fun Entity(position: Int) {
+        val id = card.ids[position]
         card.graphs[id]?.let { graph ->
             HistoryGraph(connection, graph, names, aliases)
             return
@@ -1007,7 +1077,7 @@ private fun CardContent(
             WeatherReading(connection.entities[id], connection.hourly[id], connection.daily[id])
             return
         }
-        if (index < 0) {
+        if (!card.hasControl(id)) {
             val gauge = card.gauges[id]
             if (gauge != null) {
                 GaugeReading(id, connection.entities[id], names[id], gauge)
@@ -1017,10 +1087,10 @@ private fun CardContent(
             return
         }
         val modifier = Modifier
-            .then(if (index == 0) Modifier.focusRequester(firstButton) else Modifier)
-            .onFocusChanged { if (it.isFocused) onButtonFocused(index) }
+            .then(if (position == firstControl) Modifier.focusRequester(firstButton) else Modifier)
+            .onFocusChanged { if (it.isFocused) onButtonFocused(position) }
             // Only once gone into the card
-            .focusProperties { canFocus = entered }
+            .focusProperties { canFocus = entered && position !in hidden }
         if (isHaStatefulControl(id)) {
             StatefulControlRow(connection, id, names[id], modifier, card.isMediaOnly, compactMedia, cardFocused && !entered)
         } else if (isHaSelect(id)) {
@@ -1029,14 +1099,36 @@ private fun CardContent(
             ActionButton(connection, id, name = names[id], raised = raised, modifier = modifier)
         }
     }
-    if (card.title.isNotEmpty()) CardHeading(card.title)
-    for (row in rows) {
-        card.subtitles[row.first]?.let { CardHeading(it, Modifier.padding(top = 8.dp)) }
-        if (row.first == row.last && row.first in halfWidthItems && !card.isFullWidth(card.ids[row.first])) {
-            Box(Modifier.fillMaxWidth(0.5f)) { Entity(card.ids[row.first]) }
-        } else {
-            HaEntityRow(row) { Entity(card.ids[it]) }
+    @Composable
+    fun Slot(position: Int) {
+        key(position) {
+            if (position in hidden) {
+                // Measure the same content to reserve its space without placing it.
+                Box(Modifier.layout { measurable, constraints ->
+                    val item = measurable.measure(constraints)
+                    layout(item.width, item.height) {}
+                }) { Entity(position) }
+            } else {
+                Entity(position)
+            }
         }
+    }
+    if (card.title.isNotEmpty()) CardHeading(card.title)
+    var nextHeading = 0
+    for (row in rows) {
+        val first = row.first()
+        for (index in nextHeading..first) {
+            card.subtitles[index]?.let { CardHeading(it, Modifier.padding(top = 8.dp)) }
+        }
+        nextHeading = row.last() + 1
+        if (row.size == 1 && first in halfWidthItems && !card.isFullWidth(card.ids[first])) {
+            Box(Modifier.fillMaxWidth(0.5f)) { Slot(first) }
+        } else {
+            HaEntityRow(row.indices) { Slot(row[it]) }
+        }
+    }
+    for (index in nextHeading until card.ids.size) {
+        card.subtitles[index]?.let { CardHeading(it, Modifier.padding(top = 8.dp)) }
     }
     card.subtitles[card.ids.size]?.let { CardHeading(it) }
 }

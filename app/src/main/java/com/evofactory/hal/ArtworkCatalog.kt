@@ -53,7 +53,7 @@ internal const val CATALOG_INTERVAL = 24 * 60 * 60 * 1000L
 private const val MAX_PAGE_BYTES = 3 * 1024 * 1024
 private val catalogFileLock = Any()
 
-internal data class CatalogArtwork(val path: String, val uri: String, val title: String, val service: String)
+internal data class CatalogArtwork(val path: String, val uri: String, val title: String, val service: String, val year: Int? = null)
 
 internal fun newestReleases(releases: List<StreamingRelease>): List<StreamingRelease> =
     releases.sortedByDescending { it.date }.distinctBy { it.path }.take(ARTWORK_LIMIT)
@@ -63,7 +63,7 @@ internal data class ArtworkCatalogSnapshot(
     val services: Set<String>,
     val checkedAt: Long,
     val artwork: List<CatalogArtwork>,
-    val hasLabels: Boolean = true,
+    val hasYearMetadata: Boolean = true,
 ) {
     fun matches(settings: ArtworkSettings) = region == settings.region && services == settings.services
 }
@@ -84,9 +84,10 @@ internal class ArtworkCatalog(private val context: Context, private val client: 
                 artwork = (0 until entries.length()).mapNotNull { index ->
                     val entry = entries.getJSONObject(index)
                     val uri = entry.getString("uri").takeIf(::catalogImage) ?: return@mapNotNull null
-                    CatalogArtwork(entry.getString("path"), uri, entry.optString("title"), entry.optString("service"))
+                    CatalogArtwork(entry.getString("path"), uri, entry.optString("title"), entry.optString("service"),
+                        entry.optInt("year").takeIf { it in 1000..9999 })
                 }.distinctBy { it.path }.take(ARTWORK_LIMIT),
-                hasLabels = json.optBoolean("hasLabels"),
+                hasYearMetadata = json.optBoolean("hasYears"),
             )
         } catch (_: IOException) {
             null
@@ -121,12 +122,16 @@ internal class ArtworkCatalog(private val context: Context, private val client: 
                 coroutineScope {
                     batch.map { release ->
                         async {
-                            val image = try {
-                                titleBackdrop(get(justWatch.resolve(release.path)!!))
+                            val titlePage = try {
+                                get(justWatch.resolve(release.path)!!)
                             } catch (_: IOException) {
                                 null
-                            } ?: release.posterUrl
-                            image?.let { CatalogArtwork(release.path, it, release.title, release.service) }
+                            }
+                            val image = titlePage?.let(::titleBackdrop) ?: release.posterUrl
+                            image?.let {
+                                CatalogArtwork(release.path, it, release.title, release.service,
+                                    titlePage?.let { page -> titleReleaseYear(page, release.path) })
+                            }
                         }
                     }.awaitAll().filterNotNull()
                 }
@@ -150,9 +155,10 @@ internal class ArtworkCatalog(private val context: Context, private val client: 
             .put("services", JSONArray(snapshot.services))
             .put("checkedAt", snapshot.checkedAt)
             .put("hasLabels", true)
+            .put("hasYears", true)
             .put("artwork", JSONArray(snapshot.artwork.map {
                 JSONObject().put("path", it.path).put("uri", it.uri)
-                    .put("title", it.title).put("service", it.service)
+                    .put("title", it.title).put("service", it.service).put("year", it.year)
             }))
         synchronized(catalogFileLock) {
             val stream = cache.startWrite()
