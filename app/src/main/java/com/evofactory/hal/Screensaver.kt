@@ -96,7 +96,7 @@ class CameraScreensaver : DreamService(), LifecycleOwner, SavedStateRegistryOwne
                 setViewTreeLifecycleOwner(this@CameraScreensaver)
                 setViewTreeSavedStateRegistryOwner(this@CameraScreensaver)
                 setContent {
-                    MaterialTheme(colorScheme = AppColorScheme) {
+                    HalTheme {
                         CameraRotation(cameras, seconds, minimizeStreams, showProgress)
                     }
                 }

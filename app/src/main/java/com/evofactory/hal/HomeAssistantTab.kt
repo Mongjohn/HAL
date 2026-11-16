@@ -276,6 +276,7 @@ fun HaAssistantTab(
     customLayout: DashboardLayout? = null,
     homeFocusRequest: Int = 0,
     onHomeFocusHandled: (Int) -> Unit = {},
+    onHomeFocusUnavailable: () -> Unit = {},
     renderApps: (@Composable (DashboardCard, FocusRequester, FocusRequester, Dp, (FocusDirection) -> FocusRequester) -> Unit)? = null,
 ) {
     val board = connection.dashboard(dashboard)
@@ -287,6 +288,14 @@ fun HaAssistantTab(
         customLayout == null && board == null && !reading && entityIds.isEmpty() ->
             (if (missing) "This dashboard is built by Home Assistant itself, with nothing to read" else null) to "Edit dashboard in browser"
         else -> null
+    }
+    if (prompt != null || reading) {
+        LaunchedEffect(homeFocusRequest) {
+            if (homeFocusRequest != 0) {
+                onHomeFocusHandled(homeFocusRequest)
+                onHomeFocusUnavailable()
+            }
+        }
     }
     if (prompt != null) {
         SettingsPrompt(prompt.first, prompt.second, onSetUp, modifier)
@@ -310,25 +319,26 @@ fun HaAssistantTab(
     }
     val homeAppsTarget = remember { FocusRequester() }
     val homeAppsFocus = remember { object { var requested = false } }
-    LaunchedEffect(homeFocusRequest) {
+    LaunchedEffect(homeFocusRequest, customLayout) {
         if (homeFocusRequest == 0) return@LaunchedEffect
         val index = customLayout?.pages?.indexOfFirst { page -> page.cards.any { it.focusOnHome } } ?: -1
-        if (index >= 0) {
+        val target = customLayout?.pages?.getOrNull(index)?.cards?.firstOrNull { it.focusOnHome }
+        val focused = if (target != null) {
             viewIndex = index
-            val target = customLayout?.pages?.get(index)?.cards?.first { it.focusOnHome }
             withFrameNanos { }
             withFrameNanos { }
-            if (target != null && target.card.visibility.isVisible(entities)) {
+            if (target.card.visibility.isVisible(connection.entities)) {
                 homeAppsFocus.requested = target.apps != null
                 try {
                     val requester = if (homeAppsFocus.requested) homeAppsTarget else targets[target.card.key]
-                    runCatching { requester?.requestFocus() }
+                    runCatching { requester?.requestFocus() == true }.getOrDefault(false)
                 } finally {
                     homeAppsFocus.requested = false
                 }
-            }
-        }
+            } else false
+        } else false
         onHomeFocusHandled(homeFocusRequest)
+        if (!focused) onHomeFocusUnavailable()
     }
     // With something before the columns (the Home tab's camera), every view's cards follow each
     // other, without the views' names above them
@@ -902,7 +912,6 @@ private fun AssistantCard(
     }
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(12.dp)
-    val appearance = LocalDashboardAppearance.current
     val inner = rememberScrollState()
     Column(
         modifier = Modifier
@@ -990,7 +999,7 @@ private fun AssistantCard(
             )
             .heightIn(min = minHeight ?: Dp.Unspecified, max = maxHeight ?: Dp.Unspecified)
             .then(if (mediaOnly) Modifier else Modifier
-                .dashboardCard(appearance, if (entered) RaisedSurface else colors.surfaceVariant, shape)
+                .dashboardCard(if (entered) RaisedSurface else colors.surfaceVariant, shape)
                 .padding(horizontal = CardSidePadding, vertical = if (maxHeight != null) 0.dp else 12.dp)),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1182,7 +1191,7 @@ private fun StatefulControlRow(
         showMedia -> Border(BorderStroke(1.dp, DashboardPanelOutline))
         else -> Border.None
     }
-    val container = if (showMedia) colors.surfaceVariant.copy(alpha = LocalDashboardAppearance.current.opacity / 100f)
+    val container = if (showMedia) colors.surfaceVariant.copy(alpha = LocalDashboardCardOpacity.current / 100f)
         else Color.Transparent
     Surface(
         onClick = { connection.control(id, scope, context) },

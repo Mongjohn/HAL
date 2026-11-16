@@ -19,6 +19,22 @@
   </header>
   <p id="apply-result" role="status" hidden></p>
   <p id="status" role="status">Loading dashboard…</p>
+  <details id="settings-transfer" inert>
+    <summary>Import / export settings</summary>
+    <p class="hint">Export saved TV settings, or choose parts of a HAL settings JSON file to import. Browser drafts are not exported. Uploaded artwork and appearance settings are not included.</p>
+    <p class="hint">Camera addresses and integration logins can contain passwords or tokens. Those choices start unchecked. Files are not encrypted.</p>
+    <div class="controls">
+      <button id="settings-export-options">Choose settings to export</button>
+      <label>Import file <input id="settings-file" type="file" accept=".json,application/json"></label>
+    </div>
+    <fieldset id="settings-selection" hidden>
+      <legend id="settings-selection-title"></legend>
+      <div id="settings-choices"></div>
+      <button id="settings-confirm" disabled></button>
+      <button id="settings-cancel">Cancel</button>
+    </fieldset>
+    <p id="settings-result" role="status"></p>
+  </details>
   <details id="artwork-library">
     <summary>Slideshow artwork</summary>
     <p class="hint">On the TV, open HAL settings → Background and enable Artwork slideshow and Use local artwork. JPEG, PNG, or WebP, up to 8 MB each.</p>

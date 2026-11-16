@@ -11,7 +11,7 @@ const dirty = new Set();
 const allAppsId = "dock:all_apps";
 let installedApps = [];
 let revision = null;
-let canRestore = false;
+let canRestore = {};
 let camera = false;
 let surface = "home";
 let pageIndex = 0;
@@ -819,9 +819,11 @@ function render() {
   $("dock").checked = layout().bottomRow;
   $("camera").hidden = surface !== "home" || !camera;
   $("apply").disabled = busy || !dirty.has(surface);
-  $("restore").disabled = busy || !canRestore;
+  $("restore").disabled = busy || !canRestore[surface];
+  $("restore").textContent = `Restore previous ${surface === "home" ? "Home" : "Assistant"} layout`;
   $("undo").disabled = busy || history[surface].length === 0;
   $("workspace").inert = busy;
+  $("settings-transfer").inert = busy;
   renderGrid();
   if (displayedPage !== page()) {
     displayedPage = page();
@@ -830,13 +832,19 @@ function render() {
   renderInspector();
 }
 
+const settingsRequestLimit = 4 * 1024 * 1024;
+
 async function request(path, data) {
+  const body = data === undefined ? undefined : JSON.stringify(data);
+  if (path.startsWith("settings/") && body !== undefined && new Blob([body]).size > settingsRequestLimit) {
+    throw new Error("The settings and selection exceed the 4 MiB request limit.");
+  }
   let response;
   try {
     response = await fetch("/api/" + path, {
       signal: AbortSignal.timeout(10_000),
       ...(data === undefined ? {} : {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+        method: "POST", headers: { "Content-Type": "application/json" }, body,
       }),
     });
   } catch {
@@ -848,10 +856,14 @@ async function request(path, data) {
 }
 
 async function loadState() {
+  const deadline = Date.now() + 35_000;
   let state = await request("state");
-  while (state.loading) {
+  while (state.loading && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 1000));
     state = await request("state");
+  }
+  if (state.loading || typeof state.revision !== "string" || !state.home?.pages || !state.assistant?.pages || !state.canRestore) {
+    throw new Error("HAL did not return the current layouts.");
   }
   revision = state.revision;
   canRestore = state.canRestore;
@@ -1015,14 +1027,15 @@ $("undo").onclick = () => {
   render();
   say(dirty.has(surface) ? "Draft changes. Apply to update the TV." : "");
 };
-$("apply").onclick = async () => {
+function report(state, message) {
   const result = $("apply-result");
+  result.hidden = false;
+  result.dataset.state = state;
+  result.textContent = message;
+}
+
+$("apply").onclick = async () => {
   const label = surface === "home" ? "Home panel" : "Assistant tab";
-  function report(state, message) {
-    result.hidden = false;
-    result.dataset.state = state;
-    result.textContent = message;
-  }
   const invalid = layout().pages.flatMap((view, index) => view.cards.flatMap(card => {
     if (card.visibility && !validVisibility(card.visibility)) return [{ index, card, item: null }];
     const item = Object.keys(card.itemVisibility || {}).find(key => !validVisibility(card.itemVisibility[key].rule));
@@ -1052,17 +1065,14 @@ $("apply").onclick = async () => {
   report("pending", `Applying ${label} to the TV…`);
   try {
     const saved = await request("apply", { revision, surface, layout: layout() });
-    if (typeof saved.revision !== "string" || saved.applied !== true) {
+    if (typeof saved.revision !== "string" || saved.applied !== true || saved.surface !== surface || !saved.layout?.pages || !saved.canRestore) {
       throw new Error("HAL did not confirm the update.");
     }
     revision = saved.revision;
-    const hasTarget = layout().pages.some(view => view.cards.some(card => card.focusOnHome));
-    if (hasTarget) {
-      const other = surface === "home" ? "assistant" : "home";
-      for (const view of drafts[other].pages) for (const card of view.cards) card.focusOnHome = false;
-      history[other] = [];
-    }
-    canRestore = true;
+    drafts[surface] = saved.layout;
+    displayedPage = page();
+    reconcileHomeFocus(saved.layout);
+    canRestore = saved.canRestore;
     dirty.delete(surface);
     history[surface] = [];
     say("");
@@ -1073,16 +1083,36 @@ $("apply").onclick = async () => {
   finally { busy = false; render(); }
 };
 $("restore").onclick = async () => {
-  if (!confirm("Restore the previous TV layout and discard any open drafts?")) return;
+  const label = surface === "home" ? "Home" : "Assistant";
+  if (!confirm(`Restore the previous ${label} layout? Only this surface's draft will be discarded. A restored Home-focus target takes priority over the other surface's target.`)) return;
   busy = true;
   render();
+  report("pending", `Restoring the previous ${label} layout…`);
   try {
-    await request("restore", { revision });
-    await loadState();
-    say("Previous layout restored.");
-  } catch (error) { say(error.message); }
+    const saved = await request("restore", { revision, surface });
+    if (saved.restored !== true || saved.surface !== surface || typeof saved.revision !== "string" || !saved.layout?.pages || !saved.canRestore) {
+      throw new Error("HAL did not confirm the restore.");
+    }
+    revision = saved.revision;
+    drafts[surface] = saved.layout;
+    reconcileHomeFocus(saved.layout);
+    canRestore = saved.canRestore;
+    history[surface] = [];
+    dirty.delete(surface);
+    pageIndex = 0;
+    selected = null;
+    report("success", `Previous ${label} layout restored.`);
+  } catch (error) { report("error", `Could not confirm restore. ${error.message}`); }
   finally { busy = false; render(); }
 };
+
+function reconcileHomeFocus(savedLayout) {
+  if (!savedLayout.pages.some(view => view.cards.some(card => card.focusOnHome))) return;
+  const other = surface === "home" ? "assistant" : "home";
+  for (const draft of [drafts[other], ...history[other].map(entry => entry.layout)]) {
+    for (const view of draft.pages) for (const card of view.cards) card.focusOnHome = false;
+  }
+}
 window.addEventListener("beforeunload", event => {
   if (dirty.size) { event.preventDefault(); event.returnValue = ""; }
 });
@@ -1090,19 +1120,141 @@ window.addEventListener("beforeunload", event => {
 async function start() {
   try {
     await loadState();
-    const data = await request("catalog");
-    catalog = data.entities;
-    names = new Map(catalog.map(entity => [entity.id, entity.name]));
-    templates = data.templates;
-    notice = data.notice || "";
-    options($("template"), [["", "Choose a template"], ...templates.map((template, index) => [String(index), template.title])]);
     render();
     say("");
   } catch (error) {
     say("Could not open the editor. Check the TV and reload this page. " + error.message);
+    return;
+  }
+  try {
+    await loadCatalog();
+    render();
+  } catch (error) {
+    say("Could not load the Home Assistant catalog. " + error.message);
   }
 }
+
+function setCatalog(data) {
+  catalog = data.entities;
+  names = new Map(catalog.map(entity => [entity.id, entity.name]));
+  templates = data.templates;
+  notice = data.notice || "";
+  options($("template"), [["", "Choose a template"], ...templates.map((template, index) => [String(index), template.title])]);
+}
+
+async function loadCatalog() {
+  setCatalog(await request("catalog"));
+}
+
 start();
+
+let settingsMode = null;
+let settingsFile = null;
+const settingsResult = message => { $("settings-result").textContent = message; };
+const settingsKeys = () => [...$("settings-choices").querySelectorAll("input:checked")].map(input => input.value);
+
+function closeSettingsSelection() {
+  settingsMode = null;
+  settingsFile = null;
+  $("settings-file").value = "";
+  $("settings-selection").hidden = true;
+  $("settings-choices").replaceChildren();
+}
+
+function showSettingsChoices(mode, choices) {
+  settingsMode = mode;
+  const container = $("settings-choices");
+  container.replaceChildren();
+  for (const section of choices) {
+    container.append(node("h3", section.title));
+    for (const item of section.items) {
+      const label = node("label");
+      const input = node("input");
+      input.type = "checkbox";
+      input.value = item.key;
+      input.checked = !item.sensitive;
+      input.onchange = () => { $("settings-confirm").disabled = settingsKeys().length === 0; };
+      label.append(input, document.createTextNode(item.title + (item.sensitive ? " (includes credentials)" : "")));
+      container.append(label);
+    }
+  }
+  $("settings-selection-title").textContent = mode === "export" ? "Choose saved settings" : "Choose settings from the file";
+  $("settings-confirm").textContent = mode === "export" ? "Download settings file" : "Import selected settings to TV";
+  $("settings-confirm").disabled = settingsKeys().length === 0;
+  $("settings-selection").hidden = false;
+  settingsResult(choices.length ? "" : "No settings to transfer.");
+}
+
+$("settings-cancel").onclick = () => { closeSettingsSelection(); settingsResult(""); };
+$("settings-export-options").onclick = async () => {
+  closeSettingsSelection();
+  busy = true;
+  render();
+  try {
+    const data = await request("settings/options");
+    showSettingsChoices("export", data.choices);
+  } catch (error) { settingsResult(error.message); }
+  finally { busy = false; render(); }
+};
+$("settings-file").onchange = async () => {
+  const file = $("settings-file").files[0];
+  closeSettingsSelection();
+  if (!file) return;
+  busy = true;
+  render();
+  try {
+    if (file.size > settingsRequestLimit) throw new Error("The settings file exceeds 4 MiB.");
+    const parsed = JSON.parse(await file.text());
+    if (parsed?.format !== "hal-settings" || parsed.version !== 1) throw new Error("Choose a HAL settings file (version 1).");
+    const data = await request("settings/preview", { revision, settings: parsed });
+    settingsFile = parsed;
+    showSettingsChoices("import", data.choices);
+  } catch (error) { settingsResult(`Could not read settings. ${error.message}`); }
+  finally { busy = false; render(); }
+};
+$("settings-confirm").onclick = async () => {
+  const keys = settingsKeys();
+  if (!keys.length || !settingsMode) return;
+  const importing = settingsMode === "import";
+  if (importing && !confirm("Import the selected settings to the TV? Imported dashboards replace their saved surfaces. Camera and entity selections are merged, and selected logins are replaced. Open browser drafts will be reloaded.")) return;
+  busy = true;
+  render();
+  try {
+    if (importing) {
+      const data = await request("settings/import", { revision, keys, settings: settingsFile });
+      if (data.imported !== true || typeof data.revision !== "string") throw new Error("HAL did not confirm the import.");
+      closeSettingsSelection();
+      settingsResult("Settings imported. Reloading saved TV layouts…");
+      try {
+        await loadState();
+      } catch (error) {
+        settingsResult(`Settings imported. Reload this page to see the saved TV layouts. ${error.message}`);
+        return;
+      }
+      setCatalog({ entities: [], templates: [] });
+      try {
+        await loadCatalog();
+        settingsResult("Settings imported. The editor now shows saved TV layouts.");
+      } catch (error) {
+        settingsResult(`Settings imported and saved layouts reloaded. Could not refresh the Home Assistant catalog. ${error.message}`);
+      }
+    } else {
+      const data = await request("settings/export", { revision, keys });
+      if (data.settings?.format !== "hal-settings") throw new Error("HAL did not return a settings file.");
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data.settings, null, 2)], { type: "application/json;charset=utf-8" }));
+      const link = node("a");
+      link.href = url;
+      link.download = "hal-settings.json";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      closeSettingsSelection();
+      settingsResult("Settings file downloaded from the saved TV configuration.");
+    }
+  } catch (error) { settingsResult(`Could not confirm ${importing ? "import" : "export"}. ${error.message}`); }
+  finally { busy = false; render(); }
+};
 
 const artworkPanel = $("artwork-library");
 const artworkInput = $("artwork-files");

@@ -1,0 +1,21 @@
+# Handoff: browser settings, per-surface Restore, Home focus, and Glass
+
+Implementation and desktop verification finished on 2026-11-16 on `codex/browser-settings-and-restore`, based on `0fa2ee2`. The branch also contains the preceding HAL documentation review. See [DEVELOPMENT.md](DEVELOPMENT.md) for the maintained source map and verification workflow, and [DECISIONS.md](DECISIONS.md) for the behavior and rationale.
+
+## User direction and implementation
+
+- The user confirmed that Apply and Restore both operate on the selected surface. Apply records its effective previous layout, including a first layout seeded from legacy settings. Restore uses and consumes that restore point. An Apply on the other surface keeps the first surface's restore point, and the browser keeps the other surface's draft and Undo history. A selected Home-focus target takes priority across surfaces to preserve the existing single-target rule. Old paired snapshots are migrated when HAL next saves a layout. Settings imports invalidate restore points for changed layouts.
+- Settings import/export is browser-only. Exports use selected saved settings. Imports preview version 1 JSON, let the user choose content, and reload saved layouts after HAL confirms. Camera and login choices start unchecked. The normal catalog and settings-choice responses omit credentials. Selected exports can contain credentials in unencrypted files. The obsolete TV file dialogs, direct TV-to-TV transfer protocol and checklist, and their storage and discovery permissions were removed.
+- Glass is the sole theme and is listed in **HAL settings → Appearance**. The old theme selection and rendering branches were removed. Explicit opacity overrides carry over, and the default is 50%. The camera screensaver also uses the Glass palette.
+- A Home press handled by HAL checks visibility before routing to Assistant. HAL checks the target again after switching views and returns to normal Home focus if the target is unavailable. The focus attempt is consumed, including when leaving a surface while a request is pending. The Apps target still waits for the app list and uses the first visible tile.
+- The selected-surface clarification is in **Review HAL documentation** (`01a1e601-1599-7c62-84df-5975626fc6a5`). The follow-up request made the browser the sole import/export workflow and kept the Appearance menu for Glass. The local `AGENTS.md` reflects the updated behavior, and `CLAUDE.md` still imports `@AGENTS.md`.
+
+## Verification
+
+- The offline `:app:testDebugUnitTest` suite passed all 51 tests with the repository's local toolchain after removing TV-to-TV transfer and Classic. `DashboardEditingTest.kt` exercises per-surface persistence, migration, visibility-based destination, settings selections, malformed layouts, and Unicode. Persistence uses an in-memory SharedPreferences test double. The sandbox blocked the Gradle daemon's localhost connection on the first attempt. Running the same offline command with localhost access succeeded.
+- Headless Chrome passed at 1280 px and 420 px against the bundled HTML, CSS, and JavaScript with a synthetic API. It covered separate Apply and Restore history, the other surface's dirty draft and Undo history, cancel and failure handling, a lost response after a save, invalid settings files, credential defaults, request sizing, and catalog failure after a confirmed import. The downloaded file parsed as UTF-8 and contained the saved layout. The ignored runner in this checkout is `build/editor-transfer-check.cjs`.
+- JavaScript syntax and Git whitespace checks passed.
+
+## Device checks still open
+
+The physical SHIELD, Android HTTP listener, and live Home Assistant reconnect after importing login settings need an on-device check. Verify the Appearance menu, opacity changes and reset, an upgrade with a saved opacity override, and camera screensaver readability. Test Home with visible, hidden, missing, and disappearing Assistant targets, revisit Assistant to check for replay, and test delayed Apps list loading. No APK was assembled or installed during verification.

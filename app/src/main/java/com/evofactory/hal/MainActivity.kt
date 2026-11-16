@@ -99,11 +99,9 @@ class MainActivity : ComponentActivity() {
     private var catchHomeKey by mutableStateOf(false)
     private var reopenAfterHome by mutableStateOf(false)
     private var showFreeMemory by mutableStateOf(false)
-    private var exportOpen by mutableStateOf(false)
-    private var importOpen by mutableStateOf(false)
     private var watchNext by mutableStateOf(emptyList<WatchNextCard>())
     private var artworkSettings by mutableStateOf(ArtworkSettings())
-    private var dashboardAppearance by mutableStateOf(DashboardAppearance())
+    private var cardOpacityOverride by mutableStateOf<Int?>(null)
     private var resumed by mutableStateOf(false)
     private var watchNextRefresh: Job? = null
 
@@ -133,7 +131,7 @@ class MainActivity : ComponentActivity() {
         dashboardLayouts = prefs.dashboardLayouts
         frigate = prefs.frigate
         artworkSettings = prefs.artworkSettings
-        dashboardAppearance = prefs.dashboardAppearance
+        cardOpacityOverride = prefs.dashboardCardOpacity
         scheduleArtwork(this, artworkSettings)
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
         if (!canReadWatchNext()) requestPermissions(arrayOf(READ_TV_LISTINGS), 0)
@@ -153,7 +151,8 @@ class MainActivity : ComponentActivity() {
                 }
                 onDispose { if (registered) contentResolver.unregisterContentObserver(observer) }
             }
-            HalTheme(dashboardAppearance) {
+            val cardOpacity = cardOpacityOverride ?: DefaultCardOpacity
+            HalTheme(cardOpacity) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val all = installed
                     val visible = remember(all, order, hidden) { all?.let { arrange(it, order, hidden) } }
@@ -214,24 +213,47 @@ class MainActivity : ComponentActivity() {
                         else openDashboardEditor()
                     }
                     val legacyHomeBoard = haConnection.dashboard(haDisplay.homeDashboard)
-                    val homeLayout = remember(dashboardLayouts.home, dockKeys, haDisplay, legacyHomeBoard, haEntities) {
-                        (dashboardLayouts.home ?: seedDashboardLayout(
+                    val savedHome = dashboardLayouts.home
+                    val homeLayout = remember(savedHome, dockKeys, haDisplay, legacyHomeBoard, haEntities) {
+                        (savedHome ?: seedDashboardLayout(
                             legacyHomeBoard,
                             haDisplay.homeLayout.selectionCards(haEntities.filterNot(::isHaAction), haConnection.entities),
                             1, haDisplay.homeLayout.twoPerRow,
                         )).migrateAppsCard(dockKeys)
                     }
+                    // The browser may read settings after a write but before the next composition.
+                    fun currentHomeLayout(): DashboardLayout {
+                        val current = dashboardLayouts.home
+                        return if (current == null || current == savedHome) homeLayout else current.migrateAppsCard(dockKeys)
+                    }
                     var focusHomeSurface by remember { mutableStateOf<Int?>(null) }
                     var focusAssistantSurface by remember { mutableIntStateOf(0) }
+                    var homeFallback by remember { mutableIntStateOf(0) }
+                    LaunchedEffect(tab) {
+                        if (tab != HomeTab.Home) focusHomeSurface = null
+                        if (tab != HomeTab.Assistant) focusAssistantSurface = 0
+                    }
+                    LaunchedEffect(homeFallback) {
+                        if (homeFallback == 0) return@LaunchedEffect
+                        tab = HomeTab.Home
+                        withFrameNanos { }
+                        runCatching { homeTabFocus.requestFocus() }
+                    }
                     LaunchedEffect(homeFocusRequest) {
                         val request = homeFocusRequest
                         if (request == 0) return@LaunchedEffect
-                        val assistantTarget = dashboardLayouts.assistant?.pages.orEmpty().any { page -> page.cards.any { it.focusOnHome } }
+                        val destination = dashboardLayouts.copy(home = homeLayout).visibleHomeFocusSurface(haConnection.entities)
+                        val assistantTarget = destination == "assistant"
+                        focusAssistantSurface = 0
+                        focusHomeSurface = null
                         tab = if (assistantTarget) HomeTab.Assistant else HomeTab.Home
+                        val destinationTab = tab
                         withFrameNanos { }
+                        if (tab != destinationTab) return@LaunchedEffect
                         val fallback = if (assistantTarget) assistantTabFocus else homeTabFocus
                         runCatching { fallback.requestFocus() }
-                        if (assistantTarget) focusAssistantSurface++ else focusHomeSurface = request
+                        if (assistantTarget) focusAssistantSurface = request
+                        else if (destination == "home") focusHomeSurface = request
                     }
                     var lastApp by remember { mutableStateOf<String?>(null) }
                     val watchNextByPackage = remember(watchNext) {
@@ -400,6 +422,8 @@ class MainActivity : ComponentActivity() {
                                 dashboard = haDisplay.dashboard.takeIf { dashboardLayouts.assistant == null },
                                 customLayout = dashboardLayouts.assistant,
                                 homeFocusRequest = focusAssistantSurface,
+                                onHomeFocusHandled = { if (focusAssistantSurface == it) focusAssistantSurface = 0 },
+                                onHomeFocusUnavailable = { homeFallback++ },
                                 layout = haDisplay.layout,
                                 tabFocus = assistantTabFocus,
                                 onSetUp = openDashboardSetup,
@@ -452,6 +476,7 @@ class MainActivity : ComponentActivity() {
                                         customLayout = homeLayout,
                                         homeFocusRequest = if (waitingForApps) 0 else focusHomeSurface ?: 0,
                                         onHomeFocusHandled = { if (focusHomeSurface == it) focusHomeSurface = null },
+                                        onHomeFocusUnavailable = { homeFallback++ },
                                         renderApps = { card, target, homeTarget, height, neighbor ->
                                             DashboardAppsCard(card, all.orEmpty(), haConnection.entities, target, homeTarget, height, lastApp, neighbor,
                                                 { lastApp = it }, { allAppsOpen = true })
@@ -552,14 +577,19 @@ class MainActivity : ComponentActivity() {
                     if (dashboardEditorEnabled) {
                         DashboardEditor(
                             haServer = haServer,
-                            layouts = { dashboardLayouts.copy(home = homeLayout) },
+                            layouts = { dashboardLayouts.copy(home = currentHomeLayout()) },
+                            savedLayouts = { dashboardLayouts },
                             installedApps = all.orEmpty(),
-                            canRestore = { prefs.previousDashboardLayouts != null },
+                            previousSurface = prefs::previousDashboardSurface,
                             legacyDisplay = haDisplay,
                             legacyEntities = haEntities,
                             cameraVisible = camera != null,
-                            save = ::saveDashboardLayouts,
-                            restore = { prefs.previousDashboardLayouts?.let(::saveDashboardLayouts) },
+                            save = { next, previous, surface, restoring ->
+                                prefs.saveDashboardLayouts(next, previous, surface, restoring)
+                                dashboardLayouts = next
+                            },
+                            exportSettings = { settingsForExport(haConnection.entities, currentHomeLayout()) },
+                            importSettings = { applyImport(it, currentHomeLayout()) },
                             showInfo = dashboardEditorInfoOpen,
                             onDismissInfo = { dashboardEditorInfoOpen = false },
                             onStartFailed = { message ->
@@ -598,10 +628,10 @@ class MainActivity : ComponentActivity() {
                             },
                             showFreeMemory = showFreeMemory,
                             artworkSettings = artworkSettings,
-                            appearance = dashboardAppearance,
-                            onAppearanceChanged = { appearance ->
-                                dashboardAppearance = appearance
-                                prefs.dashboardAppearance = appearance
+                            cardOpacity = cardOpacity,
+                            onCardOpacityChanged = { opacity ->
+                                cardOpacityOverride = opacity
+                                prefs.dashboardCardOpacity = opacity
                             },
                             onArtworkEnabled = { enabled ->
                                 artworkSettings = artworkSettings.copy(enabled = enabled)
@@ -624,32 +654,11 @@ class MainActivity : ComponentActivity() {
                                 prefs.showFreeMemory = on
                                 showFreeMemory = on
                             },
-                            onExport = { exportOpen = true },
-                            onImport = { importOpen = true },
                             onDismiss = { launcherSettingsOpen = false },
                         )
                     }
                     if (stuckPlayersOpen) {
                         StuckPlayersDialog(onDismiss = { stuckPlayersOpen = false })
-                    }
-                    if (exportOpen) {
-                        ExportDialog(
-                            file = SettingsFile(
-                                cameras = cameras,
-                                login = haServer.takeIf { it.isSet },
-                                username = remember { prefs.haUsername },
-                                sensors = haEntities.filterNot(::isHaAction).map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
-                                actions = (haEntities.filter(::isHaAction) + haTopBar).distinct().map { NamedEntity(it, haConnection.entities[it]?.name ?: it) },
-                                order = haEntities,
-                                topBar = haTopBar,
-                                dashboards = dashboardLayouts.copy(home = homeLayout),
-                                frigate = frigate.takeIf { it.isSet },
-                            ),
-                            onDismiss = { exportOpen = false },
-                        )
-                    }
-                    if (importOpen) {
-                        ImportDialog(onImport = { applyImport(it, homeLayout) }, onDismiss = { importOpen = false })
                     }
                     if (networkStatusOpen) {
                         NetworkStatusDialog(
@@ -683,6 +692,17 @@ class MainActivity : ComponentActivity() {
     private fun revokeHaLogin(server: HaServer) {
         lifecycleScope.launch { haRevoke(server) }
     }
+
+    private fun settingsForExport(entities: Map<String, HaEntity>, home: DashboardLayout) = SettingsFile(
+        cameras = cameras,
+        login = haServer.takeIf { it.isSet },
+        username = prefs.haUsername,
+        sensors = haEntities.filterNot(::isHaAction).map { NamedEntity(it, entities[it]?.name ?: it) },
+        actions = (haEntities.filter(::isHaAction) + haTopBar).distinct().map { NamedEntity(it, entities[it]?.name ?: it) },
+        order = haEntities, topBar = haTopBar,
+        dashboards = dashboardLayouts.copy(home = home),
+        frigate = frigate.takeIf { it.isSet },
+    )
 
     /** Adds what's in the file. A camera whose name is already taken gets "(imported)" after its name. */
     private fun applyImport(file: SettingsFile, currentHome: DashboardLayout) {
@@ -731,12 +751,12 @@ class MainActivity : ComponentActivity() {
             val home = when {
                 importedHome != null -> importedHome
                 importedApps.isNotEmpty() -> currentHome.replaceApps(importedApps)
-                else -> currentHome
+                else -> dashboardLayouts.home
             }
             val assistant = importedAssistant ?: dashboardLayouts.assistant
             saveDashboardLayouts(DashboardLayouts(
                 if (importedHome?.hasHomeFocus == true) assistant?.withoutHomeFocus() else assistant,
-                if (importedAssistant?.hasHomeFocus == true) home.withoutHomeFocus() else home,
+                if (importedAssistant?.hasHomeFocus == true) home?.withoutHomeFocus() else home,
             ))
         }
         file.frigate?.let(::saveFrigate)
