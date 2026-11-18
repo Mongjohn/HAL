@@ -7,6 +7,12 @@ import java.util.Locale
 
 internal const val ALL_APPS_TILE_KEY = "dock:all_apps"
 
+internal enum class AppsCardCollapse(val label: String) {
+    Off("Off"),
+    Up("Up"),
+    Down("Down"),
+}
+
 internal fun dockTileKeys(appKeys: List<String>, order: List<String>, showAllAppsTile: Boolean): List<String> {
     if (!showAllAppsTile) return appKeys
     val before = order.takeWhile { it != ALL_APPS_TILE_KEY }.toSet()
@@ -31,6 +37,24 @@ class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
             if (value == null) remove("dashboard_card_opacity")
             else putInt("dashboard_card_opacity", value)
         }
+
+    internal var appearanceTheme: LauncherTheme
+        get() {
+            val saved = prefs.getString("appearance_theme", null)
+            return LauncherTheme.entries.firstOrNull { it.name == saved } ?: LauncherTheme.Glass
+        }
+        set(value) = prefs.edit { putString("appearance_theme", value.name) }
+
+    internal var appsCardCollapse: AppsCardCollapse
+        get() {
+            val saved = prefs.getString("apps_card_collapse", null)
+            return AppsCardCollapse.entries.firstOrNull { it.name == saved } ?: AppsCardCollapse.Off
+        }
+        set(value) = prefs.edit { putString("apps_card_collapse", value.name) }
+
+    internal var cycleUiColors: Boolean
+        get() = prefs.getBoolean("cycle_ui_colors", false)
+        set(value) = prefs.edit { putBoolean("cycle_ui_colors", value) }
 
     internal var artworkSettings: ArtworkSettings
         get() {

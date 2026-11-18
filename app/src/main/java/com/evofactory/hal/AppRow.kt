@@ -1,6 +1,7 @@
 package com.evofactory.hal
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -100,10 +101,10 @@ internal fun DockShortcutTile(title: String, icon: String, onClick: () -> Unit, 
         onClick = onClick,
         border = CardDefaults.border(focusedBorder = DashboardFocusBorder),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
-        modifier = modifier,
+        modifier = modifier.cycleUiColors(),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp),
+            modifier = Modifier.fillMaxSize().background(darkenCycleSurface(MaterialTheme.colorScheme.surfaceVariant)).padding(8.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -125,27 +126,28 @@ internal fun AppTile(
     val image by produceState(initialValue = cachedTileImage(app), app.key) {
         if (value == null) value = withContext(Dispatchers.IO) { loadTileImage(context, app) }
     }
+    val backing = cycleUiColor(darkenCycleSurface(MaterialTheme.colorScheme.surfaceVariant))
 
     Box(modifier = if (fitCard) modifier else modifier.aspectRatio(16f / 9f)) {
         Card(
             onClick = onClick,
             onLongClick = onLongClick,
-            border = CardDefaults.border(focusedBorder = DashboardFocusBorder),
+            border = CardDefaults.border(focusedBorder = Border(BorderStroke(2.dp, cycleUiColor(DashboardFocusColor)))),
             scale = if (fitCard) CardDefaults.scale(focusedScale = 1f, pressedScale = 1f) else CardDefaults.scale(),
             modifier = Modifier.fillMaxSize(),
         ) {
             val content = Modifier.fillMaxSize()
             val tile = image
             when {
-                tile == null -> Box(content.background(MaterialTheme.colorScheme.surfaceVariant))
+                tile == null -> Box(content.background(backing))
                 tile.isBanner -> Image(
                     bitmap = tile.bitmap,
                     contentDescription = app.label,
-                    modifier = content.background(MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = content.background(backing),
                     contentScale = if (fitCard) ContentScale.Fit else ContentScale.Crop,
                 )
                 // Phone apps have no banner: show their icon on a neutral tile
-                else -> Box(modifier = content.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                else -> Box(modifier = content.background(backing), contentAlignment = Alignment.Center) {
                     Image(bitmap = tile.bitmap, contentDescription = app.label, modifier = Modifier.size(56.dp))
                 }
             }
@@ -159,12 +161,12 @@ fun AllAppsDrawer(apps: List<InstalledApp>, onDismiss: () -> Unit) {
     val first = remember { FocusRequester() }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
-            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)
+            Modifier.fillMaxSize().background(cycleUiColor(darkenCycleSurface(MaterialTheme.colorScheme.surface)))
                 .padding(horizontal = EdgePadding, vertical = TopPadding),
         ) {
-            Text("All apps", style = MaterialTheme.typography.headlineSmall)
+            Text("All apps", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.cycleUiColors())
             if (apps.isEmpty()) {
-                Text("No installed apps", modifier = Modifier.padding(top = PanelItemSpacing))
+                Text("No installed apps", modifier = Modifier.padding(top = PanelItemSpacing).cycleUiColors())
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(140.dp),
@@ -180,7 +182,8 @@ fun AllAppsDrawer(apps: List<InstalledApp>, onDismiss: () -> Unit) {
                                 modifier = Modifier.fillMaxWidth()
                                     .then(if (app.key == apps.first().key) Modifier.focusRequester(first) else Modifier),
                             )
-                            Text(app.label, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(app.label, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.cycleUiColors())
                         }
                     }
                 }

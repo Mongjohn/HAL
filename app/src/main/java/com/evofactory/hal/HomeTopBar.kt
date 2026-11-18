@@ -141,7 +141,7 @@ fun TabButton(
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
             contentColor = when {
-                secondary -> if (selected) colors.onSurfaceVariant else FaintText
+                secondary -> if (selected) colors.onSurfaceVariant else readableCycleText(FaintText)
                 selected -> colors.onSurface
                 else -> colors.onSurfaceVariant
             },
@@ -225,7 +225,7 @@ private fun FreeMemory() {
         }
     }
     val megabytes = free / (1024 * 1024)
-    val color = if (megabytes < LOW_MEMORY_MB) ErrorColor else FaintText
+    val color = if (megabytes < LOW_MEMORY_MB) ErrorColor else readableCycleText(FaintText)
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             if (megabytes >= 1024) "%.1f GB".format(megabytes / 1024f) else "$megabytes MB",
@@ -254,7 +254,7 @@ private fun Clock() {
         }
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(timeFormat.format(now), style = MaterialTheme.typography.titleLarge, color = DashboardClockColor, maxLines = 1)
-        Text(dateFormat.format(now), style = MaterialTheme.typography.labelMedium, color = FaintText, maxLines = 1)
+        Text(timeFormat.format(now), style = MaterialTheme.typography.titleLarge, color = readableCycleText(DashboardClockColor), maxLines = 1)
+        Text(dateFormat.format(now), style = MaterialTheme.typography.labelMedium, color = readableCycleText(FaintText), maxLines = 1)
     }
 }

@@ -338,7 +338,7 @@ fun CameraView(
     // Here or full screen: the player draws into the same view, which moves between the two
     @Composable
     fun Picture(modifier: Modifier, rounded: Boolean) = Box(
-        modifier = (if (rounded) modifier.clip(shape) else modifier).background(Color.Black),
+        modifier = (if (rounded) modifier.clip(shape) else modifier).background(cycleUiColor(Color.Black)),
         contentAlignment = Alignment.Center,
     ) {
         AndroidView(
@@ -357,7 +357,7 @@ fun CameraView(
         val snapshot = snapshots.snapshot ?: fallbackPicture
         if (!status.live) {
             // Opaque, over whatever old frame the video layer still holds (maybe from another camera)
-            Box(Modifier.fillMaxSize().background(Color.Black)) {
+            Box(Modifier.fillMaxSize().cycleUiColors().background(Color.Black)) {
                 if (snapshot != null) {
                     Image(
                         snapshot.image,
@@ -368,17 +368,17 @@ fun CameraView(
                 }
             }
             // Dimmed: clearly not live
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)))
+            Box(Modifier.fillMaxSize().cycleUiColors().background(Color.Black.copy(alpha = 0.6f)))
             if (compact) {
                 CompactCameraStatus(status)
             } else {
                 if (showProgress || status.failing) CameraStatus(status, snapshot?.takenAt)
-                NotLiveMark(Modifier.align(Alignment.BottomEnd).padding(16.dp), size = 36.dp)
+                NotLiveMark(Modifier.align(Alignment.BottomEnd).padding(16.dp).cycleUiColors(), size = 36.dp)
             }
         }
         // The hardware video layer ignores clipping: its corners are painted over in the background colour
         if (rounded) {
-            Canvas(Modifier.matchParentSize()) {
+            Canvas(Modifier.matchParentSize().cycleUiColors()) {
                 val corners = Path().apply {
                     fillType = PathFillType.EvenOdd
                     addRect(size.toRect())
@@ -408,7 +408,7 @@ private fun FullScreenWindow(onClose: () -> Unit, onCameraButton: (Int) -> Unit,
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black)
+                .background(cycleUiColor(Color.Black))
                 .focusRequester(focus)
                 .onPreviewKeyEvent { event ->
                     cameraButtonIndex(event)?.let { index ->
@@ -1093,6 +1093,7 @@ private fun CompactCameraStatus(status: ConnectionStatus) {
     Column(
         modifier = Modifier
             .padding(8.dp)
+            .cycleUiColors()
             .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1156,6 +1157,7 @@ private fun CameraStatus(status: ConnectionStatus, snapshotTakenAt: Long?) {
     // On a dark chip: it sits over the dimmed last picture
     Column(
         modifier = Modifier
+            .cycleUiColors()
             .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

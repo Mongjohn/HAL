@@ -1,5 +1,8 @@
 package com.evofactory.hal
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,13 +25,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -42,6 +52,7 @@ internal fun DashboardAppsCard(
     target: FocusRequester,
     homeTarget: FocusRequester,
     height: Dp,
+    collapse: AppsCardCollapse,
     lastApp: String?,
     neighbor: (FocusDirection) -> FocusRequester,
     onAppFocused: (String) -> Unit,
@@ -62,6 +73,12 @@ internal fun DashboardAppsCard(
     var focusedApp by remember { mutableStateOf<String?>(null) }
     var emptyFocused by remember { mutableStateOf(false) }
     var menuApp by remember { mutableStateOf<String?>(null) }
+    val collapsed = collapse != AppsCardCollapse.Off && focusedApp == null && !emptyFocused && menuApp == null
+    val collapseProgress by animateFloatAsState(
+        if (collapsed) 1f else 0f,
+        animationSpec = tween(180),
+        label = "Apps card collapse",
+    )
     LaunchedEffect(visible) {
         if (menuApp !in visible) menuApp = null
         if (focusedApp?.let { it !in visible } == true || emptyFocused && first != null) {
@@ -83,72 +100,102 @@ internal fun DashboardAppsCard(
     }
 
     val shape = RoundedCornerShape(12.dp)
-    BoxWithConstraints(
-        Modifier.fillMaxWidth().height(height)
-            .dashboardCard(MaterialTheme.colorScheme.surfaceVariant, shape)
-            .then(if (first == null) Modifier.focusRequester(target).focusRequester(homeTarget)
-                .onFocusChanged { if (it.isFocused || currentVisible.isEmpty()) emptyFocused = it.isFocused }
-                .focusProperties {
-                    left = neighbor(FocusDirection.Left)
-                    right = neighbor(FocusDirection.Right)
-                    up = neighbor(FocusDirection.Up)
-                    down = neighbor(FocusDirection.Down)
-                }.focusable() else Modifier)
-            .then(if (emptyFocused) Modifier.border(DashboardFocusStroke, shape) else Modifier)
-            .padding(10.dp),
-    ) {
-        val gap = minOf(8.dp, maxHeight / (rows.size.coerceAtLeast(1) * 2))
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(gap)) {
-            if (card.card.title.isNotBlank()) Text(card.card.title)
-            Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
-                rows.forEachIndexed { rowIndex, row ->
-                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                        row.forEachIndexed { column, id ->
-                            if (id in hidden) {
-                                Spacer(Modifier.weight(1f))
-                            } else key(id) {
-                                val requester = requesters.getValue(id)
-                                val focusModifier = Modifier.fillMaxSize()
-                                    .then(if (id == entry) Modifier.focusRequester(target) else Modifier)
-                                    .then(if (id == first) Modifier.focusRequester(homeTarget) else Modifier)
-                                    .focusRequester(requester)
-                                    .onFocusChanged {
-                                        if (it.isFocused) {
-                                            focusedApp = id
-                                            onAppFocused(id)
-                                        } else if (focusedApp == id && id in currentVisible) {
-                                            focusedApp = null
+    val collapseUp = collapse == AppsCardCollapse.Up
+    // Only move the drawing. Tile geometry and focus targets must stay available to the D-pad.
+    Box(Modifier.fillMaxWidth().height(height)) {
+        BoxWithConstraints(
+            Modifier.fillMaxSize()
+                .drawWithContent {
+                    val progress = if (collapse == AppsCardCollapse.Off) 0f else collapseProgress
+                    if (progress == 0f) {
+                        drawContent()
+                    } else if (progress < 1f) {
+                        val offset = size.height * progress * if (collapseUp) -1f else 1f
+                        clipRect { translate(top = offset) { this@drawWithContent.drawContent() } }
+                    }
+                }
+                .dashboardCard(MaterialTheme.colorScheme.surfaceVariant, shape, cyclePaints = true)
+                .then(if (first == null) Modifier.focusRequester(target).focusRequester(homeTarget)
+                    .onFocusChanged { if (it.isFocused || currentVisible.isEmpty()) emptyFocused = it.isFocused }
+                    .focusProperties {
+                        left = neighbor(FocusDirection.Left)
+                        right = neighbor(FocusDirection.Right)
+                        up = neighbor(FocusDirection.Up)
+                        down = neighbor(FocusDirection.Down)
+                    }.focusable() else Modifier)
+                .then(if (emptyFocused) Modifier.border(2.dp, cycleUiColor(DashboardFocusColor), shape) else Modifier)
+                .padding(10.dp),
+        ) {
+            val gap = minOf(8.dp, maxHeight / (rows.size.coerceAtLeast(1) * 2))
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(gap)) {
+                if (card.card.title.isNotBlank()) Text(card.card.title, modifier = Modifier.cycleUiColors())
+                Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
+                    rows.forEachIndexed { rowIndex, row ->
+                        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                            row.forEachIndexed { column, id ->
+                                if (id in hidden) {
+                                    Spacer(Modifier.weight(1f))
+                                } else key(id) {
+                                    val requester = requesters.getValue(id)
+                                    val focusModifier = Modifier.fillMaxSize()
+                                        .then(if (id == entry) Modifier.focusRequester(target) else Modifier)
+                                        .then(if (id == first) Modifier.focusRequester(homeTarget) else Modifier)
+                                        .focusRequester(requester)
+                                        .onFocusChanged {
+                                            if (it.isFocused) {
+                                                focusedApp = id
+                                                onAppFocused(id)
+                                            } else if (focusedApp == id && id in currentVisible) {
+                                                focusedApp = null
+                                            }
                                         }
-                                    }
-                                    .focusProperties {
-                                        left = row.take(column).lastOrNull { it !in hidden }
-                                            ?.let(requesters::getValue) ?: neighbor(FocusDirection.Left)
-                                        right = row.drop(column + 1).firstOrNull { it !in hidden }
-                                            ?.let(requesters::getValue) ?: neighbor(FocusDirection.Right)
-                                        up = verticalNeighbor(rowIndex, column, FocusDirection.Up)
-                                        down = verticalNeighbor(rowIndex, column, FocusDirection.Down)
-                                    }
-                                val app = apps[id]
-                                Box(Modifier.weight(1f).fillMaxSize().padding(2.dp)) {
-                                    if (app != null) {
-                                        AppTile(app, { context.launch(app) }, focusModifier, onLongClick = { menuApp = id }, fitCard = true)
-                                        if (menuApp == id) {
-                                            ContextMenu(app.label, buildList {
-                                                add(MenuAction("App info") { context.openAppInfo(app) })
-                                                if (context.canUninstall(app)) add(MenuAction("Uninstall") { context.uninstall(app) })
-                                            }, onDismiss = { menuApp = null })
+                                        .focusProperties {
+                                            left = row.take(column).lastOrNull { it !in hidden }
+                                                ?.let(requesters::getValue) ?: neighbor(FocusDirection.Left)
+                                            right = row.drop(column + 1).firstOrNull { it !in hidden }
+                                                ?.let(requesters::getValue) ?: neighbor(FocusDirection.Right)
+                                            up = verticalNeighbor(rowIndex, column, FocusDirection.Up)
+                                            down = verticalNeighbor(rowIndex, column, FocusDirection.Down)
                                         }
-                                    } else {
-                                        DockShortcutTile("All apps", "apps", onOpenAllApps, focusModifier)
+                                    val app = apps[id]
+                                    Box(Modifier.weight(1f).fillMaxSize().padding(2.dp)) {
+                                        if (app != null) {
+                                            AppTile(app, { context.launch(app) }, focusModifier, onLongClick = { menuApp = id }, fitCard = true)
+                                            if (menuApp == id) {
+                                                ContextMenu(app.label, buildList {
+                                                    add(MenuAction("App info") { context.openAppInfo(app) })
+                                                    if (context.canUninstall(app)) add(MenuAction("Uninstall") { context.uninstall(app) })
+                                                }, onDismiss = { menuApp = null })
+                                            }
+                                        } else {
+                                            DockShortcutTile("All apps", "apps", onOpenAllApps, focusModifier)
+                                        }
                                     }
                                 }
                             }
-                        }
-                        if (row.size < columns && rows.size > 1) {
-                            repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                            if (row.size < columns && rows.size > 1) {
+                                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                            }
                         }
                     }
                 }
+            }
+        }
+        if (collapse != AppsCardCollapse.Off) {
+            val color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier
+                    .align(if (collapseUp) Alignment.TopCenter else Alignment.BottomCenter)
+                    .graphicsLayer { alpha = ((collapseProgress - 0.65f) / 0.35f).coerceIn(0f, 1f) }
+                    .semantics { hideFromAccessibility() }
+                    .cycleUiColors()
+                    .background(darkenCycleSurface(MaterialTheme.colorScheme.surface), RoundedCornerShape(50))
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MdiIcon("mdi:apps", size = 14.dp, color = color)
+                Text("Apps", style = MaterialTheme.typography.labelSmall, color = color)
             }
         }
     }

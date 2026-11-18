@@ -216,12 +216,12 @@ fun MainCamera(
                 camera.name,
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
+                modifier = Modifier.cycleUiColors()
                     .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
-        if (focused) Box(Modifier.matchParentSize().border(DashboardFocusStroke, CameraShape))
+        if (focused) Box(Modifier.matchParentSize().cycleUiColors().border(DashboardFocusStroke, CameraShape))
         AnimatedVisibility(
             visible = channelHint,
             enter = fadeIn(),
@@ -260,7 +260,7 @@ fun FullScreenCamera(camera: Camera, minimizeStreams: Boolean, onCameraButton: (
 @Composable
 private fun ChannelMark(modifier: Modifier) {
     Column(
-        modifier = modifier
+        modifier = modifier.cycleUiColors()
             .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
             .padding(horizontal = 6.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -274,7 +274,7 @@ private fun ChannelMark(modifier: Modifier) {
 /** Only shows that left and right switch to another camera or alert; the remote never lands on it. A dark copy behind keeps it readable over any picture. */
 @Composable
 fun SwitchChevron(icon: String, modifier: Modifier) {
-    Box(modifier = modifier.padding(horizontal = 4.dp)) {
+    Box(modifier = modifier.padding(horizontal = 4.dp).cycleUiColors()) {
         MdiIcon(icon, modifier = Modifier.offset(1.dp, 1.dp), size = 36.dp, color = Color.Black.copy(alpha = 0.7f))
         MdiIcon(icon, size = 36.dp, color = Color.White)
     }
@@ -304,7 +304,7 @@ fun CameraGrid(
     onCameraFocused: (String) -> Unit = {},
 ) {
     if (cameras.isEmpty()) {
-        SettingsPrompt(null, "Set up cameras", onSetUp, modifier)
+        SettingsPrompt(null, "Set up cameras", onSetUp, modifier.cycleUiColors())
         return
     }
     val liveSlots = remember { LiveSlots(maxLiveVideos()) }
@@ -322,6 +322,7 @@ fun CameraGrid(
         modifier = modifier,
         selectKey = selectCamera,
         onSelected = onCameraSelected,
+        focusBorderColor = cycleUiColor(MaterialTheme.colorScheme.border),
         onFocus = {
             selectedId = it.id
             onCameraFocused(it.id)
@@ -335,7 +336,7 @@ fun CameraGrid(
                 onDispose { liveSlots.leave(camera.id) }
             }
         }
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Box(Modifier.fillMaxSize()) {
             val streaming = live && liveSlots.has(camera.id, spare = if (spareDecoder) 1 else 0)
             if (streaming) {
                 CameraView(
@@ -350,6 +351,7 @@ fun CameraGrid(
                     onLiveChange = { playing = it },
                 )
             } else {
+                Box(Modifier.matchParentSize().cycleUiColors().background(Color.Black))
                 val substreamSnapshot = cameraSnapshot(camera.substreamUrl)
                 val snapshot = substreamSnapshot ?: cameraSnapshot(camera.url)
                 if (snapshot != null) {
@@ -359,14 +361,14 @@ fun CameraGrid(
                         snapshot.image,
                         contentDescription = null,
                         contentScale = if (stretched) ContentScale.FillBounds else ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().cycleUiColors(),
                     )
                 } else {
                     Text(
                         "No picture yet",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.align(Alignment.Center),
+                        modifier = Modifier.align(Alignment.Center).cycleUiColors(),
                     )
                 }
             }
@@ -380,12 +382,13 @@ fun CameraGrid(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
+                    .cycleUiColors()
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f))))
                     // Room for the mark
                     .padding(start = 10.dp, top = 6.dp, bottom = 6.dp, end = 34.dp),
             )
             // Over the name's shade, which would dim it
-            if (!streaming || !playing) NotLiveMark(Modifier.align(Alignment.BottomEnd).padding(6.dp))
+            if (!streaming || !playing) NotLiveMark(Modifier.align(Alignment.BottomEnd).padding(6.dp).cycleUiColors())
         }
     }
 }
@@ -459,6 +462,7 @@ fun <T> TwoRowGrid(
     onSelected: () -> Unit = {},
     // The selection moved to this item
     onFocus: (T) -> Unit = {},
+    focusBorderColor: Color = MaterialTheme.colorScheme.border,
     tile: @Composable (T) -> Unit,
 ) {
     val gridState = rememberLazyGridState()
@@ -507,7 +511,7 @@ fun <T> TwoRowGrid(
                         shape = CardDefaults.shape(CameraShape),
                         // A border shows the selection instead of growing into the neighbours
                         scale = CardDefaults.scale(focusedScale = 1f),
-                        border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.border), shape = CameraShape)),
+                        border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, focusBorderColor), shape = CameraShape)),
                     ) {
                         tile(item)
                     }

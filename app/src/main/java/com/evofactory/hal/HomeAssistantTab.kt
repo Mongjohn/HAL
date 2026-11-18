@@ -48,7 +48,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -68,6 +68,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
@@ -298,7 +299,7 @@ fun HaAssistantTab(
         }
     }
     if (prompt != null) {
-        SettingsPrompt(prompt.first, prompt.second, onSetUp, modifier)
+        SettingsPrompt(prompt.first, prompt.second, onSetUp, modifier.cycleUiColors())
         return
     }
     if (reading) {
@@ -306,7 +307,7 @@ fun HaAssistantTab(
             haStatusMessage(connection) ?: "Reading the dashboard…",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier.padding(horizontal = inset),
+            modifier = modifier.padding(horizontal = inset).cycleUiColors(),
         )
         return
     }
@@ -428,6 +429,7 @@ fun HaAssistantTab(
                         layout(placeable.width, placeable.height - lift) { placeable.place(0, -lift) }
                     }
                     .padding(start = inset, end = inset, bottom = 4.dp)
+                    .cycleUiColors()
                     .height(ViewRowHeight),
             ) {
                 views.forEachIndexed { index, view ->
@@ -505,7 +507,9 @@ fun HaAssistantTab(
                     } else {
                         CardContent(card, rows, hidden.keys, buttonRows.keys.firstOrNull(), connection, names, aliases,
                             entered == card.key, raised, firstButton, onButtonFocused,
-                            cardOptions[card.key]?.halfWidthItems.orEmpty(), compactMedia = maxHeight != null && maxHeight < 120.dp,
+                            cardOptions[card.key]?.halfWidthItems.orEmpty(),
+                            compactMedia = maxHeight != null && maxHeight / rows.size.coerceAtLeast(1) < 120.dp,
+                            mediaMinHeight = minHeight ?: 0.dp,
                             cardFocused = cardFocused)
                     }
                 }
@@ -604,7 +608,7 @@ fun HaAssistantTab(
                 it,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = inset),
+                modifier = Modifier.padding(horizontal = inset).cycleUiColors(),
             )
         }
     }
@@ -804,25 +808,25 @@ private class CardsBottom(val peek: Dp, val end: Dp, val fade: Boolean, val clea
 
 /** Fades out at the top, and at the [bottom] if asked, where [scroll] has more: to transparent, so what's behind shows */
 private fun Modifier.fadingEdges(scroll: ScrollState, bottom: Boolean = true) = this
-    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-    .drawWithContent {
-        drawContent()
-        if (scroll.value > 0) {
-            val fade = CardFadeTop.toPx()
-            drawRect(
-                Brush.verticalGradient(listOf(Color.Transparent, Color.Black), startY = 0f, endY = fade),
-                size = Size(size.width, fade),
-                blendMode = BlendMode.DstIn,
-            )
-        }
-        if (bottom && scroll.value < scroll.maxValue) {
-            val fade = CardFadeBottom.toPx()
-            drawRect(
-                Brush.verticalGradient(listOf(Color.Black, Color.Transparent), startY = size.height - fade, endY = size.height),
-                topLeft = Offset(0f, size.height - fade),
-                size = Size(size.width, fade),
-                blendMode = BlendMode.DstIn,
-            )
+    .graphicsLayer {
+        val fading = scroll.value > 0 || bottom && scroll.canScrollForward
+        compositingStrategy = if (fading) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+    }
+    .drawWithCache {
+        val topFade = minOf(CardFadeTop.toPx(), size.height)
+        val bottomFade = minOf(CardFadeBottom.toPx(), size.height)
+        val topMask = Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = topFade)
+        val bottomMask = Brush.verticalGradient(
+            listOf(Color.Black, Color.Transparent), startY = size.height - bottomFade, endY = size.height,
+        )
+        onDrawWithContent {
+            drawContent()
+            if (topFade > 0 && scroll.value > 0) {
+                drawRect(topMask, size = Size(size.width, topFade), blendMode = BlendMode.DstIn)
+            }
+            if (bottomFade > 0 && bottom && scroll.canScrollForward) {
+                drawRect(bottomMask, Offset(0f, size.height - bottomFade), Size(size.width, bottomFade), blendMode = BlendMode.DstIn)
+            }
         }
     }
 
@@ -923,6 +927,7 @@ private fun AssistantCard(
                 scaleX = scale
                 scaleY = scale
             }
+            .then(if (mediaOnly) Modifier else Modifier.cycleUiColors())
             .onFocusChanged { onCardFocusChanged(it.hasFocus) }
             .focusGroup()
             .onPreviewKeyEvent { event ->
@@ -1009,7 +1014,7 @@ private fun AssistantCard(
             // Scrolls inside the card, fading out at its edges; its buttons come into view as they're selected
             CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScroll) {
                 Column(
-                    Modifier.fadingEdges(inner).verticalScroll(inner).padding(vertical = if (mediaOnly) 2.dp else 12.dp),
+                    Modifier.fadingEdges(inner).verticalScroll(inner).padding(vertical = if (mediaOnly) 0.dp else 12.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     content(entered, focused, firstButton) { focusedButton = it }
@@ -1073,10 +1078,12 @@ private fun CardContent(
     onButtonFocused: (Int) -> Unit,
     halfWidthItems: Set<Int> = emptySet(),
     compactMedia: Boolean = false,
+    mediaMinHeight: Dp = 0.dp,
     cardFocused: Boolean = false,
 ) {
+    val alignMixedReadings = !card.isMediaOnly && card.ids.any(::isHaMediaPlayer)
     @Composable
-    fun Entity(position: Int) {
+    fun Entity(position: Int, headings: List<String> = emptyList(), footer: List<String> = emptyList()) {
         val id = card.ids[position]
         card.graphs[id]?.let { graph ->
             HistoryGraph(connection, graph, names, aliases)
@@ -1091,7 +1098,9 @@ private fun CardContent(
             if (gauge != null) {
                 GaugeReading(id, connection.entities[id], names[id], gauge)
             } else {
-                SensorReading(id, connection.entities[id], names[id])
+                Box(Modifier.padding(horizontal = if (alignMixedReadings) ControlRowInset else 0.dp)) {
+                    SensorReading(id, connection.entities[id], names[id])
+                }
             }
             return
         }
@@ -1101,7 +1110,7 @@ private fun CardContent(
             // Only once gone into the card
             .focusProperties { canFocus = entered && position !in hidden }
         if (isHaStatefulControl(id)) {
-            StatefulControlRow(connection, id, names[id], modifier, card.isMediaOnly, compactMedia, cardFocused && !entered)
+            StatefulControlRow(connection, id, names[id], modifier, card.isMediaOnly, compactMedia, cardFocused && !entered, headings, footer)
         } else if (isHaSelect(id)) {
             SelectRow(connection, id, names[id], modifier)
         } else {
@@ -1109,7 +1118,7 @@ private fun CardContent(
         }
     }
     @Composable
-    fun Slot(position: Int) {
+    fun Slot(position: Int, headings: List<String> = emptyList(), footer: List<String> = emptyList()) {
         key(position) {
             if (position in hidden) {
                 // Measure the same content to reserve its space without placing it.
@@ -1118,9 +1127,35 @@ private fun CardContent(
                     layout(item.width, item.height) {}
                 }) { Entity(position) }
             } else {
-                Entity(position)
+                Entity(position, headings, footer)
             }
         }
+    }
+    if (card.isMediaOnly) {
+        val positions = rows.flatten()
+        val visible = positions.filterNot { it in hidden }
+        val lastVisible = visible.lastOrNull()
+        if (visible.isEmpty()) {
+            if (card.title.isNotBlank()) CardHeading(card.title, Modifier.cycleUiColors())
+            card.subtitles.toSortedMap().values.forEach { CardHeading(it, Modifier.cycleUiColors()) }
+        }
+        MediaPanelColumn(Modifier.fillMaxWidth().heightIn(min = mediaMinHeight)) {
+            var previousVisible = -1
+            positions.forEach { position ->
+                val headings = if (position in hidden) emptyList() else buildList {
+                    if (previousVisible < 0 && card.title.isNotBlank()) add(card.title)
+                    for (index in previousVisible + 1..position) card.subtitles[index]?.let(::add)
+                    previousVisible = position
+                }
+                val footer = if (position == lastVisible) {
+                    (position + 1..card.ids.size).mapNotNull(card.subtitles::get)
+                } else emptyList()
+                Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) {
+                    Slot(position, headings, footer)
+                }
+            }
+        }
+        return
     }
     if (card.title.isNotEmpty()) CardHeading(card.title)
     var nextHeading = 0
@@ -1143,6 +1178,38 @@ private fun CardContent(
 }
 
 @Composable
+private fun MediaPanelColumn(modifier: Modifier, content: @Composable () -> Unit) {
+    Layout(content = content, modifier = modifier) { panels, constraints ->
+        val gap = 6.dp.roundToPx()
+        val totalGap = gap * (panels.size - 1).coerceAtLeast(0)
+        val naturalHeights = panels.map { it.minIntrinsicHeight(constraints.maxWidth) }
+        val minimumHeights = mediaPanelMinimumHeights(naturalHeights, constraints.minHeight, gap)
+        val measured = panels.mapIndexed { index, panel ->
+            val height = minimumHeights[index].coerceAtMost(constraints.maxHeight)
+            panel.measure(constraints.copy(minHeight = height, maxHeight = height))
+        }
+        val height = (measured.sumOf { it.height } + totalGap).coerceIn(constraints.minHeight, constraints.maxHeight)
+        layout(constraints.maxWidth, height) {
+            var top = 0
+            measured.forEach { panel ->
+                panel.placeRelative(0, top)
+                top += panel.height + gap
+            }
+        }
+    }
+}
+
+/** Stretch the visible group to its grid slot while leaving oversized content scrollable. */
+internal fun mediaPanelMinimumHeights(naturalHeights: List<Int>, gridHeight: Int, gap: Int): List<Int> {
+    val count = naturalHeights.size
+    val totalGap = gap * (count - 1).coerceAtLeast(0)
+    val spare = (gridHeight - naturalHeights.sum() - totalGap).coerceAtLeast(0)
+    return naturalHeights.mapIndexed { index, height ->
+        height + spare / count + if (index < spare % count) 1 else 0
+    }
+}
+
+@Composable
 internal fun HaEntityRow(positions: IntRange, content: @Composable (Int) -> Unit) {
     if (positions.first == positions.last) {
         content(positions.first)
@@ -1157,11 +1224,11 @@ internal fun HaEntityRow(positions: IntRange, content: @Composable (Int) -> Unit
 
 /** A card's title, or the title of a part of it */
 @Composable
-private fun CardHeading(text: String, modifier: Modifier = Modifier) {
+private fun CardHeading(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = color,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier.padding(bottom = 2.dp),
@@ -1181,35 +1248,49 @@ private fun StatefulControlRow(
     showMedia: Boolean,
     compactMedia: Boolean,
     groupFocused: Boolean,
+    headings: List<String>,
+    footer: List<String>,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
     val ready = connection.session != null
+    val focusBorder = if (showMedia) Border(BorderStroke(2.dp, cycleUiColor(DashboardFocusColor))) else DashboardFocusBorder
     val border = when {
-        groupFocused && showMedia -> DashboardFocusBorder
-        showMedia -> Border(BorderStroke(1.dp, DashboardPanelOutline))
+        groupFocused && showMedia -> focusBorder
+        showMedia -> Border(BorderStroke(1.dp, cycleUiColor(DashboardPanelOutline)))
         else -> Border.None
     }
-    val container = if (showMedia) colors.surfaceVariant.copy(alpha = LocalDashboardCardOpacity.current / 100f)
+    val container = if (showMedia) cycleUiColor(darkenCycleSurface(colors.surfaceVariant))
+        .copy(alpha = LocalDashboardCardOpacity.current / 100f)
         else Color.Transparent
+    val secondary = if (showMedia) cycleUiColor(colors.onSurfaceVariant) else colors.onSurfaceVariant
+    val focusedBackground = if (showMedia) cycleUiColor(darkenCycleSurface(HigherSurface)) else HigherSurface
+    val focusedText = if (showMedia) cycleUiColor(colors.onSurface) else colors.onSurface
     Surface(
         onClick = { connection.control(id, scope, context) },
         modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        border = ClickableSurfaceDefaults.border(border = border, focusedBorder = DashboardFocusBorder),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(if (showMedia) 12.dp else 8.dp)),
+        border = ClickableSurfaceDefaults.border(border = border, focusedBorder = focusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = container,
-            contentColor = if (ready) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
-            focusedContainerColor = HigherSurface,
-            focusedContentColor = colors.onSurface,
+            contentColor = if (ready || showMedia && LocalUiColorCycle.current != null) secondary else secondary.copy(alpha = 0.5f),
+            focusedContainerColor = focusedBackground,
+            focusedContentColor = focusedText,
         ),
     ) {
-        Box(Modifier.padding(horizontal = ControlRowInset, vertical = 4.dp)) {
+        Box(
+            Modifier.padding(horizontal = ControlRowInset, vertical = 4.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
             val entity = connection.entities[id]
             if (showMedia) {
-                MediaPlayerReading(id, entity, name, connection.session, compactMedia)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    headings.forEach { CardHeading(it, color = secondary) }
+                    MediaPlayerReading(id, entity, name, connection.session, compactMedia, Modifier.weight(1f))
+                    footer.forEach { CardHeading(it, color = secondary) }
+                }
             } else {
                 SensorReading(id, entity, name, textColor = LocalContentColor.current)
             }
@@ -1346,7 +1427,7 @@ private fun ActionButton(connection: HaConnection, id: String, name: String?, ra
         ),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = ControlRowInset, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

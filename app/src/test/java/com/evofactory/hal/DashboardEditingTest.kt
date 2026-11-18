@@ -62,6 +62,16 @@ class DashboardEditingTest {
         assertNull(prefs().previousDashboardSurface("assistant"))
     }
 
+    @Test fun appearanceThemeDefaultsToGlassAndPersistsDark() {
+        val data = mutableMapOf("theme" to "Classic")
+        fun prefs() = LauncherPrefs(stringPreferences(data))
+        assertEquals(LauncherTheme.Glass, prefs().appearanceTheme)
+        prefs().appearanceTheme = LauncherTheme.GlassDark
+        assertEquals(LauncherTheme.GlassDark, prefs().appearanceTheme)
+        data["appearance_theme"] = "unsupported"
+        assertEquals(LauncherTheme.Glass, prefs().appearanceTheme)
+    }
+
     private fun stringPreferences(values: MutableMap<String, String>): SharedPreferences {
         fun <T> stub(type: Class<T>, invoke: (Any, String, Array<out Any?>) -> Any?): T =
             type.cast(Proxy.newProxyInstance(type.classLoader, arrayOf(type)) { proxy, method, args ->
