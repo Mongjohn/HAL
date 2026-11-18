@@ -289,7 +289,7 @@ private fun AppearanceOptions(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Collapse unfocused Apps card", style = MaterialTheme.typography.titleSmall)
+            Text("Collapse Apps card", style = MaterialTheme.typography.titleSmall)
             AppsCardCollapse.entries.forEach { direction ->
                 TabButton(
                     label = direction.label,
@@ -299,6 +299,8 @@ private fun AppearanceOptions(
                 )
             }
         }
+        Text("Collapse when unfocused or after 30 seconds idle. Press any key except Power to reopen.",
+            style = MaterialTheme.typography.bodySmall)
         HomeOption(
             title = "Cycle UI colors",
             description = "Slowly cycle interface hues while keeping dark surfaces and readable text.",

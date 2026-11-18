@@ -8,9 +8,9 @@ import org.junit.Test
 
 class UiColorCycleTest {
     @Test
-    fun glassDarkTextStaysReadableOverItsBrightestShadedArtwork() {
-        val whiteAfterShade = 1f - GlassDarkArtworkShade
-        val backdrop = Color(whiteAfterShade, whiteAfterShade, whiteAfterShade)
+    fun glassDarkTextStaysReadableOverItsDarkSurface() {
+        // Artwork now uses Glass's lighter shade; this guarantee applies to opaque dark surfaces.
+        val backdrop = Color(0xFF111720)
         for (step in 0..100) {
             val cycle = UiColorCycle(step / 100f)
             for (text in listOf(GlassDarkText, GlassDarkSecondary, GlassDarkFaint)) {

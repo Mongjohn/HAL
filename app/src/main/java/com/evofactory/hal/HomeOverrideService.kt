@@ -110,6 +110,7 @@ class HomeOverrideService : AccessibilityService() {
      */
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode != KeyEvent.KEYCODE_HOME || !prefs.catchHomeKey) return false
+        if (MainActivity.appsCardKeyHandler?.invoke(event) == true) return true
         if (event.action == KeyEvent.ACTION_UP && !event.isCanceled && !bringLauncherBack()) {
             // Override just switched off by the crash guard, or the launcher couldn't be opened:
             // do what Home normally does

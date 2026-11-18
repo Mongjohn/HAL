@@ -177,12 +177,11 @@ private fun ArtworkRotation(slides: List<ArtworkSlide>, onArtworkChanged: (Artwo
         Image(it, null, Modifier.fillMaxSize().graphicsLayer { alpha = opacity.value }, contentScale = ContentScale.Crop)
     }
     if (current != null || incoming != null) {
-        val dark = LocalLauncherTheme.current == LauncherTheme.GlassDark
-        val shade = remember(dark) {
+        val shade = remember {
             Brush.verticalGradient(
-                0f to Color.Black.copy(alpha = if (dark) 0.93f else 0.82f),
-                0.48f to Color.Black.copy(alpha = if (dark) GlassDarkArtworkShade else 0.66f),
-                1f to Color.Black.copy(alpha = if (dark) 0.95f else 0.88f),
+                0f to Color.Black.copy(alpha = 0.82f),
+                0.48f to Color.Black.copy(alpha = ArtworkShade),
+                1f to Color.Black.copy(alpha = 0.88f),
             )
         }
         Box(Modifier.fillMaxSize().background(shade))

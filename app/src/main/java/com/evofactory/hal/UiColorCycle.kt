@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.LayerOutsets
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.delay
 
@@ -73,9 +74,12 @@ internal data class UiColorCycle(val progress: Float) {
 }
 
 @Composable
-internal fun Modifier.cycleUiColors(): Modifier {
+internal fun Modifier.cycleUiColors(layerOutsets: LayerOutsets = LayerOutsets.Zero): Modifier {
     val cycle = LocalUiColorCycle.current ?: return this
-    return graphicsLayer { colorFilter = cycle.value?.filter }
+    return graphicsLayer {
+        colorFilter = cycle.value?.filter
+        outsets = layerOutsets
+    }
 }
 
 @Composable

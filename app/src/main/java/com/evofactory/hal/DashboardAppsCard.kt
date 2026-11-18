@@ -1,5 +1,7 @@
 package com.evofactory.hal
 
+import android.os.SystemClock
+import android.view.KeyEvent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -43,6 +46,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun DashboardAppsCard(
@@ -53,6 +57,8 @@ internal fun DashboardAppsCard(
     homeTarget: FocusRequester,
     height: Dp,
     collapse: AppsCardCollapse,
+    active: Boolean,
+    onKeyHandlerChanged: (((KeyEvent) -> Boolean)?) -> Unit,
     lastApp: String?,
     neighbor: (FocusDirection) -> FocusRequester,
     onAppFocused: (String) -> Unit,
@@ -73,7 +79,28 @@ internal fun DashboardAppsCard(
     var focusedApp by remember { mutableStateOf<String?>(null) }
     var emptyFocused by remember { mutableStateOf(false) }
     var menuApp by remember { mutableStateOf<String?>(null) }
-    val collapsed = collapse != AppsCardCollapse.Off && focusedApp == null && !emptyFocused && menuApp == null
+    val idle = remember { AppsCardIdleState() }
+    val focused = focusedApp != null || emptyFocused
+    val idleEnabled = active && focused && menuApp == null && collapse != AppsCardCollapse.Off
+    val currentKeyHandlerChanged by rememberUpdatedState(onKeyHandlerChanged)
+    DisposableEffect(idleEnabled) {
+        idle.reset(SystemClock.uptimeMillis())
+        if (idleEnabled) currentKeyHandlerChanged { event ->
+            idle.onKey(
+                event.keyCode, event.action == KeyEvent.ACTION_DOWN, event.action == KeyEvent.ACTION_UP,
+                event.keyCode == KeyEvent.KEYCODE_POWER || event.keyCode == KeyEvent.KEYCODE_TV_POWER,
+                SystemClock.uptimeMillis(),
+            )
+        }
+        onDispose { if (idleEnabled) currentKeyHandlerChanged(null) }
+    }
+    LaunchedEffect(idleEnabled, idle.lastActivity) {
+        if (idleEnabled) {
+            delay(APPS_CARD_IDLE_MS)
+            idle.expire(SystemClock.uptimeMillis())
+        }
+    }
+    val collapsed = collapse != AppsCardCollapse.Off && menuApp == null && (!focused || idle.collapsed)
     val collapseProgress by animateFloatAsState(
         if (collapsed) 1f else 0f,
         animationSpec = tween(180),
