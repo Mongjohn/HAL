@@ -1,6 +1,6 @@
 # HAL
 
-HAL stands for **Home Assistant Launcher**, a nod to HAL 9000 from *2001: A Space Odyssey*. It puts your apps, cameras, alerts and Home Assistant on one screen on Android TV and Google TV.
+HAL (**Home Assistant Launcher**) brings apps, cameras, alerts and Home Assistant together on Android TV and Google TV.
 
 Project repository: [Mongjohn/HAL](https://github.com/Mongjohn/HAL).
 
@@ -17,11 +17,11 @@ Project repository: [Mongjohn/HAL](https://github.com/Mongjohn/HAL).
 
 Cameras, Home Assistant and Frigate are all optional. HAL shows your selected apps on Home. The **Cameras** tab appears only when a camera is configured; **Alerts** appears only when Frigate is configured. Both remain available to configure from the Settings cog.
 
-In **HAL settings → Appearance**, choose **Glass** or **Glass Dark**. Glass Dark uses a black base, deeper translucent surfaces, dimmer text, and a stronger shade over slideshow artwork. HAL saves the choice on the TV. Adjust card-fill opacity from 0% to 100% in 10-point steps. Text, icons, decorative rims, and focus outlines stay visible even at 0%. **Use theme default** restores 50%. Saved opacity applies to both themes. Android's screensaver can take over during ordinary dashboard use, including when the artwork slideshow is running.
+In **HAL settings → Appearance**, choose **Glass** or **Glass Dark**. Glass Dark uses a black base, deeper translucent surfaces and dimmer text. Both themes display slideshow artwork at the same brightness. HAL saves the choice on the TV. Adjust card-fill opacity from 0% to 100% in 10-point steps. Text, icons, decorative rims, and focus outlines stay visible even at 0%. **Use theme default** restores 50%. Saved opacity applies to both themes. Android's screensaver can take over during ordinary dashboard use, including when the artwork slideshow is running.
 
 **HAL settings → Appearance** also has two optional settings. Both start off and are saved on the TV.
 
-- **Collapse unfocused Apps card** has **Off**, **Up**, and **Down** choices. When focus leaves the card, it slides toward the chosen edge, leaving a small **Apps** label. Moving focus back opens it on the usual tile and keeps the surrounding layout in place.
+- **Collapse Apps card** has **Off**, **Up**, and **Down** choices. Up and Down collapse it when unfocused or after 30 seconds idle, leaving an **Apps** label. Moving focus back opens it on the usual tile. If it collapses while focused, the next keypress only opens it; Power works normally. An app context menu keeps it open.
 - **Cycle UI colors** shifts interface hues over 10 minutes and returns over the next 10 minutes. Black stays black, card fills dim, and text stays light. App icons and banners, player and slideshow artwork, and live video keep their original colors.
 
 ## Privacy

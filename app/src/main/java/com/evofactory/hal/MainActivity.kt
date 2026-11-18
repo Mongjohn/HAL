@@ -116,6 +116,11 @@ class MainActivity : ComponentActivity() {
         if (prefs.overrideLaunches != 0) prefs.overrideLaunches = 0
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (appsCardKeyHandler?.invoke(event) == true) return true
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (intent.action == ACTION_FOCUS_HAL_HOME) homeFocusRequest++
@@ -365,7 +370,7 @@ class MainActivity : ComponentActivity() {
                             showFreeMemory = showFreeMemory,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .cycleUiColors()
+                                .cycleUiColors(androidx.compose.ui.graphics.LayerOutsets(bottom = EdgePadding))
                                 .padding(start = EdgePadding, top = TopPadding, end = EdgePadding)
                                 .onFocusChanged { topBarSelected = it.hasFocus },
                             actions = {
@@ -498,6 +503,12 @@ class MainActivity : ComponentActivity() {
                                                 homeTarget = homeTarget,
                                                 height = height,
                                                 collapse = appsCardCollapse,
+                                                active = resumed,
+                                                onKeyHandlerChanged = { handler ->
+                                                    appsCardKeyHandler = handler?.let { keyHandler ->
+                                                        { event -> resumed && keyHandler(event) }
+                                                    }
+                                                },
                                                 lastApp = lastApp,
                                                 neighbor = neighbor,
                                                 onAppFocused = { lastApp = it },
@@ -893,6 +904,9 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        // Home is intercepted by the accessibility helper before Activity.dispatchKeyEvent.
+        internal var appsCardKeyHandler: ((android.view.KeyEvent) -> Boolean)? = null
+
         /** Started properly and still alive; a crash takes the whole process, so this resets */
         @Volatile
         var running = false

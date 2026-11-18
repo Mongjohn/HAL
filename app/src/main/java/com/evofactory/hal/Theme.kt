@@ -37,7 +37,7 @@ private val CyclingGlassColorScheme = GlassColorScheme.copy(onSurfaceVariant = C
 internal val GlassDarkText = Color(0xFFB5BFCB)
 internal val GlassDarkSecondary = Color(0xFF929EAC)
 internal val GlassDarkFaint = Color(0xFF8693A2)
-internal const val GlassDarkArtworkShade = 0.88f
+internal const val ArtworkShade = 0.66f
 private val GlassDarkColorScheme = GlassColorScheme.copy(
     background = Color.Black,
     surface = Color(0xFF080B10),
