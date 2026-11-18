@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -69,7 +70,13 @@ internal fun LauncherSettingsDialog(
     showFreeMemory: Boolean,
     artworkSettings: ArtworkSettings,
     cardOpacity: Int,
+    appearanceTheme: LauncherTheme,
+    onAppearanceThemeChanged: (LauncherTheme) -> Unit,
     onCardOpacityChanged: (Int?) -> Unit,
+    appsCardCollapse: AppsCardCollapse,
+    onAppsCardCollapseChanged: (AppsCardCollapse) -> Unit,
+    cycleUiColors: Boolean,
+    onCycleUiColorsChanged: (Boolean) -> Unit,
     onArtworkEnabled: (Boolean) -> Unit,
     onArtworkSourceChanged: (Boolean) -> Unit,
     onSaveArtworkCatalog: (String, Set<String>) -> Unit,
@@ -94,7 +101,9 @@ internal fun LauncherSettingsDialog(
             if (artworkSettings.useLocal) emptyList()
             else listOf("country", "save-catalog") + streamingServices.map { it.name }
         LauncherSettingsTab.Advanced -> listOf("hours-", "hours+", "memory")
-        LauncherSettingsTab.Appearance -> listOf("opacity-", "opacity+", "opacity-default")
+        LauncherSettingsTab.Appearance -> LauncherTheme.entries.map { it.name } +
+            listOf("opacity-", "opacity+", "opacity-default") +
+            AppsCardCollapse.entries.map { it.name } + "cycle-colors"
     }
     val prefs = remember { LauncherPrefs(context) }
     // An option turned on, once its explanation is accepted
@@ -146,7 +155,11 @@ internal fun LauncherSettingsDialog(
             return@TopDialog
         }
         if (tab == LauncherSettingsTab.Appearance) {
-            AppearanceOptions(cardOpacity, onCardOpacityChanged) { key, left, right ->
+            AppearanceOptions(
+                appearanceTheme, onAppearanceThemeChanged,
+                cardOpacity, onCardOpacityChanged, appsCardCollapse, onAppsCardCollapseChanged,
+                cycleUiColors, onCycleUiColorsChanged,
+            ) { key, left, right ->
                 items.row(key).ringToTop(left, right)
             }
             return@TopDialog
@@ -233,14 +246,27 @@ internal fun LauncherSettingsDialog(
 
 @Composable
 private fun AppearanceOptions(
+    appearanceTheme: LauncherTheme,
+    onAppearanceThemeChanged: (LauncherTheme) -> Unit,
     cardOpacity: Int,
     onChange: (Int?) -> Unit,
+    appsCardCollapse: AppsCardCollapse,
+    onAppsCardCollapseChanged: (AppsCardCollapse) -> Unit,
+    cycleUiColors: Boolean,
+    onCycleUiColorsChanged: (Boolean) -> Unit,
     rowModifier: (String, Boolean, Boolean) -> Modifier,
 ) {
     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.height(44.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Theme", style = MaterialTheme.typography.titleSmall)
-            Text("Glass")
+            LauncherTheme.entries.forEach { theme ->
+                TabButton(
+                    label = theme.label,
+                    selected = theme == appearanceTheme,
+                    onSelect = { onAppearanceThemeChanged(theme) },
+                    modifier = rowModifier(theme.name, theme == LauncherTheme.Glass, theme == LauncherTheme.GlassDark),
+                )
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Card opacity", style = MaterialTheme.typography.titleSmall)
@@ -258,6 +284,28 @@ private fun AppearanceOptions(
                 modifier = rowModifier("opacity-default", false, true),
             ) { Text("Use theme default") }
         }
+        Row(
+            modifier = Modifier.height(44.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Collapse unfocused Apps card", style = MaterialTheme.typography.titleSmall)
+            AppsCardCollapse.entries.forEach { direction ->
+                TabButton(
+                    label = direction.label,
+                    selected = appsCardCollapse == direction,
+                    onSelect = { onAppsCardCollapseChanged(direction) },
+                    modifier = rowModifier(direction.name, direction == AppsCardCollapse.Off, direction == AppsCardCollapse.Down),
+                )
+            }
+        }
+        HomeOption(
+            title = "Cycle UI colors",
+            description = "Slowly cycle interface hues while keeping dark surfaces and readable text.",
+            checked = cycleUiColors,
+            onClick = { onCycleUiColorsChanged(!cycleUiColors) },
+            modifier = rowModifier("cycle-colors", true, true),
+        )
     }
 }
 

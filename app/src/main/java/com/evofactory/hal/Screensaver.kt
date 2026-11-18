@@ -90,13 +90,14 @@ class CameraScreensaver : DreamService(), LifecycleOwner, SavedStateRegistryOwne
         val seconds = prefs.screensaverSeconds
         val minimizeStreams = prefs.minimizeVideoStreams
         val showProgress = prefs.screensaverShowProgress
+        val theme = prefs.appearanceTheme
         AppLog.i(TAG, "Showing ${cameras.size} cameras, $seconds s each")
         setContentView(
             ComposeView(this).apply {
                 setViewTreeLifecycleOwner(this@CameraScreensaver)
                 setViewTreeSavedStateRegistryOwner(this@CameraScreensaver)
                 setContent {
-                    HalTheme {
+                    HalTheme(theme = theme) {
                         CameraRotation(cameras, seconds, minimizeStreams, showProgress)
                     }
                 }

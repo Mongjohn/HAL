@@ -1,6 +1,6 @@
 # HAL development handoff
 
-Start with the checkout's `AGENTS.md`, then this file and the relevant sections of [DECISIONS.md](DECISIONS.md). [README.md](../README.md) is the user guide. The local `CLAUDE.md` imports `@AGENTS.md`; it should not maintain a competing copy of project rules.
+At the start of every new HAL chat, read the checkout's `AGENTS.md`, this handoff, and the relevant sections of [DECISIONS.md](DECISIONS.md) and [README.md](../README.md) before starting the task. The local `CLAUDE.md` imports `@AGENTS.md`.
 
 ## Keeping work understandable across chats
 
@@ -28,9 +28,9 @@ The documentation review on 2026-11-16 used code at `0fa2ee2`, recent merge hist
 | Fixed-width web grids | Up to 24 columns, six on screen, horizontal scrolling | `2a690a9` |
 | Dragging/column placement failures | Rendered-track gesture calculations and nearest-open-row column moves | `cc46e1a` |
 | Paired Restore, TV and USB file dialogs, direct TV transfer | Separate Apply and Restore points, browser-only settings files | [Browser settings and Restore handoff](HANDOFF.md) |
-| Classic and Glass selector | Glass only, listed in Appearance with saved opacity controls | [Appearance decisions](DECISIONS.md#artwork-appearance-and-idle-behavior) |
+| Classic and Glass selector, then Glass only | Glass and Glass Dark in Appearance with a shared saved opacity override | [Appearance decisions](DECISIONS.md#artwork-appearance-and-idle-behavior) |
 
-Do not treat old build/install messages as proof of current deployment. The latest reviewed installation report was `cc46e1a` on the SHIELD; its feature commits were subsequently merged as `0fa2ee2`. Recheck Git and the device for any new install task.
+Recheck Git and the device for each install task. See [Verification for Glass Dark and scalable artwork](#verification-for-glass-dark-and-scalable-artwork) for the latest confirmed SHIELD installation.
 
 ## Source map
 
@@ -41,11 +41,12 @@ Kotlin sources live in `app/src/main/java/com/evofactory/hal/`, JVM tests in `ap
 | Activity, settings, migration, persistence | `MainActivity.kt`, `LauncherPrefs.kt`, `DashboardLayout.kt` | `HaCardLayoutTest.kt`, `DashboardEditingTest.kt`; separate restore points and paired snapshot migration |
 | Layout and D-pad focus | `MainActivity.kt`, `HomeAssistantTab.kt`, `DashboardAppsCard.kt`, `AppRow.kt` | `HaCardLayoutTest.kt`, `DockTileKeysTest.kt`, `DashboardEditingTest.kt`; device navigation |
 | HA connection and template import | `HomeAssistant.kt`, `HomeAssistantPanel.kt`, `HaDashboard.kt` | `CardVisibilityTest.kt`, `HaCardLayoutTest.kt`; reconnect snapshot |
-| State/action/media behavior | `HaStateCue.kt`, `HaPrimaryAction.kt`, `HaMediaPlayer.kt` | Corresponding `*Test.kt`; live player/device checks |
+| State/action/media behavior | `HaStateCue.kt`, `HaPrimaryAction.kt`, `HaMediaPlayer.kt` (artwork sizing, decoding and progress), `HomeAssistantTab.kt` (panel allocation) | Corresponding `*Test.kt`; live player/device checks |
 | Visibility model | `CardVisibility.kt`, `DashboardLayout.kt` | `CardVisibilityTest.kt`; hidden-focus recovery |
 | Web editor | `DashboardEditor.kt`, `app/src/main/assets/dashboard-editor/{index.html,editor.js,editor.css}` | JS syntax, real browser pointer events, API confirmation |
 | Artwork | `ArtworkCatalog.kt`, `JustWatchReleases.kt`, `ArtworkRefreshJob.kt`, `DashboardArtwork.kt`, `LocalArtwork.kt` | `JustWatchReleasesTest.kt`, `DashboardArtworkTest.kt`, `WatchNextTest.kt`; Android job |
-| Glass and opacity | `Theme.kt` (palette and card rendering), `LauncherSettingsDialog.kt` (Appearance), `LauncherPrefs.kt` (override), `Screensaver.kt` (camera screensaver) | On-device Appearance, upgrade, and screensaver checks |
+| Glass, Glass Dark and opacity | `Theme.kt` (palettes and card fills), `DashboardArtwork.kt` (slideshow shade), `LauncherSettingsDialog.kt` (Appearance), `LauncherPrefs.kt` (selection and override), `Screensaver.kt` (camera screensaver) | Contrast and preference tests, on-device focus and legibility over black and bright artwork |
+| Apps collapse and color cycling | `DashboardAppsCard.kt` (draw-only movement), `UiColorCycle.kt` (shared timing and filter), `MainActivity.kt` (layer boundaries), `DashboardArtwork.kt` (separate slideshow layer), `LauncherSettingsDialog.kt` and `LauncherPrefs.kt` | `UiColorCycleTest.kt`; TV focus, persistence, and contrast at both ends and between them |
 | Cameras and decoder limits | `Cameras.kt`, `CameraView.kt`, `StreamDescription.kt`, `StuckPlayers.kt` | `LiveSlotsTest.kt`, `StreamDescriptionTest.kt`; hardware streams |
 | Frigate | `Frigate.kt`, `FrigateAlerts.kt`, `FrigateDialog.kt` | Integration checks for login, clips, and certificate handling |
 | Network, logs, idle, Home helper | `NetworkStatus.kt`, `AppLog.kt`, `HalApp.kt`, `Screensaver.kt`, `HomeOverrideService.kt` | Device callbacks, crash download, screensaver handoff |
@@ -72,11 +73,29 @@ Keep `ANDROID_USER_HOME` pointed at the existing directory for SHIELD updates: i
 
 For an authorized install, inspect `adb devices -l` and the selected target's model first. The reference target is an NVIDIA SHIELD TV driving an LG OLED. A historical address is not a permanent identity. Use `adb -s <verified-target> install -r <apk>` and verify the package version/update time for `com.evofactory.hal`. Installation success is not a visual or remote-navigation test.
 
+Before committing directly to `main` or merging into `main`, review the full incoming diff against the project handoff. Update affected documentation first and include the tracked updates in the same direct commit or pull request. If the documentation is already accurate, proceed without a documentation edit.
+
 When asked to merge and clean up, verify the feature commits are present on `origin/main` before deleting refs. Fast-forward local main and verify both local and remote feature refs are gone. Preserve unmerged work.
 
-### Verification for browser settings and Glass
+### Verification for browser settings and Restore
 
-The last implementation run passed all 51 JVM tests and ran the bundled editor in headless Chrome at 1280 px and 420 px. The browser used a synthetic API and checked settings selection, confirmation and failure paths, and UTF-8 download read-back. In this checkout, reproduce the browser check with `node build/editor-transfer-check.cjs`. The runner is under the Git-ignored `build/` directory. See [the branch handoff](HANDOFF.md#verification) for coverage and the remaining device checks.
+Before PR #10 merged, all 51 JVM tests passed and the bundled editor passed headless Chrome checks at 1280 px and 420 px. The browser used a synthetic API and checked settings selection, confirmation and failure paths, and UTF-8 download read-back. In this checkout, reproduce the browser check with `node build/editor-transfer-check.cjs`. The runner is under the Git-ignored `build/` directory. See [the branch handoff](HANDOFF.md#verification) for coverage and the remaining device checks.
+
+### Verification for softer Glass
+
+On 2026-11-16, the `codex/softer-glass` working copy based on `524175b` passed all 51 JVM tests and assembled a debug APK with the existing debug key. ADB confirmed an in-place update of HAL 1.2.0 (version code 17) on the SHIELD. The install confirmed package replacement. The LG visual check and a timed check of foreground editor wake behavior are open.
+
+### Verification for Apps collapse and color cycling
+
+On 2026-11-17, `codex/dashboard-oled-options` passed all 53 JVM tests with `:app:testDebugUnitTest`, including the reverse cycle, RGB endpoints, alpha preservation, and intermediate channel contrast. The debug APK built with the existing key and installed in place on the SHIELD. ADB confirmed HAL 1.2.0 (version code 17) with an updated installation timestamp. The Apps animation, remote navigation, and color rendering still need verification on the TV.
+
+The subsequent dark color cycle and media-panel alignment changes passed all 55 JVM tests. The added checks cover true black, secondary text contrast across the cycle, and sizing for one panel, multiple panels, and overflow. The revised debug APK installed in place on the SHIELD, and ADB confirmed the package update at 22:28 local time on 2026-11-17. Visual verification of the updated appearance and panel alignment is open.
+
+### Verification for Glass Dark and scalable artwork
+
+All 59 JVM tests passed on 2026-11-17. The added tests cover appearance preference fallback and persistence, Glass Dark text contrast over the brightest shaded artwork, and artwork sizing and bitmap sampling. The signed debug APK installed in place on the SHIELD at 22:52 local time. Android reported a successful cold launch of HAL 1.2.0 (version code 17). On-screen legibility, live player scaling, and navigation frame pacing remain open.
+
+The performance review moved playback progress reads out of panel composition, cached scroll fade brushes, removed offscreen compositing where no fade is visible, and sized artwork decodes to the display. These changes follow Android's guidance for [Compose phases](https://developer.android.com/develop/ui/compose/performance/phases) and [bitmap sampling](https://developer.android.com/topic/performance/graphics/load-bitmap).
 
 ### Checks that need more than unit tests
 
@@ -84,7 +103,9 @@ The last implementation run passed all 51 JVM tests and ran the bundled editor i
 - **TV focus:** test all Apps boundaries, Home versus ordinary entry, delayed app-list loading, view changes, off-screen cards, and half-width focus outlines. For the Assistant Home-focus fix, test a visible target, a missing or hidden target, and a target that disappears during view entry. Revisit Assistant to check that Home focus is consumed. Check ordinary cards and media-only panels at both focus levels.
 - **Visibility:** round-trip HAL and imported rules, nested NOT, missing/unknown states, comparison-only subscriptions, reconnect deletion, item reorder/remove, both spacing modes, and an older layout without new fields.
 - **Artwork:** verify source isolation, limits, shuffle/fallback, caption metadata, and Android job execution. Desktop regex tests missed the previous Android 11 literal-brace incompatibility.
-- **Appearance:** after an authorized upgrade on the TV, confirm that Appearance displays Glass and the remote reaches the opacity controls. Check that an old explicit override is retained, **Use theme default** restores 50%, and the camera screensaver text stays readable.
+- **Appearance:** check Glass and Glass Dark from the normal seating distance against black and over a bright artwork slide. Check secondary text, state cues, and D-pad focus, including both ends of the outline on half-width items. Confirm Appearance selection survives restart, a saved opacity override carries between themes, and **Use theme default** restores 50%. Check camera screensaver text if that screensaver is in use.
+- **Apps collapse and color cycling:** verify Off, Up, and Down across a restart. Enter collapsed Apps from the header and adjacent cards, and confirm normal entry, Home entry, long-press menus, and visibility fallback. Check both edges on a scrolled view. Compare the start, midpoint, and far end of the cycle over a static slide. Check text contrast, true black without a slide, original app icons and banners on Home and in All apps, original player artwork, the return leg, and immediate Off. Check live camera and Frigate video while their labels cycle.
+- **Media panel alignment and artwork:** put one player, multiple players, and an ordinary card in matching grid rows. Resize a panel vertically and horizontally and check that the artwork grows while labels and actions fit. Check the visible outlines at both focus levels, with and without headings, with conditional slots reserved or released, and with small slots that must scroll. On a shared card, compare media row content with neighboring sensor and control content, including two half-width items in one row.
 - **Idle:** with editor disabled, confirm the SHIELD's screensaver takes over; with the listener enabled and popup closed, confirm foreground wake behavior. Test editor disable restores normal behavior. Camera screensaver behavior is a separate check.
 - **Save failures:** distinguish a rejected request from a lost success response. Check that the selected draft remains on unconfirmed Apply or Restore. Apply Home, Apply Assistant, then Restore Home and verify that Assistant keeps its saved layout, draft, Undo history, and restore point. Check UTF-8 labels by save and read-back.
 - **Settings files:** test selection, unchecked credential choices, malformed JSON and layouts, unsupported versions, request size including the wrapper, and download contents. Verify cancel and rejected import preserve drafts. Check that a confirmed import reloads both drafts and that catalog trouble is reported separately. Use synthetic settings and check both desktop and narrow viewports. On the TV, verify the browser file round trip against the Android listener and the Home Assistant reconnect after importing a login.
@@ -93,7 +114,7 @@ The last implementation run passed all 51 JVM tests and ran the bundled editor i
 
 These are recorded for continuity, not authorization to implement changes.
 
-- **OLED research:** softer Glass text/borders, a bounded editor wake period, and a less static camera screensaver were proposed but not implemented. The user explicitly requested research only. Any change must reconcile the current no-timeout editor and readable-until-screensaver requirements. The LG model and model-specific panel behavior remain unconfirmed.
+- **OLED:** the exact model of the 77-inch 2023 LG and its panel behavior remain unconfirmed. Idle dimming and camera-screensaver changes remain research proposals.
 - **TiviMate:** earlier research found no documented channel shortcut API; installed-app intents were not tested. HAL has ordinary app launching, not a shipped channel-favorites integration. Reverify external API claims before acting on that research.
 - **Editor save durability:** success confirms application handling; SharedPreferences uses `apply()`. There is no disk-write acknowledgement in the current API. The revision is listener-scoped, not a general transaction/version system for every possible preference writer.
 - **Preview fidelity:** the browser preview preserves grid placement and ordinary half-width rows but lists only the first eight Apps labels and does not reproduce live media panels, state cues, or conditional hiding. Do not present it as a pixel-identical TV preview.

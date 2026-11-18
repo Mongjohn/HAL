@@ -17,7 +17,12 @@ Project repository: [Mongjohn/HAL](https://github.com/Mongjohn/HAL).
 
 Cameras, Home Assistant and Frigate are all optional. HAL shows your selected apps on Home. The **Cameras** tab appears only when a camera is configured; **Alerts** appears only when Frigate is configured. Both remain available to configure from the Settings cog.
 
-**HAL settings → Appearance** shows **Glass**, the only theme. Adjust card-fill opacity from 0% to 100% in 10-point steps. Text, icons, and outlines remain visible. **Use theme default** restores 50%. An opacity override you set before upgrading still applies in Glass. Ordinary dashboard use allows Android's screensaver to take over; the artwork slideshow does not keep the screen awake.
+In **HAL settings → Appearance**, choose **Glass** or **Glass Dark**. Glass Dark uses a black base, deeper translucent surfaces, dimmer text, and a stronger shade over slideshow artwork. HAL saves the choice on the TV. Adjust card-fill opacity from 0% to 100% in 10-point steps. Text, icons, decorative rims, and focus outlines stay visible even at 0%. **Use theme default** restores 50%. Saved opacity applies to both themes. Android's screensaver can take over during ordinary dashboard use, including when the artwork slideshow is running.
+
+**HAL settings → Appearance** also has two optional settings. Both start off and are saved on the TV.
+
+- **Collapse unfocused Apps card** has **Off**, **Up**, and **Down** choices. When focus leaves the card, it slides toward the chosen edge, leaving a small **Apps** label. Moving focus back opens it on the usual tile and keeps the surrounding layout in place.
+- **Cycle UI colors** shifts interface hues over 10 minutes and returns over the next 10 minutes. Black stays black, card fills dim, and text stays light. App icons and banners, player and slideshow artwork, and live video keep their original colors.
 
 ## Privacy
 
@@ -36,7 +41,7 @@ On the TV, open the Settings cog and turn on **Enable Web Editor**. Scan the QR 
 
 **Apply to TV** saves the selected surface and gives it one restore point. **Restore previous Home layout** or **Restore previous Assistant layout** consumes that surface's restore point and replaces its open draft. The other surface keeps its restore point and its draft edits. If the applied or restored layout designates a **Focus on Home press** target, HAL clears the previous target on the other surface. If HAL's confirmation is lost, the draft stays open and the TV may already have received the change.
 
-Closing the QR popup leaves the listener running, and HAL keeps the screen awake while in the foreground. There is no idle timeout. Toggle **Enable Web Editor** off in the cog menu to stop the listener and restore normal idle behavior. The listener belongs to the running HAL activity; it is not an always-on background service and starts disabled after a fresh app launch.
+While the web editor is enabled and HAL is in the foreground, HAL keeps the screen awake so Android's screensaver stays off. Closing the QR popup leaves the editor enabled. There is no idle timeout. Toggle **Enable Web Editor** off in the cog menu to stop the listener and restore normal idle behavior. The listener runs with the HAL activity and starts disabled after a fresh app launch.
 
 Open **Slideshow artwork** in the web editor to upload or delete up to 20 JPEG, PNG, or WebP images, each at most 8 MB and 8192 pixels wide or tall. Changes take effect without Apply to TV. HAL stores them in its private `files/slideshow-artwork` directory. In **HAL settings → Background**, turn on **Artwork slideshow** and **Use local artwork** to display the uploads. Turn off **Use local artwork** to select media artwork and configure your country and subscriptions. If the selected source has no usable image, the background stays black and the dashboard remains visible.
 
@@ -53,7 +58,7 @@ To copy settings to another HAL TV, open that TV's browser editor and import the
 
 ## Use the remote
 
-Move between ordinary cards with the D-pad and press OK to enter their controls. Stateful rows use icons to show their state; OK runs a supported primary action, such as toggling a light or locking/unlocking a lock. Select rows open a choice menu. Media-only cards show player panels; increase card height in the editor for more metadata and playback progress.
+Move between ordinary cards with the D-pad and press OK to enter their controls. Stateful rows use icons to show their state, and OK runs a supported primary action such as toggling a light or locking or unlocking a lock. Select rows open a choice menu. Media-only cards show player panels. Increase card height in the editor to grow the artwork, with width reserved for labels. Taller panels also show more metadata and playback progress.
 
 Entering the Apps card focuses a tile directly. OK launches it. Normal navigation returns to the last available tile; a Home press handled by HAL's helper selects the first visible tile when Apps is the Home-focus target. At an edge, navigation moves to a neighboring card when available; a dead left/right edge keeps focus on the current tile.
 
@@ -114,6 +119,8 @@ The APK is in `app/build/outputs/apk/debug/`. A build you sign yourself can't up
 The release build looks for its signing key outside this repo, and comes out unsigned if it isn't there. When a release key exists, the current signing configuration retrieves its password through macOS Keychain.
 
 For contributor setup, the existing Windows toolchain, test commands, source map, verification limits, and cross-chat documentation workflow, read [the development handoff](docs/DEVELOPMENT.md). [Behavior and decisions](docs/DECISIONS.md) explains the reasons behind the dashboard, remote, editor, visibility, artwork, and persistence behavior. Agents should build an APK only when explicitly asked.
+
+Start each new HAL chat by reading the project instructions and handoff. Before committing or merging changes into `main`, review the affected documentation and include any needed updates with the changes. Follow the [development handoff](docs/DEVELOPMENT.md#keeping-work-understandable-across-chats) for the full workflow.
 
 ## License
 

@@ -168,7 +168,9 @@ fun TopDialog(
             contentAlignment = Alignment.TopCenter,
         ) {
             Surface(
-                modifier = Modifier.padding(top = if (atTop) AtTopGap else TopPadding).then(if (fullWidth) Modifier.padding(horizontal = EdgePadding) else Modifier),
+                modifier = Modifier.padding(top = if (atTop) AtTopGap else TopPadding)
+                    .then(if (fullWidth) Modifier.padding(horizontal = EdgePadding) else Modifier)
+                    .cycleUiColors(),
                 shape = RoundedCornerShape(16.dp),
                 colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
             ) {
@@ -255,7 +257,7 @@ fun TopDialog(
                         Text(
                             hint,
                             style = MaterialTheme.typography.bodySmall,
-                            color = FaintText,
+                            color = readableCycleText(FaintText),
                             modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 12.dp),
                         )
                     }

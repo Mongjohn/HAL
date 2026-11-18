@@ -11,6 +11,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.Surface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -102,6 +104,9 @@ class MainActivity : ComponentActivity() {
     private var watchNext by mutableStateOf(emptyList<WatchNextCard>())
     private var artworkSettings by mutableStateOf(ArtworkSettings())
     private var cardOpacityOverride by mutableStateOf<Int?>(null)
+    private var appearanceTheme by mutableStateOf(LauncherTheme.Glass)
+    private var appsCardCollapse by mutableStateOf(AppsCardCollapse.Off)
+    private var cycleUiColors by mutableStateOf(false)
     private var resumed by mutableStateOf(false)
     private var watchNextRefresh: Job? = null
 
@@ -132,6 +137,9 @@ class MainActivity : ComponentActivity() {
         frigate = prefs.frigate
         artworkSettings = prefs.artworkSettings
         cardOpacityOverride = prefs.dashboardCardOpacity
+        appearanceTheme = prefs.appearanceTheme
+        appsCardCollapse = prefs.appsCardCollapse
+        cycleUiColors = prefs.cycleUiColors
         scheduleArtwork(this, artworkSettings)
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
         if (!canReadWatchNext()) requestPermissions(arrayOf(READ_TV_LISTINGS), 0)
@@ -152,7 +160,7 @@ class MainActivity : ComponentActivity() {
                 onDispose { if (registered) contentResolver.unregisterContentObserver(observer) }
             }
             val cardOpacity = cardOpacityOverride ?: DefaultCardOpacity
-            HalTheme(cardOpacity) {
+            HalTheme(cardOpacity, rememberUiColorCycle(cycleUiColors, resumed), theme = appearanceTheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val all = installed
                     val visible = remember(all, order, hidden) { all?.let { arrange(it, order, hidden) } }
@@ -334,6 +342,9 @@ class MainActivity : ComponentActivity() {
                         return true
                     }
                     var currentArtwork by remember { mutableStateOf<ArtworkLabel?>(null) }
+                    if ((cycleUiColors || appearanceTheme == LauncherTheme.GlassDark) && !artworkSettings.enabled) {
+                        Box(Modifier.fillMaxSize().background(Color.Black))
+                    }
                     DashboardArtwork(
                         settings = artworkSettings,
                         visibleApps = remember(visible) { visible.orEmpty().associate { it.key to it.label } },
@@ -354,6 +365,7 @@ class MainActivity : ComponentActivity() {
                             showFreeMemory = showFreeMemory,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .cycleUiColors()
                                 .padding(start = EdgePadding, top = TopPadding, end = EdgePadding)
                                 .onFocusChanged { topBarSelected = it.hasFocus },
                             actions = {
@@ -412,7 +424,7 @@ class MainActivity : ComponentActivity() {
                             FrigateAlertsGrid(
                                 feed = frigateFeed,
                                 onSetUp = { frigateOpen = true },
-                                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding),
+                                modifier = Modifier.weight(1f).fillMaxWidth().cycleUiColors().padding(top = EdgePadding),
                             )
                         } else if (tab == HomeTab.Assistant) {
                             HaAssistantTab(
@@ -478,8 +490,19 @@ class MainActivity : ComponentActivity() {
                                         onHomeFocusHandled = { if (focusHomeSurface == it) focusHomeSurface = null },
                                         onHomeFocusUnavailable = { homeFallback++ },
                                         renderApps = { card, target, homeTarget, height, neighbor ->
-                                            DashboardAppsCard(card, all.orEmpty(), haConnection.entities, target, homeTarget, height, lastApp, neighbor,
-                                                { lastApp = it }, { allAppsOpen = true })
+                                            DashboardAppsCard(
+                                                card = card,
+                                                installed = all.orEmpty(),
+                                                entities = haConnection.entities,
+                                                target = target,
+                                                homeTarget = homeTarget,
+                                                height = height,
+                                                collapse = appsCardCollapse,
+                                                lastApp = lastApp,
+                                                neighbor = neighbor,
+                                                onAppFocused = { lastApp = it },
+                                                onOpenAllApps = { allAppsOpen = true },
+                                            )
                                         },
                                         tabFocus = networkFocus,
                                         onSetUp = openDashboardSetup,
@@ -492,8 +515,9 @@ class MainActivity : ComponentActivity() {
                         // Previews can hide on the Assistant tab until reached by focus. Its
                         // cards then take the whole height. They slide up from the screen's edge,
                         // placed below it while hidden, where only Down finds them.
-                        if (alertsRowFeed?.rowAlerts?.isNotEmpty() == true) Column(
+                        if (alertsRowFeed != null && alertsRowFeed.rowAlerts.isNotEmpty()) Column(
                             Modifier
+                                .cycleUiColors()
                                 .onFocusChanged { if (!bottomRow) bottomRevealed = it.hasFocus }
                                 .clipToBounds()
                                 .layout { measurable, constraints ->
@@ -503,20 +527,15 @@ class MainActivity : ComponentActivity() {
                         ) {
                             // The tiles' grow room counts towards the margins above and below the row
                             Spacer(Modifier.height(EdgePadding - TileGrowRoom))
-                            Column {
-                                    if (alertsRowFeed != null && alertsRowFeed.rowAlerts.isNotEmpty()) {
-                                        FrigateAlertsRow(
-                                            feed = alertsRowFeed,
-                                            shown = true,
-                                            firstCardFocus = alertsRowFocus,
-                                            upFocus = ::aboveRows,
-                                            downFocus = FocusRequester.Default,
-                                            onEnter = {},
-                                            onLeave = { runCatching { haSensorsFocus.requestFocus() } },
-                                        )
-                                    }
-
-                            }
+                            FrigateAlertsRow(
+                                feed = alertsRowFeed,
+                                shown = true,
+                                firstCardFocus = alertsRowFocus,
+                                upFocus = ::aboveRows,
+                                downFocus = FocusRequester.Default,
+                                onEnter = {},
+                                onLeave = { runCatching { haSensorsFocus.requestFocus() } },
+                            )
                             Spacer(Modifier.height(EdgePadding - TileGrowRoom))
                         }
                     }
@@ -629,9 +648,24 @@ class MainActivity : ComponentActivity() {
                             showFreeMemory = showFreeMemory,
                             artworkSettings = artworkSettings,
                             cardOpacity = cardOpacity,
+                            appearanceTheme = appearanceTheme,
+                            onAppearanceThemeChanged = { theme ->
+                                appearanceTheme = theme
+                                prefs.appearanceTheme = theme
+                            },
                             onCardOpacityChanged = { opacity ->
                                 cardOpacityOverride = opacity
                                 prefs.dashboardCardOpacity = opacity
+                            },
+                            appsCardCollapse = appsCardCollapse,
+                            onAppsCardCollapseChanged = { collapse ->
+                                appsCardCollapse = collapse
+                                prefs.appsCardCollapse = collapse
+                            },
+                            cycleUiColors = cycleUiColors,
+                            onCycleUiColorsChanged = { enabled ->
+                                cycleUiColors = enabled
+                                prefs.cycleUiColors = enabled
                             },
                             onArtworkEnabled = { enabled ->
                                 artworkSettings = artworkSettings.copy(enabled = enabled)

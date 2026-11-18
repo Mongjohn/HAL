@@ -10,6 +10,24 @@ import org.json.JSONObject
 
 class HaMediaPlayerTest {
     @Test
+    fun artworkGrowsWithPanelHeightWhileLeavingRoomForMetadata() {
+        assertEquals(64, mediaArtworkSide(360, 64, 48, 108))
+        assertEquals(200, mediaArtworkSide(360, 200, 48, 108))
+        assertEquals(112, mediaArtworkSide(220, 200, 48, 108))
+        assertEquals(76, mediaArtworkSide(360, Int.MAX_VALUE, 76, 108))
+    }
+
+    @Test
+    fun artworkDecodesAtStableBoundedSizes() {
+        assertEquals(256, mediaArtworkDecodeSize(129))
+        assertEquals(256, mediaArtworkDecodeSize(224))
+        assertEquals(1152, mediaArtworkDecodeSize(2000))
+        assertEquals(4, mediaArtworkSampleSize(1024, 1024, 256))
+        assertEquals(2, mediaArtworkSampleSize(1024, 1024, 384))
+        assertEquals(4, mediaArtworkSampleSize(6000, 500, 512))
+    }
+
+    @Test
     fun mediaOnlyCardsKeepEachPlayerFullWidthAndMixedCardsUseNormalRows() {
         val mediaOnly = SensorCard("media", "", listOf("media_player.tv", "media_player.speaker"))
         val mixed = SensorCard("mixed", "", listOf("media_player.tv", "sensor.temperature"))
@@ -18,6 +36,14 @@ class HaMediaPlayerTest {
         assertFalse(mixed.isMediaOnly)
         assertEquals(listOf(0..1), mixed.entityRows(twoPerRow = true))
         assertFalse(SensorCard("empty", "", emptyList()).isMediaOnly)
+    }
+
+    @Test
+    fun mediaPanelsFillTheirGridSlotAndKeepOversizedContentsScrollable() {
+        assertEquals(listOf(180), mediaPanelMinimumHeights(listOf(56), 180, 6))
+        assertEquals(listOf(103, 72), mediaPanelMinimumHeights(listOf(80, 50), 181, 6))
+        assertEquals(listOf(80, 50), mediaPanelMinimumHeights(listOf(80, 50), 120, 6))
+        assertEquals(emptyList<Int>(), mediaPanelMinimumHeights(emptyList(), 180, 6))
     }
 
     @Test

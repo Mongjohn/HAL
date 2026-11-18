@@ -556,7 +556,7 @@ private fun ClipPlayer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black)
+                .background(cycleUiColor(Color.Black))
                 .focusRequester(focus)
                 .onPreviewKeyEvent { event ->
                     val down = event.type == KeyEventType.KeyDown
@@ -588,7 +588,7 @@ private fun ClipPlayer(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-            if (!showingVideo) Box(Modifier.fillMaxSize().background(Color.Black))
+            if (!showingVideo) Box(Modifier.fillMaxSize().cycleUiColors().background(Color.Black))
             ClipLabel(
                 "${alert.cameraName} · ${alertTime(alert)}",
                 Modifier.align(Alignment.TopStart).padding(EdgePadding),
@@ -596,8 +596,8 @@ private fun ClipPlayer(
             status?.let { ClipLabel(it) }
             if (newer != null) SwitchChevron("mdi:chevron-left", Modifier.align(Alignment.CenterStart))
             if (older != null) SwitchChevron("mdi:chevron-right", Modifier.align(Alignment.CenterEnd))
-            if (ended) NotLiveMark(Modifier.align(Alignment.BottomEnd).padding(EdgePadding), size = 36.dp)
-            if (showingVideo) ClipProgress(player, alert, Modifier.align(Alignment.BottomStart))
+            if (ended) NotLiveMark(Modifier.align(Alignment.BottomEnd).padding(EdgePadding).cycleUiColors(), size = 36.dp)
+            if (showingVideo) ClipProgress(player, alert, Modifier.align(Alignment.BottomStart).cycleUiColors())
         }
     }
 }
@@ -634,7 +634,7 @@ private fun ClipLabel(text: String, modifier: Modifier = Modifier) {
         text,
         style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.onSurface,
-        modifier = modifier
+        modifier = modifier.cycleUiColors()
             .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
             .padding(horizontal = 16.dp, vertical = 8.dp),
     )
