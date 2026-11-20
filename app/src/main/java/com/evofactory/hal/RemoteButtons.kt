@@ -10,7 +10,6 @@ import android.view.KeyEvent.KEYCODE_NUMPAD_1
 import android.view.KeyEvent.KEYCODE_NUMPAD_9
 import android.view.KeyEvent.KEYCODE_NUMPAD_DOT
 import android.view.KeyEvent.KEYCODE_PERIOD
-import android.view.KeyEvent.KEYCODE_PROG_BLUE
 import android.view.KeyEvent.KEYCODE_PROG_GREEN
 import android.view.KeyEvent.KEYCODE_PROG_RED
 import android.view.KeyEvent.KEYCODE_PROG_YELLOW
@@ -21,7 +20,6 @@ fun colorButtonTab(event: KeyEvent): HomeTab? = when (event.nativeKeyEvent.keyCo
     KEYCODE_PROG_RED -> HomeTab.Home
     KEYCODE_PROG_GREEN -> HomeTab.Cameras
     KEYCODE_PROG_YELLOW -> HomeTab.Alerts
-    KEYCODE_PROG_BLUE -> HomeTab.Assistant
     else -> null
 }
 

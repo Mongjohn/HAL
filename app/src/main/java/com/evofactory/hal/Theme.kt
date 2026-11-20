@@ -48,9 +48,20 @@ private val GlassDarkColorScheme = GlassColorScheme.copy(
     primary = Color(0xFF899FB9),
 )
 
+private val CalmColorScheme = GlassColorScheme.copy(
+    background = Color.Black,
+    surface = Color(0xFF0C1112),
+    surfaceVariant = Color(0xFF1C2523),
+    onSurface = Color(0xFFE0E5DC),
+    onSurfaceVariant = Color(0xFFA5B1A8),
+    primary = Color(0xFFB8C6A4),
+    inverseSurface = Color(0xFFCBD5C4),
+)
+
 internal enum class LauncherTheme(val label: String) {
     Glass("Glass"),
     GlassDark("Glass Dark"),
+    Calm("Calm"),
 }
 
 internal val LocalLauncherTheme = staticCompositionLocalOf { LauncherTheme.Glass }
@@ -71,6 +82,7 @@ internal fun HalTheme(
         LocalUiColorCycle provides uiColorCycle,
     ) {
         val colors = when {
+            theme == LauncherTheme.Calm -> CalmColorScheme
             theme == LauncherTheme.GlassDark -> GlassDarkColorScheme
             uiColorCycle != null -> CyclingGlassColorScheme
             else -> GlassColorScheme
@@ -82,6 +94,12 @@ internal fun HalTheme(
 @Composable
 internal fun Modifier.dashboardCard(color: Color, shape: Shape, cyclePaints: Boolean = false): Modifier {
     val alpha = LocalDashboardCardOpacity.current / 100f
+    if (LocalLauncherTheme.current == LauncherTheme.Calm) {
+        val fill = Color(0xFF101719).copy(alpha = alpha)
+        val rim = Color(0xFFB8C6BF).copy(alpha = 0.13f)
+        return background(if (cyclePaints) cycleUiColor(fill) else fill, shape)
+            .border(1.dp, if (cyclePaints) cycleUiColor(rim) else rim, shape)
+    }
     val dark = LocalLauncherTheme.current == LauncherTheme.GlassDark
     val cycle = if (cyclePaints) LocalUiColorCycle.current?.value else null
     val top = darkenCycleSurface(if (dark) Color(0xFF1B2635) else Color(0xFF3B4C67))
@@ -103,7 +121,16 @@ internal fun Modifier.dashboardCard(color: Color, shape: Shape, cyclePaints: Boo
 
 @Composable
 private fun glassColor(glass: Long, dark: Long): Color =
-    Color(if (LocalLauncherTheme.current == LauncherTheme.GlassDark) dark else glass)
+    Color(when (LocalLauncherTheme.current) {
+        LauncherTheme.Glass -> glass
+        LauncherTheme.GlassDark -> dark
+        LauncherTheme.Calm -> when (glass) {
+            0xFFA49DAA -> 0xFFB8C6B7
+            0xFF312F35 -> 0xFF232D2B
+            0xFF403D45 -> 0xFF303C37
+            else -> dark
+        }
+    })
 
 internal val DashboardFocusColor: Color
     @Composable get() = glassColor(0xFFA49DAA, 0xFF8597AE)
@@ -136,7 +163,11 @@ val SwitchKnob = Color(0xFFEDEBF0)
 
 /** A step below onSurfaceVariant: figures that are only there if you look for them */
 val FaintText: Color
-    @Composable get() = if (LocalLauncherTheme.current == LauncherTheme.GlassDark) GlassDarkFaint else Color(0xFF6E6C72)
+    @Composable get() = when (LocalLauncherTheme.current) {
+        LauncherTheme.Glass -> Color(0xFF6E6C72)
+        LauncherTheme.GlassDark -> GlassDarkFaint
+        LauncherTheme.Calm -> Color(0xFF98A69B)
+    }
 
 /** Home Assistant state hues on the dashboard's dark surfaces. */
 @Composable

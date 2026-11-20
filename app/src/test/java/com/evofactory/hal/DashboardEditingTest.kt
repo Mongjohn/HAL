@@ -68,6 +68,8 @@ class DashboardEditingTest {
         assertEquals(LauncherTheme.Glass, prefs().appearanceTheme)
         prefs().appearanceTheme = LauncherTheme.GlassDark
         assertEquals(LauncherTheme.GlassDark, prefs().appearanceTheme)
+        prefs().appearanceTheme = LauncherTheme.Calm
+        assertEquals(LauncherTheme.Calm, prefs().appearanceTheme)
         data["appearance_theme"] = "unsupported"
         assertEquals(LauncherTheme.Glass, prefs().appearanceTheme)
     }

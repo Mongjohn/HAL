@@ -94,5 +94,5 @@ internal fun darkenCycleSurface(color: Color): Color {
 
 @Composable
 internal fun readableCycleText(color: Color): Color =
-    if (LocalUiColorCycle.current == null || LocalLauncherTheme.current == LauncherTheme.GlassDark) color
+    if (LocalUiColorCycle.current == null || LocalLauncherTheme.current != LauncherTheme.Glass) color
     else CyclingSecondaryText

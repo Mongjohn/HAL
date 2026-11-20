@@ -50,6 +50,9 @@ import org.json.JSONObject
 
 internal fun isHaMediaPlayer(id: String) = id.startsWith("media_player.")
 
+internal val MediaArtworkNaturalSide = 76.dp
+internal val MediaPanelVerticalPadding = 4.dp
+
 @Composable
 internal fun MediaPlayerReading(
     id: String,
@@ -58,6 +61,8 @@ internal fun MediaPlayerReading(
     session: HaSession?,
     compact: Boolean,
     modifier: Modifier = Modifier,
+    showPrimaryActionIcon: Boolean = true,
+    showProgress: Boolean = !compact,
 ) {
     val colors = MaterialTheme.colorScheme
     val accent = cycleUiColor(colors.primary)
@@ -110,7 +115,7 @@ internal fun MediaPlayerReading(
             if (!compact && details != null) {
                 Text(details, style = MaterialTheme.typography.labelSmall, color = secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (!compact) {
+            if (showProgress) {
                 entity?.mediaPlayback?.let { MediaProgress(it) }
             }
         }
@@ -120,7 +125,7 @@ internal fun MediaPlayerReading(
             "turn_on", "turn_off" -> "power"
             else -> null
         }
-        actionIcon?.let { MdiIcon(it, size = 18.dp, color = accent) }
+        if (showPrimaryActionIcon) actionIcon?.let { MdiIcon(it, size = 18.dp, color = accent) }
     }
 }
 
@@ -143,7 +148,7 @@ private fun MediaArtwork(session: HaSession?, artwork: String?, fallbackIcon: St
     Box(
         Modifier.layout { measurable, constraints ->
             val side = mediaArtworkSide(
-                constraints.maxWidth, constraints.maxHeight, (if (compact) 48.dp else 76.dp).roundToPx(), 108.dp.roundToPx(),
+                constraints.maxWidth, constraints.maxHeight, (if (compact) 48.dp else MediaArtworkNaturalSide).roundToPx(), 108.dp.roundToPx(),
             )
             val square = measurable.measure(Constraints.fixed(side, side))
             layout(side, side) { square.placeRelative(0, 0) }

@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
@@ -55,8 +56,6 @@ enum class HomeTab(val label: String, val color: Color) {
     /** The latest Frigate alerts */
     Alerts("Alerts", Color(0xFFD9B84A)),
 
-    /** Every chosen Home Assistant sensor and action, in a card per room */
-    Assistant("Assistant", Color(0xFF5A8FD9)),
 }
 
 /** The top bar: tabs on the left; free memory, action buttons, the settings cog and the time on the right. */
@@ -68,29 +67,35 @@ fun HomeTopBar(
     secondTabFocus: FocusRequester,
     homeTabFocus: FocusRequester,
     alertsTabFocus: FocusRequester,
-    assistantTabFocus: FocusRequester,
+    homeFocusPending: Boolean = false,
     onHomeTabSelected: (Boolean) -> Unit,
     showFreeMemory: Boolean,
     modifier: Modifier = Modifier,
     actions: @Composable RowScope.() -> Unit = {},
     settings: @Composable () -> Unit,
 ) {
+    val calm = LocalLauncherTheme.current == LauncherTheme.Calm
     Row(
-        modifier = modifier.height(SettingsButtonSize),
+        modifier = modifier.height(if (calm) 52.dp else SettingsButtonSize),
         horizontalArrangement = Arrangement.spacedBy(PanelItemSpacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         availableTabs.forEach { entry ->
+            if (entry == HomeTab.Home && availableTabs.size == 1) {
+                Text(entry.label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp))
+                return@forEach
+            }
             TabButton(
                 entry.label,
                 selected = entry == tab,
                 underline = entry.color,
                 onSelect = { onTabChange(entry) },
                 modifier = when (entry) {
-                    HomeTab.Home -> Modifier.focusRequester(homeTabFocus).onFocusChanged { onHomeTabSelected(it.hasFocus) }
+                    HomeTab.Home -> Modifier.focusRequester(homeTabFocus)
+                        .focusProperties { canFocus = !homeFocusPending }
+                        .onFocusChanged { onHomeTabSelected(it.hasFocus) }
                     HomeTab.Cameras -> Modifier.focusRequester(secondTabFocus)
                     HomeTab.Alerts -> Modifier.focusRequester(alertsTabFocus)
-                    HomeTab.Assistant -> Modifier.focusRequester(assistantTabFocus)
                 },
             )
         }
@@ -131,15 +136,16 @@ fun TabButton(
     secondary: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
+    val calm = LocalLauncherTheme.current == LauncherTheme.Calm
     Surface(
         onClick = onSelect,
         modifier = modifier.fillMaxHeight(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(if (calm) 50.dp else 8.dp)),
         border = ClickableSurfaceDefaults.border(focusedBorder = DashboardFocusBorder),
         // Stays in place, so the underline doesn't move
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
+            containerColor = if (calm && selected) colors.surfaceVariant.copy(alpha = 0.8f) else Color.Transparent,
             contentColor = when {
                 secondary -> if (selected) colors.onSurfaceVariant else readableCycleText(FaintText)
                 selected -> colors.onSurface
@@ -151,7 +157,7 @@ fun TabButton(
     ) {
         // Secondary tabs use their text color for the underline.
         val lineColor = when {
-            !selected -> Color.Transparent
+            !selected || calm -> Color.Transparent
             underline.isSpecified -> underline
             else -> LocalContentColor.current
         }
@@ -243,6 +249,7 @@ private const val LOW_MEMORY_MB = 300
 /** The current time, dimmed, and under it the date in the TV's language; display only, the remote never lands on it */
 @Composable
 private fun Clock() {
+    val calm = LocalLauncherTheme.current == LauncherTheme.Calm
     val context = LocalContext.current
     val timeFormat = DateFormat.getTimeFormat(context)
     val dateFormat = SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "MMMd"), Locale.getDefault())
@@ -253,8 +260,13 @@ private fun Clock() {
             delay(60_000 - System.currentTimeMillis() % 60_000 + 50)
         }
     }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(timeFormat.format(now), style = MaterialTheme.typography.titleLarge, color = readableCycleText(DashboardClockColor), maxLines = 1)
+    Column(horizontalAlignment = if (calm) Alignment.Start else Alignment.CenterHorizontally) {
+        Text(timeFormat.format(now), style = MaterialTheme.typography.titleLarge.let {
+            if (calm) it.copy(fontSize = 30.sp, fontWeight = FontWeight.Light) else it
+        }, color = readableCycleText(if (calm) MaterialTheme.colorScheme.onSurface else DashboardClockColor), maxLines = 1)
         Text(dateFormat.format(now), style = MaterialTheme.typography.labelMedium, color = readableCycleText(FaintText), maxLines = 1)
     }
 }
+
+internal fun availableHomeTabs(cameras: Boolean, frigate: Boolean): List<HomeTab> =
+    listOfNotNull(HomeTab.Home, HomeTab.Cameras.takeIf { cameras }, HomeTab.Alerts.takeIf { frigate })

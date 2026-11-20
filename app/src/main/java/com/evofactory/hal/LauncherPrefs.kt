@@ -166,6 +166,9 @@ class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
         get() = if (prefs.contains("ha_top_bar")) readList("ha_top_bar") else oldHaActions().take(MAX_HA_ACTIONS)
 
     val dashboardLayouts get() = readDashboardLayouts("dashboard_layouts") ?: DashboardLayouts()
+    internal var assistantDashboardRetired: Boolean
+        get() = prefs.getBoolean("assistant_dashboard_retired", false)
+        set(value) = prefs.edit { putBoolean("assistant_dashboard_retired", value) }
     private val previousDashboardLayouts get() = readDashboardLayouts("dashboard_layouts_previous")
 
     fun previousDashboardSurface(surface: String): DashboardLayout? {

@@ -264,10 +264,15 @@ private fun AppearanceOptions(
                     label = theme.label,
                     selected = theme == appearanceTheme,
                     onSelect = { onAppearanceThemeChanged(theme) },
-                    modifier = rowModifier(theme.name, theme == LauncherTheme.Glass, theme == LauncherTheme.GlassDark),
+                    modifier = rowModifier(theme.name, theme == LauncherTheme.entries.first(), theme == LauncherTheme.entries.last()),
                 )
             }
         }
+        if (appearanceTheme == LauncherTheme.Calm) Text(
+            "A quiet home with card summaries and focused panels. Your grid layout is kept for Glass themes. Use Background to choose slideshow artwork.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Card opacity", style = MaterialTheme.typography.titleSmall)
             OutlinedButton(
