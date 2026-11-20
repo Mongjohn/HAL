@@ -4,6 +4,11 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -18,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -40,6 +46,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -48,6 +55,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun DashboardAppsCard(
     card: DashboardCard,
@@ -63,6 +71,7 @@ internal fun DashboardAppsCard(
     neighbor: (FocusDirection) -> FocusRequester,
     onAppFocused: (String) -> Unit,
     onOpenAllApps: () -> Unit,
+    singleRowViewport: Boolean = false,
 ) {
     val context = LocalContext.current
     val apps = remember(installed) { installed.associateBy { it.key } }
@@ -80,6 +89,8 @@ internal fun DashboardAppsCard(
     var emptyFocused by remember { mutableStateOf(false) }
     var menuApp by remember { mutableStateOf<String?>(null) }
     val idle = remember { AppsCardIdleState() }
+    val rowScroll = rememberScrollState()
+    val density = LocalDensity.current
     val focused = focusedApp != null || emptyFocused
     val idleEnabled = active && focused && menuApp == null && collapse != AppsCardCollapse.Off
     val currentKeyHandlerChanged by rememberUpdatedState(onKeyHandlerChanged)
@@ -156,58 +167,72 @@ internal fun DashboardAppsCard(
             val gap = minOf(8.dp, maxHeight / (rows.size.coerceAtLeast(1) * 2))
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(gap)) {
                 if (card.card.title.isNotBlank()) Text(card.card.title, modifier = Modifier.cycleUiColors())
-                Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
-                    rows.forEachIndexed { rowIndex, row ->
-                        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                            row.forEachIndexed { column, id ->
-                                if (id in hidden) {
-                                    Spacer(Modifier.weight(1f))
-                                } else key(id) {
-                                    val requester = requesters.getValue(id)
-                                    val focusModifier = Modifier.fillMaxSize()
-                                        .then(if (id == entry) Modifier.focusRequester(target) else Modifier)
-                                        .then(if (id == first) Modifier.focusRequester(homeTarget) else Modifier)
-                                        .focusRequester(requester)
-                                        .onFocusChanged {
-                                            if (it.isFocused) {
-                                                focusedApp = id
-                                                onAppFocused(id)
-                                            } else if (focusedApp == id && id in currentVisible) {
-                                                focusedApp = null
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    val tileRowHeight = maxHeight
+                    val step = with(density) { (tileRowHeight + gap).roundToPx() }
+                    val focusedRow = rows.indexOfFirst { (focusedApp ?: lastApp ?: first) in it }
+                    LaunchedEffect(singleRowViewport, focusedRow, step) {
+                        if (singleRowViewport && focusedRow >= 0) rowScroll.animateScrollTo(focusedRow * step)
+                    }
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides
+                        if (singleRowViewport) AppsRowOwnsScroll else LocalBringIntoViewSpec.current) {
+                        Column(Modifier.fillMaxSize().then(if (singleRowViewport) Modifier.verticalScroll(rowScroll) else Modifier),
+                            verticalArrangement = Arrangement.spacedBy(gap)) {
+                            rows.forEachIndexed { rowIndex, row ->
+                                Row((if (singleRowViewport) Modifier.height(tileRowHeight) else Modifier.weight(1f)).fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(gap)) {
+                                    row.forEachIndexed { column, id ->
+                                        if (id in hidden) {
+                                            Spacer(Modifier.weight(1f))
+                                        } else key(id) {
+                                            val requester = requesters.getValue(id)
+                                            val focusModifier = Modifier.fillMaxSize()
+                                                .then(if (id == entry) Modifier.focusRequester(target) else Modifier)
+                                                .then(if (id == first) Modifier.focusRequester(homeTarget) else Modifier)
+                                                .focusRequester(requester)
+                                                .onFocusChanged {
+                                                    if (it.isFocused) {
+                                                        focusedApp = id
+                                                        onAppFocused(id)
+                                                    } else if (focusedApp == id && id in currentVisible) {
+                                                        focusedApp = null
+                                                    }
+                                                }
+                                                .focusProperties {
+                                                    left = row.take(column).lastOrNull { it !in hidden }
+                                                        ?.let(requesters::getValue) ?: neighbor(FocusDirection.Left)
+                                                    right = row.drop(column + 1).firstOrNull { it !in hidden }
+                                                        ?.let(requesters::getValue) ?: neighbor(FocusDirection.Right)
+                                                    up = verticalNeighbor(rowIndex, column, FocusDirection.Up)
+                                                    down = verticalNeighbor(rowIndex, column, FocusDirection.Down)
+                                                }
+                                            val app = apps[id]
+                                            Box(Modifier.weight(1f).fillMaxSize().padding(2.dp)) {
+                                                if (app != null) {
+                                                    AppTile(app, { context.launch(app) }, focusModifier, onLongClick = { menuApp = id }, fitCard = true)
+                                                    if (menuApp == id) {
+                                                        ContextMenu(app.label, buildList {
+                                                            add(MenuAction("App info") { context.openAppInfo(app) })
+                                                            if (context.canUninstall(app)) add(MenuAction("Uninstall") { context.uninstall(app) })
+                                                        }, onDismiss = { menuApp = null })
+                                                    }
+                                                } else {
+                                                    DockShortcutTile("All apps", "apps", onOpenAllApps, focusModifier)
+                                                }
                                             }
-                                        }
-                                        .focusProperties {
-                                            left = row.take(column).lastOrNull { it !in hidden }
-                                                ?.let(requesters::getValue) ?: neighbor(FocusDirection.Left)
-                                            right = row.drop(column + 1).firstOrNull { it !in hidden }
-                                                ?.let(requesters::getValue) ?: neighbor(FocusDirection.Right)
-                                            up = verticalNeighbor(rowIndex, column, FocusDirection.Up)
-                                            down = verticalNeighbor(rowIndex, column, FocusDirection.Down)
-                                        }
-                                    val app = apps[id]
-                                    Box(Modifier.weight(1f).fillMaxSize().padding(2.dp)) {
-                                        if (app != null) {
-                                            AppTile(app, { context.launch(app) }, focusModifier, onLongClick = { menuApp = id }, fitCard = true)
-                                            if (menuApp == id) {
-                                                ContextMenu(app.label, buildList {
-                                                    add(MenuAction("App info") { context.openAppInfo(app) })
-                                                    if (context.canUninstall(app)) add(MenuAction("Uninstall") { context.uninstall(app) })
-                                                }, onDismiss = { menuApp = null })
-                                            }
-                                        } else {
-                                            DockShortcutTile("All apps", "apps", onOpenAllApps, focusModifier)
                                         }
                                     }
+                                    if (row.size < columns && rows.size > 1) {
+                                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                                    }
                                 }
-                            }
-                            if (row.size < columns && rows.size > 1) {
-                                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                             }
                         }
                     }
                 }
             }
         }
+
         if (collapse != AppsCardCollapse.Off) {
             val color = MaterialTheme.colorScheme.onSurfaceVariant
             Row(
@@ -243,4 +268,9 @@ internal fun neighboringCard(card: DashboardCard, cards: List<DashboardCard>, di
         }
     return cards.filter { it !== card && distance(it) >= 0 }
         .minWithOrNull(compareBy({ crossGap(it) != 0 }, { distance(it) }, { crossGap(it) }, { it.y }, { it.x }))
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+private val AppsRowOwnsScroll = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = 0f
 }

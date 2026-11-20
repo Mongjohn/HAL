@@ -32,6 +32,9 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
@@ -55,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.Surface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -174,13 +178,7 @@ class MainActivity : ComponentActivity() {
                     }
                     val camera = if (showHomeCamera) cameras.find { it.id == selectedCamera } ?: cameras.firstOrNull() else null
                     val availableTabs = remember(cameras.isNotEmpty(), frigate.isSet) {
-                        HomeTab.entries.filter { entry ->
-                            when (entry) {
-                                HomeTab.Cameras -> cameras.isNotEmpty()
-                                HomeTab.Alerts -> frigate.isSet
-                                else -> true
-                            }
-                        }
+                        availableHomeTabs(cameras.isNotEmpty(), frigate.isSet)
                     }
                     val mainCameraFocus = remember { FocusRequester() }
                     val haSensorsFocus = remember { FocusRequester() }
@@ -189,35 +187,36 @@ class MainActivity : ComponentActivity() {
                     val secondTabFocus = remember { FocusRequester() }
                     val homeTabFocus = remember { FocusRequester() }
                     val alertsTabFocus = remember { FocusRequester() }
-                    val assistantTabFocus = remember { FocusRequester() }
+                    val homeNavigationFocus = if (availableTabs.size > 1) homeTabFocus else networkFocus
+                    var handledHomeRequest by remember { mutableIntStateOf(0) }
                     LaunchedEffect(availableTabs, tab) {
                         if (tab !in availableTabs) {
                             tab = HomeTab.Home
-                            homeTabFocus.requestFocus()
+                            homeNavigationFocus.requestFocus()
                         }
                     }
                     var topBarSelected by remember { mutableStateOf(false) }
                     var homeTabSelected by remember { mutableStateOf(false) }
-                    val bottomRow = tab != HomeTab.Assistant || (dashboardLayouts.assistant?.bottomRow ?: haDisplay.bottomRow)
+                    val bottomRow = true
                     var bottomRevealed by remember { mutableStateOf(false) }
                     val bottomShown = bottomRow || bottomRevealed
                     val bottomFraction by animateFloatAsState(if (bottomShown) 1f else 0f, label = "bottom rows")
                     // Back returns focus to the tabs.
                     BackHandler {
                         when {
-                            topBarSelected && !homeTabSelected -> runCatching { homeTabFocus.requestFocus() }
-                            !bottomShown -> if (!topBarSelected) runCatching { assistantTabFocus.requestFocus() }
-                            else -> runCatching { homeTabFocus.requestFocus() }
+                            topBarSelected && !homeTabSelected -> runCatching { homeNavigationFocus.requestFocus() }
+                            !bottomShown -> if (!topBarSelected) runCatching { homeNavigationFocus.requestFocus() }
+                            else -> runCatching { homeNavigationFocus.requestFocus() }
                         }
                     }
                     // The launcher top bar has its own action selection.
                     val actions = haTopBar.take(MAX_HA_ACTIONS)
                     val followed = remember(dashboardLayouts, haEntities, haTopBar) {
-                        (haTopBar + (dashboardLayouts.assistant?.entityIds ?: haEntities) +
-                            (dashboardLayouts.home?.entityIds ?: haEntities.filterNot(::isHaAction))).distinct()
+                        (haTopBar + dashboardLayouts.assistant?.entityIds.orEmpty() +
+                            (dashboardLayouts.home?.entityIds ?: haEntities)).distinct()
                     }
                     val legacyBoards = listOfNotNull(
-                        haDisplay.dashboard.takeIf { dashboardLayouts.assistant == null },
+                        haDisplay.dashboard.takeIf { !prefs.assistantDashboardRetired && dashboardLayouts.assistant == null },
                         haDisplay.homeDashboard.takeIf { dashboardLayouts.home == null },
                     ).distinct()
                     val haConnection = rememberHaConnection(haServer, followed, legacyBoards)
@@ -230,9 +229,34 @@ class MainActivity : ComponentActivity() {
                     val homeLayout = remember(savedHome, dockKeys, haDisplay, legacyHomeBoard, haEntities) {
                         (savedHome ?: seedDashboardLayout(
                             legacyHomeBoard,
-                            haDisplay.homeLayout.selectionCards(haEntities.filterNot(::isHaAction), haConnection.entities),
+                            haDisplay.homeLayout.selectionCards(haEntities, haConnection.entities),
                             1, haDisplay.homeLayout.twoPerRow,
                         )).migrateAppsCard(dockKeys)
+                    }
+                    val legacyAssistantBoard = haConnection.dashboard(haDisplay.dashboard)
+                    LaunchedEffect(homeLayout, dashboardLayouts.assistant, legacyHomeBoard, legacyAssistantBoard) {
+                        val homeReady = savedHome != null || haDisplay.homeDashboard == null || legacyHomeBoard != null ||
+                            haConnection.dashboardMissing(haDisplay.homeDashboard)
+                        val assistantReady = dashboardLayouts.assistant != null || haDisplay.dashboard == null ||
+                            legacyAssistantBoard != null || haConnection.dashboardMissing(haDisplay.dashboard)
+                        if (!homeReady || !assistantReady) return@LaunchedEffect
+                        val retired = dashboardLayouts.assistant ?: if (!prefs.assistantDashboardRetired &&
+                            haDisplay.dashboard != null && haDisplay.dashboard != haDisplay.homeDashboard) {
+                            seedDashboardLayout(legacyAssistantBoard, haDisplay.layout.selectionCards(haEntities, haConnection.entities),
+                                3, haDisplay.layout.twoPerRow)
+                        } else if (!prefs.assistantDashboardRetired && haDisplay.dashboard == null && savedHome != null) {
+                            val missing = haEntities.filter { it !in homeLayout.entityIds }
+                            missing.takeIf { it.isNotEmpty() }?.let {
+                                seedDashboardLayout(null, haDisplay.layout.selectionCards(it, haConnection.entities), 3, haDisplay.layout.twoPerRow)
+                            }
+                        } else null
+                        if (retired != null) {
+                            val source = DashboardLayouts(assistant = retired, home = dashboardLayouts.home)
+                            val migrated = source.retireAssistant(homeLayout)
+                            prefs.saveDashboardLayouts(migrated, dashboardLayouts)
+                            dashboardLayouts = migrated
+                        }
+                        prefs.assistantDashboardRetired = true
                     }
                     // The browser may read settings after a write but before the next composition.
                     fun currentHomeLayout(): DashboardLayout {
@@ -240,33 +264,30 @@ class MainActivity : ComponentActivity() {
                         return if (current == null || current == savedHome) homeLayout else current.migrateAppsCard(dockKeys)
                     }
                     var focusHomeSurface by remember { mutableStateOf<Int?>(null) }
-                    var focusAssistantSurface by remember { mutableIntStateOf(0) }
                     var homeFallback by remember { mutableIntStateOf(0) }
                     LaunchedEffect(tab) {
                         if (tab != HomeTab.Home) focusHomeSurface = null
-                        if (tab != HomeTab.Assistant) focusAssistantSurface = 0
                     }
                     LaunchedEffect(homeFallback) {
                         if (homeFallback == 0) return@LaunchedEffect
                         tab = HomeTab.Home
                         withFrameNanos { }
-                        runCatching { homeTabFocus.requestFocus() }
+                        runCatching { homeNavigationFocus.requestFocus() }
                     }
-                    LaunchedEffect(homeFocusRequest) {
+                    LaunchedEffect(homeFocusRequest, dashboardLayouts.assistant) {
                         val request = homeFocusRequest
-                        if (request == 0) return@LaunchedEffect
-                        val destination = dashboardLayouts.copy(home = homeLayout).visibleHomeFocusSurface(haConnection.entities)
-                        val assistantTarget = destination == "assistant"
-                        focusAssistantSurface = 0
+                        if (request == 0 || request == handledHomeRequest) return@LaunchedEffect
+                        val destination = DashboardLayouts(home = homeLayout).visibleHomeFocusSurface(haConnection.entities)
                         focusHomeSurface = null
-                        tab = if (assistantTarget) HomeTab.Assistant else HomeTab.Home
-                        val destinationTab = tab
-                        withFrameNanos { }
-                        if (tab != destinationTab) return@LaunchedEffect
-                        val fallback = if (assistantTarget) assistantTabFocus else homeTabFocus
-                        runCatching { fallback.requestFocus() }
-                        if (assistantTarget) focusAssistantSurface = request
-                        else if (destination == "home") focusHomeSurface = request
+                        tab = HomeTab.Home
+                        if (destination == "home") {
+                            // The card owns the entire handoff; never focus the header on the way.
+                            focusHomeSurface = request
+                        } else {
+                            withFrameNanos { }
+                            runCatching { homeNavigationFocus.requestFocus() }
+                            handledHomeRequest = request
+                        }
                     }
                     var lastApp by remember { mutableStateOf<String?>(null) }
                     val watchNextByPackage = remember(watchNext) {
@@ -308,10 +329,9 @@ class MainActivity : ComponentActivity() {
                             if (event.type == KeyEventType.KeyDown) {
                                 tab = pressed
                                 val tabFocus = when (pressed) {
-                                    HomeTab.Home -> homeTabFocus
+                                    HomeTab.Home -> homeNavigationFocus
                                     HomeTab.Cameras -> secondTabFocus
                                     HomeTab.Alerts -> alertsTabFocus
-                                    HomeTab.Assistant -> assistantTabFocus
                                 }
                                 runCatching { tabFocus.requestFocus() }
                             }
@@ -346,8 +366,27 @@ class MainActivity : ComponentActivity() {
                         }
                         return true
                     }
+                    val panelRemoteScope = rememberCoroutineScope()
+                    val launcherWindow = LocalWindowInfo.current
+                    fun onPanelRemoteButton(event: KeyEvent, close: () -> Unit): Boolean {
+                        val handled = isSettingsButton(event) || colorButtonTab(event)?.let { it in availableTabs } == true ||
+                            cameraButtonIndex(event) != null ||
+                            (channelStep(event) != null && tab == HomeTab.Home && camera != null)
+                        if (!handled) return false
+                        if (event.type == KeyEventType.KeyDown) {
+                            val forwarded = KeyEvent(android.view.KeyEvent(event.nativeKeyEvent))
+                            close()
+                            panelRemoteScope.launch {
+                                // Wait for Android to return the input window, rather than racing dismissal.
+                                snapshotFlow { launcherWindow.isWindowFocused }.first { it }
+                                withFrameNanos { }
+                                onRemoteButton(forwarded)
+                            }
+                        }
+                        return true
+                    }
                     var currentArtwork by remember { mutableStateOf<ArtworkLabel?>(null) }
-                    if ((cycleUiColors || appearanceTheme == LauncherTheme.GlassDark) && !artworkSettings.enabled) {
+                    if ((cycleUiColors || appearanceTheme != LauncherTheme.Glass) && !artworkSettings.enabled) {
                         Box(Modifier.fillMaxSize().background(Color.Black))
                     }
                     DashboardArtwork(
@@ -365,7 +404,7 @@ class MainActivity : ComponentActivity() {
                             secondTabFocus = secondTabFocus,
                             homeTabFocus = homeTabFocus,
                             alertsTabFocus = alertsTabFocus,
-                            assistantTabFocus = assistantTabFocus,
+                            homeFocusPending = homeFocusRequest != 0 && homeFocusRequest != handledHomeRequest,
                             onHomeTabSelected = { homeTabSelected = it },
                             showFreeMemory = showFreeMemory,
                             modifier = Modifier
@@ -431,23 +470,6 @@ class MainActivity : ComponentActivity() {
                                 onSetUp = { frigateOpen = true },
                                 modifier = Modifier.weight(1f).fillMaxWidth().cycleUiColors().padding(top = EdgePadding),
                             )
-                        } else if (tab == HomeTab.Assistant) {
-                            HaAssistantTab(
-                                connection = haConnection,
-                                homeAssistantSet = haServer.isSet,
-                                entityIds = haEntities,
-                                dashboard = haDisplay.dashboard.takeIf { dashboardLayouts.assistant == null },
-                                customLayout = dashboardLayouts.assistant,
-                                homeFocusRequest = focusAssistantSurface,
-                                onHomeFocusHandled = { if (focusAssistantSurface == it) focusAssistantSurface = 0 },
-                                onHomeFocusUnavailable = { homeFallback++ },
-                                layout = haDisplay.layout,
-                                tabFocus = assistantTabFocus,
-                                onSetUp = openDashboardSetup,
-                                sectionColumns = haDisplay.sectionColumns,
-                                toScreenEdge = !bottomShown,
-                                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = EdgePadding),
-                            )
                         } else {
                             // The camera, stopped before a clip opens, so the clip can have its decoder
                             @Composable
@@ -487,12 +509,13 @@ class MainActivity : ComponentActivity() {
                                     if (camera != null) CameraBox(cameraWidth)
                                     HaAssistantTab(
                                         connection = haConnection,
+                                        onPanelRemoteKey = ::onPanelRemoteButton,
                                         homeAssistantSet = haServer.isSet,
                                         entityIds = emptyList(),
                                         dashboard = null,
                                         customLayout = homeLayout,
                                         homeFocusRequest = if (waitingForApps) 0 else focusHomeSurface ?: 0,
-                                        onHomeFocusHandled = { if (focusHomeSurface == it) focusHomeSurface = null },
+                                        onHomeFocusHandled = { if (focusHomeSurface == it) focusHomeSurface = null; handledHomeRequest = it },
                                         onHomeFocusUnavailable = { homeFallback++ },
                                         renderApps = { card, target, homeTarget, height, neighbor ->
                                             DashboardAppsCard(
@@ -503,6 +526,7 @@ class MainActivity : ComponentActivity() {
                                                 homeTarget = homeTarget,
                                                 height = height,
                                                 collapse = appsCardCollapse,
+                                                singleRowViewport = appearanceTheme == LauncherTheme.Calm,
                                                 active = resumed,
                                                 onKeyHandlerChanged = { handler ->
                                                     appsCardKeyHandler = handler?.let { keyHandler ->
@@ -515,7 +539,7 @@ class MainActivity : ComponentActivity() {
                                                 onOpenAllApps = { allAppsOpen = true },
                                             )
                                         },
-                                        tabFocus = networkFocus,
+                                        tabFocus = homeNavigationFocus,
                                         onSetUp = openDashboardSetup,
                                         inset = 0.dp,
                                         modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(haSensorsFocus),
@@ -788,9 +812,14 @@ class MainActivity : ComponentActivity() {
         val imported = file.order ?: (file.sensors.map { it.id } + fileActions)
         val entities = (haEntities + imported).distinct()
         saveHaChoice(entities, (haTopBar + (file.topBar ?: fileActions.take(MAX_HA_ACTIONS))).distinct().filter(::isHaAction).take(MAX_HA_ACTIONS))
-        val incoming = file.dashboards
+        val incoming = file.dashboards?.let { layouts ->
+            when {
+                layouts.assistant == null -> layouts
+                layouts.home == null -> DashboardLayouts(home = layouts.assistant.copy(appsConfigured = false))
+                else -> layouts.retireAssistant(layouts.home)
+            }
+        }
         val importedHome = incoming?.home
-        val importedAssistant = incoming?.assistant
         if (incoming != null || file.appTiles.isNotEmpty()) {
             val importedApps = file.appTiles.map { it.id }.distinct()
             val home = when {
@@ -798,11 +827,10 @@ class MainActivity : ComponentActivity() {
                 importedApps.isNotEmpty() -> currentHome.replaceApps(importedApps)
                 else -> dashboardLayouts.home
             }
-            val assistant = importedAssistant ?: dashboardLayouts.assistant
-            saveDashboardLayouts(DashboardLayouts(
-                if (importedHome?.hasHomeFocus == true) assistant?.withoutHomeFocus() else assistant,
-                if (importedAssistant?.hasHomeFocus == true) home?.withoutHomeFocus() else home,
-            ))
+            if (incoming != null) {
+                saveDashboardLayouts(DashboardLayouts(home = home))
+                prefs.assistantDashboardRetired = true
+            } else saveDashboardLayouts(dashboardLayouts.copy(home = home))
         }
         file.frigate?.let(::saveFrigate)
         Toast.makeText(this, "Settings imported", Toast.LENGTH_SHORT).show()

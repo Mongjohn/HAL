@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -279,6 +280,7 @@ fun HaAssistantTab(
     onHomeFocusHandled: (Int) -> Unit = {},
     onHomeFocusUnavailable: () -> Unit = {},
     renderApps: (@Composable (DashboardCard, FocusRequester, FocusRequester, Dp, (FocusDirection) -> FocusRequester) -> Unit)? = null,
+    onPanelRemoteKey: (KeyEvent, () -> Unit) -> Boolean = { _, _ -> false },
 ) {
     val board = connection.dashboard(dashboard)
     val missing = connection.dashboardMissing(dashboard)
@@ -312,12 +314,17 @@ fun HaAssistantTab(
         return
     }
     val entities = connection.entities
+    val calm = LocalLauncherTheme.current == LauncherTheme.Calm
+    var calmOpen by remember(customLayout, board) { mutableStateOf<String?>(null) }
+    var entered by remember { mutableStateOf<String?>(null) }
     var viewIndex by remember(board, customLayout) { mutableIntStateOf(0) }
-    val targets = remember(customLayout, board) {
+    val selectionAreas = if (customLayout == null && board == null) entityIds.map { entities[it]?.area } else emptyList()
+    val targets = remember(customLayout, board, entityIds, layout, selectionAreas) {
         val keys = customLayout?.pages?.flatMap { page -> page.cards.map { it.card.key } }
             ?: board?.views.orEmpty().flatMap { view -> view.cards.map { it.key } }
-        keys.associateWith { FocusRequester() }
+        (keys + layout.selectionCards(entityIds, entities).map { it.key }).distinct().associateWith { FocusRequester() }
     }
+    val calmRailTargets = remember(targets) { targets.keys.associateWith { FocusRequester() } }
     val homeAppsTarget = remember { FocusRequester() }
     val homeAppsFocus = remember { object { var requested = false } }
     LaunchedEffect(homeFocusRequest, customLayout) {
@@ -326,6 +333,10 @@ fun HaAssistantTab(
         val target = customLayout?.pages?.getOrNull(index)?.cards?.firstOrNull { it.focusOnHome }
         val focused = if (target != null) {
             viewIndex = index
+            if (calm) {
+                entered = null
+                calmOpen = target.card.key.takeIf { target.apps == null && !target.card.isMediaOnly }
+            }
             withFrameNanos { }
             withFrameNanos { }
             if (target.card.visibility.isVisible(connection.entities)) {
@@ -382,7 +393,6 @@ fun HaAssistantTab(
         sideways.scrollTo(0)
     }
     // The card whose buttons the remote moves between, after OK on it; Back leaves it
-    var entered by remember { mutableStateOf<String?>(null) }
     var focusedCard by remember(customLayout, board, viewIndex) { mutableStateOf<String?>(null) }
     val latestVisibleKeys by rememberUpdatedState(visibleKeys)
     fun cardFocusChanged(key: String, hasFocus: Boolean) {
@@ -391,6 +401,7 @@ fun HaAssistantTab(
     }
     LaunchedEffect(visibleKeys) {
         if (entered !in visibleKeys) entered = null
+        if (calmOpen !in visibleKeys) calmOpen = null
         val lost = focusedCard?.takeUnless { it in visibleKeys } ?: return@LaunchedEffect
         focusedCard = null
         val oldItem = cardOptions[lost]
@@ -398,7 +409,8 @@ fun HaAssistantTab(
             visibleItems.minByOrNull { kotlin.math.abs(it.x - oldItem.x) + kotlin.math.abs(it.y - oldItem.y) }?.card?.key
         } else cards.firstOrNull()?.key
         withFrameNanos { }
-        if (focusedCard == null && runCatching { targets[nearest]?.requestFocus() }.getOrNull() != true) {
+        val recovery = if (calm && cardOptions[nearest]?.apps == null && cards.firstOrNull { it.key == nearest }?.isMediaOnly != true) calmRailTargets else targets
+        if (focusedCard == null && runCatching { recovery[nearest]?.requestFocus() }.getOrNull() != true) {
             runCatching { cardsUp.requestFocus() }
         }
     }
@@ -413,6 +425,11 @@ fun HaAssistantTab(
                 onEnter = {
                     if (views.size > 1 && requestedFocusDirection == FocusDirection.Down) {
                         viewTabs.getOrNull(viewIndex)?.requestFocus()
+                    } else if (calm && requestedFocusDirection == FocusDirection.Down) {
+                        val player = calmPlayerSlots(cards, cardOptions, entities).firstOrNull { !it.hidden }
+                        val first = cards.firstOrNull { it.key == player?.cardKey }
+                            ?: cards.firstOrNull { !it.isMediaOnly && cardOptions[it.key]?.apps == null }
+                        first?.let { (if (it.isMediaOnly) targets else calmRailTargets)[it.key]?.requestFocus() }
                     }
                 }
             }
@@ -513,6 +530,32 @@ fun HaAssistantTab(
                             cardFocused = cardFocused)
                     }
                 }
+            }
+            if (calm) {
+                CalmDashboard(
+                    connection = connection,
+                    cards = cards,
+                    options = cardOptions,
+                    entities = entities,
+                    names = names,
+                    up = cardsUp,
+                    targets = targets,
+                    railTargets = calmRailTargets,
+                    homeAppsTarget = homeAppsTarget,
+                    openCard = calmOpen,
+                    onOpen = { calmOpen = it; entered = it },
+                    onFocused = ::cardFocusChanged,
+                    onPanelRemoteKey = onPanelRemoteKey,
+                    renderApps = renderApps,
+                    renderCard = { card, height ->
+                        LaunchedEffect(card.key) {
+                            withFrameNanos { }
+                            if (entered != card.key) targets[card.key]?.requestFocus()
+                        }
+                        Card(card, null, null, minHeight = minOf(160.dp, height), maxHeight = height)
+                    },
+                )
+                return@BoxWithConstraints
             }
             if (page != null) {
                 val gap = minOf(PanelItemSpacing, width.coerceAtLeast(0.dp) / (page.visibleColumns * 2))
@@ -901,7 +944,7 @@ private fun AssistantCard(
     var size by remember { mutableStateOf(IntSize.Zero) }
     val scale by animateFloatAsState(if (entered) EnteredCardScale else 1f, label = "card scale")
     // Once the buttons can take the selection, or the card again
-    var moveFocus by remember { mutableStateOf(false) }
+    var moveFocus by remember { mutableStateOf(entered) }
     LaunchedEffect(entered, moveFocus, buttonRows.keys) {
         val lostButton = entered && focusedButton >= 0 && focusedButton !in buttonRows
         if (!moveFocus && !lostButton) return@LaunchedEffect
@@ -915,7 +958,7 @@ private fun AssistantCard(
         moveFocus = false
     }
     val colors = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(if (LocalLauncherTheme.current == LauncherTheme.Calm) 18.dp else 12.dp)
     val inner = rememberScrollState()
     Column(
         modifier = Modifier
@@ -1281,7 +1324,7 @@ private fun StatefulControlRow(
         ),
     ) {
         Box(
-            Modifier.padding(horizontal = ControlRowInset, vertical = 4.dp),
+            Modifier.padding(horizontal = ControlRowInset, vertical = MediaPanelVerticalPadding),
             contentAlignment = Alignment.CenterStart,
         ) {
             val entity = connection.entities[id]

@@ -143,7 +143,7 @@ private fun <T> JSONArray.items(max: Int, read: JSONArray.(Int) -> T): List<T> {
 }
 
 internal fun dashboardLayoutFromJson(json: JSONObject): DashboardLayout {
-    val pages = json.getJSONArray("pages").items(32) { index ->
+    val pages = json.getJSONArray("pages").items(64) { index ->
         val page = getJSONObject(index)
         val columns = page.number("columns", 1..DashboardMaxColumns)
         val columnsPerScreen = if (page.isNull("columnsPerScreen")) null else
@@ -213,7 +213,7 @@ internal fun dashboardLayoutFromJson(json: JSONObject): DashboardLayout {
     require(pages.flatMap { it.cards }.let { cards -> cards.map { it.card.key }.distinct().size == cards.size })
     fun readNames(key: String): Map<String, String> {
         val names = json.optJSONObject(key) ?: return emptyMap()
-        require(names.length() <= 5000)
+        require(names.length() <= 10000)
         return names.entries().associateWith { names.text(it, 255) }
     }
     return DashboardLayout(pages, readNames("names"), json.optBoolean("bottomRow"), readNames("aliases"), json.optBoolean("appsConfigured"))
@@ -256,6 +256,28 @@ internal fun DashboardLayout.withoutHomeFocus() = copy(pages = pages.map { page 
     page.copy(cards = page.cards.map { if (it.focusOnHome) it.copy(focusOnHome = false) else it })
 })
 
+/** Fold a retired Assistant surface into Home without moving existing Home cards. */
+internal fun DashboardLayouts.retireAssistant(baseHome: DashboardLayout): DashboardLayouts {
+    val old = assistant ?: return copy(home = baseHome)
+    require(baseHome.pages.size + old.pages.size <= 64) { "Combined dashboard layouts can have at most 64 Home views." }
+    val names = old.names + baseHome.names
+    val aliases = old.aliases + baseHome.aliases
+    require(names.size <= 10000 && aliases.size <= 10000) { "Combined dashboard names exceed the supported limit." }
+    val keys = baseHome.pages.flatMap { it.cards }.map { it.card.key }.toMutableSet()
+    val pages = old.pages.map { page ->
+        page.copy(title = "Imported · ${page.title}".take(160), cards = page.cards.map { item ->
+            val card = item.card
+            var key = card.key
+            var suffix = 0
+            while (!keys.add(key)) key = "assistant-${suffix++}-${card.key.take(230)}"
+            item.copy(card = if (key == card.key) card else SensorCard(key, card.title, card.ids, card.subtitles,
+                card.gauges, card.graphs, card.visibility), focusOnHome = item.focusOnHome && !baseHome.hasHomeFocus)
+        })
+    }
+    return DashboardLayouts(home = baseHome.copy(pages = baseHome.pages + pages,
+        names = names, aliases = aliases))
+}
+
 internal fun DashboardLayout.migrateAppsCard(appKeys: List<String>): DashboardLayout =
     if (appsConfigured) this else withAppsCard(appKeys)
 
@@ -287,7 +309,7 @@ private fun DashboardLayout.withAppsCard(appKeys: List<String>): DashboardLayout
                     width = page.visibleColumns, y = page.cards.maxOfOrNull { it.y + it.height } ?: 0,
                 ))
             }
-            pages.size < 32 -> listOf(first.copy(title = "Apps", cards = listOf(card))) + pages
+            pages.size < 64 -> listOf(first.copy(title = "Apps", cards = listOf(card))) + pages
             else -> pages
         }
     })

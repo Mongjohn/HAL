@@ -234,14 +234,14 @@ internal fun DashboardEditor(
     }
 
     fun effectiveLayouts() = readLayouts().let {
-        it.copy(assistant = it.assistant ?: initial(false), home = it.home ?: initial(true))
+        it.copy(assistant = null, home = it.home ?: initial(true))
     }
     fun restoreState() = JSONObject().put("home", readPrevious("home") != null)
-        .put("assistant", readPrevious("assistant") != null)
+        .put("assistant", false)
     fun state() = JSONObject().put("revision", revision).put("canRestore", restoreState())
         .put("camera", currentCameraVisible)
         .put("apps", JSONArray(apps.map { JSONObject().put("id", it.key).put("name", it.label) }))
-        .put("assistant", (readLayouts().assistant ?: initial(false)).toJson())
+        .put("assistant", seedDashboardLayout(null, emptyList(), 1, false).toJson())
         .put("home", (readLayouts().home ?: initial(true)).toJson())
 
     DisposableEffect(Unit) {
@@ -286,6 +286,7 @@ internal fun DashboardEditor(
                                 else -> {
                                     check(!loading)
                                     val surface = body.getString("surface")
+                                    require(surface == "home") { "Assistant has been retired. Reload the Home editor." }
                                     val previous = effectiveLayouts()
                                     val restoring = path == "/api/restore"
                                     val layout = if (restoring) requireNotNull(readPrevious(surface))

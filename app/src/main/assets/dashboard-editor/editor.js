@@ -813,7 +813,7 @@ function render() {
     ...Array.from({ length: available }, (_, index) => [String(index + 1), String(index + 1)])],
   String(page().columnsPerScreen ?? ""));
   $("remove-page").disabled = layout().pages.length === 1;
-  $("add-page").disabled = layout().pages.length >= 32;
+  $("add-page").disabled = layout().pages.length >= 64;
   $("dock-label").hidden = surface !== "assistant";
   $("add-apps").hidden = surface !== "home" || layout().pages.some(view => view.cards.some(card => card.apps));
   $("dock").checked = layout().bottomRow;

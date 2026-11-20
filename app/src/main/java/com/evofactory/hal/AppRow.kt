@@ -97,6 +97,7 @@ internal fun LazyListState.slotOnScreen(key: Any): Int {
 
 @Composable
 internal fun DockShortcutTile(title: String, icon: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val calm = LocalLauncherTheme.current == LauncherTheme.Calm
     Card(
         onClick = onClick,
         border = CardDefaults.border(focusedBorder = DashboardFocusBorder),
@@ -108,8 +109,9 @@ internal fun DockShortcutTile(title: String, icon: String, onClick: () -> Unit, 
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            MdiIcon(icon, size = 40.dp)
-            Text(title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
+            MdiIcon(icon, size = if (calm) 32.dp else 40.dp)
+            Text(title, style = if (calm) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodyMedium,
+                maxLines = 1, modifier = Modifier.padding(top = if (calm) 2.dp else 8.dp))
         }
     }
 }
@@ -127,6 +129,7 @@ internal fun AppTile(
         if (value == null) value = withContext(Dispatchers.IO) { loadTileImage(context, app) }
     }
     val backing = cycleUiColor(darkenCycleSurface(MaterialTheme.colorScheme.surfaceVariant))
+    val calm = LocalLauncherTheme.current == LauncherTheme.Calm
 
     Box(modifier = if (fitCard) modifier else modifier.aspectRatio(16f / 9f)) {
         Card(
@@ -148,7 +151,7 @@ internal fun AppTile(
                 )
                 // Phone apps have no banner: show their icon on a neutral tile
                 else -> Box(modifier = content.background(backing), contentAlignment = Alignment.Center) {
-                    Image(bitmap = tile.bitmap, contentDescription = app.label, modifier = Modifier.size(56.dp))
+                    Image(bitmap = tile.bitmap, contentDescription = app.label, modifier = Modifier.size(if (calm) 48.dp else 56.dp))
                 }
             }
         }
