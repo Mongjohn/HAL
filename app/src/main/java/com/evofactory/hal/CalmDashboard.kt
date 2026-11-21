@@ -105,7 +105,7 @@ internal fun CalmDashboard(
                         reading?.let { it.currentTemperature ?: it.temperature?.let { t -> "${t.toInt()}°" } ?: it.reading }
                             ?: calmSummary(visible),
                         reading?.let { if (it.domain == "weather") weatherLabel(it.state) ?: it.reading else names[it.id] ?: it.name },
-                        Modifier.fillMaxSize())
+                        Modifier.fillMaxSize(), weatherIcon = reading?.takeIf { it.domain == "weather" }?.let { weatherIcon(it.state) })
                 } else {
                     CalmOverview("", "HAL", "Make yourself at home", Modifier.fillMaxSize())
                 }

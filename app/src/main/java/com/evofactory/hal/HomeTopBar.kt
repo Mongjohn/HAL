@@ -82,7 +82,6 @@ fun HomeTopBar(
     ) {
         availableTabs.forEach { entry ->
             if (entry == HomeTab.Home && availableTabs.size == 1) {
-                Text(entry.label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp))
                 return@forEach
             }
             TabButton(

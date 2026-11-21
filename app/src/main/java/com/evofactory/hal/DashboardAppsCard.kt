@@ -170,13 +170,14 @@ internal fun DashboardAppsCard(
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     val tileRowHeight = maxHeight
                     val step = with(density) { (tileRowHeight + gap).roundToPx() }
-                    val focusedRow = rows.indexOfFirst { (focusedApp ?: lastApp ?: first) in it }
+                    val focusedRow = rows.indexOfFirst { (focusedApp ?: entry) in it }
                     LaunchedEffect(singleRowViewport, focusedRow, step) {
                         if (singleRowViewport && focusedRow >= 0) rowScroll.animateScrollTo(focusedRow * step)
                     }
                     CompositionLocalProvider(LocalBringIntoViewSpec provides
                         if (singleRowViewport) AppsRowOwnsScroll else LocalBringIntoViewSpec.current) {
-                        Column(Modifier.fillMaxSize().then(if (singleRowViewport) Modifier.verticalScroll(rowScroll) else Modifier),
+                        Column(Modifier.fillMaxSize().padding(end = if (singleRowViewport && rows.size > 1) 14.dp else 0.dp)
+                            .then(if (singleRowViewport) Modifier.verticalScroll(rowScroll) else Modifier),
                             verticalArrangement = Arrangement.spacedBy(gap)) {
                             rows.forEachIndexed { rowIndex, row ->
                                 Row((if (singleRowViewport) Modifier.height(tileRowHeight) else Modifier.weight(1f)).fillMaxWidth(),
@@ -229,6 +230,13 @@ internal fun DashboardAppsCard(
                             }
                         }
                     }
+                    if (singleRowViewport && focusedRow >= 0) {
+                        val indicators = appsRowIndicators(rows, hidden, focusedRow)
+                        if (indicators.first) MdiIcon("chevron-up", Modifier.align(Alignment.TopEnd).cycleUiColors()
+                            .semantics { hideFromAccessibility() }, size = 14.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (indicators.second) MdiIcon("chevron-down", Modifier.align(Alignment.BottomEnd).cycleUiColors()
+                            .semantics { hideFromAccessibility() }, size = 14.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
@@ -252,6 +260,11 @@ internal fun DashboardAppsCard(
         }
     }
 }
+
+/** Indicate only rows the remote can reach, rather than reserved hidden slots. */
+internal fun appsRowIndicators(rows: List<List<String>>, hidden: Set<String>, selected: Int): Pair<Boolean, Boolean> =
+    rows.take(selected.coerceAtLeast(0)).any { row -> row.any { it !in hidden } } to
+        rows.drop((selected + 1).coerceAtLeast(0)).any { row -> row.any { it !in hidden } }
 
 internal fun neighboringCard(card: DashboardCard, cards: List<DashboardCard>, direction: FocusDirection): DashboardCard? {
     fun distance(other: DashboardCard) = when (direction) {

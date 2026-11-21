@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
@@ -255,7 +256,7 @@ fun NetworkButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val broken = status.problem != null
     val name = if (broken) "${status.kind.label}: no connection" else status.kind.label
     val colors = MaterialTheme.colorScheme
-    Box(modifier.size(SettingsButtonSize)) {
+    Box(modifier.offset(y = TopBarUtilityButtonOffset).size(TopBarUtilityButtonSize)) {
         Surface(
             onClick = onClick,
             modifier = Modifier
@@ -271,10 +272,10 @@ fun NetworkButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
             ),
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                MdiIcon(if (broken) status.kind.brokenIcon else status.kind.icon, color = LocalContentColor.current)
+                MdiIcon(if (broken) status.kind.brokenIcon else status.kind.icon, size = 18.dp, color = LocalContentColor.current)
             }
         }
-        if (focused) TopBarButtonLabel(name)
+        if (focused) TopBarButtonLabel(name, TopBarUtilityButtonSize)
     }
 }
 
