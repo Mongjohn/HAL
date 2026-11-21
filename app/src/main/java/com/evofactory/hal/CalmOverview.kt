@@ -28,13 +28,13 @@ internal fun calmOverviewMode(available: Int, stacked: Int, horizontal: Int): Ca
 
 /** Measure the real labels before rearranging them; shrinking is the last resort. */
 @Composable
-internal fun CalmOverview(title: String, value: String, detail: String?, modifier: Modifier = Modifier) {
+internal fun CalmOverview(title: String, value: String, detail: String?, modifier: Modifier = Modifier, weatherIcon: String? = null) {
     SubcomposeLayout(modifier.cycleUiColors()) { constraints ->
         val natural = constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity)
-        val stacked = subcompose(CalmOverviewMode.Stacked) { CalmOverviewText(title, value, detail, false) }
+        val stacked = subcompose(CalmOverviewMode.Stacked) { CalmOverviewText(title, value, detail, false, weatherIcon) }
             .single().measure(natural)
         val inline = if (stacked.height > constraints.maxHeight) {
-            subcompose(CalmOverviewMode.Horizontal) { CalmOverviewText(title, value, detail, true) }.single().measure(natural)
+            subcompose(CalmOverviewMode.Horizontal) { CalmOverviewText(title, value, detail, true, weatherIcon) }.single().measure(natural)
         } else null
         val mode = calmOverviewMode(constraints.maxHeight, stacked.height, inline?.height ?: stacked.height)
         val chosen = when (mode) {
@@ -56,7 +56,7 @@ internal fun CalmOverview(title: String, value: String, detail: String?, modifie
 }
 
 @Composable
-private fun CalmOverviewText(title: String, value: String, detail: String?, horizontal: Boolean) {
+private fun CalmOverviewText(title: String, value: String, detail: String?, horizontal: Boolean, weatherIcon: String?) {
     val colors = MaterialTheme.colorScheme
     @Composable fun TitleAndDetail() {
         if (title.isNotBlank()) Text(title, fontSize = 22.sp, fontWeight = FontWeight.Light,
@@ -65,8 +65,11 @@ private fun CalmOverviewText(title: String, value: String, detail: String?, hori
             overflow = TextOverflow.Clip)
     }
     @Composable fun Value() {
-        Text(value, fontSize = 52.sp, lineHeight = 58.sp, fontWeight = FontWeight.Light,
-            overflow = TextOverflow.Clip)
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (weatherIcon != null) MdiIcon(weatherIcon, size = 48.dp, color = colors.onSurfaceVariant)
+            Text(value, fontSize = 52.sp, lineHeight = 58.sp, fontWeight = FontWeight.Light,
+                overflow = TextOverflow.Clip)
+        }
     }
     if (horizontal) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),

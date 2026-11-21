@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.IconButton
@@ -26,8 +28,11 @@ import androidx.tv.material3.IconButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 
-/** The cog's size: the top row leaves room for it */
+/** Original top-bar height and HA action size; independent of the smaller utility buttons. */
 val SettingsButtonSize = 40.dp
+internal val TopBarUtilityButtonSize = 32.dp
+// Align to the time line, rather than the center of the time-and-date stack.
+internal val TopBarUtilityButtonOffset = (-7).dp
 
 /** Cog at the right of the top bar; opens the launcher's settings menu */
 @Composable
@@ -44,15 +49,15 @@ fun SettingsButton(
     var menuOpen by remember { mutableStateOf(false) }
     var focused by remember { mutableStateOf(false) }
 
-    Box(modifier = modifier) {
+    Box(modifier = modifier.offset(y = TopBarUtilityButtonOffset)) {
         IconButton(
             onClick = { menuOpen = true },
-            modifier = Modifier.size(SettingsButtonSize).onFocusChanged { focused = it.isFocused },
+            modifier = Modifier.size(TopBarUtilityButtonSize).onFocusChanged { focused = it.isFocused },
             colors = IconButtonDefaults.colors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
         ) {
-            Icon(painter = painterResource(R.drawable.ic_settings), contentDescription = "Settings")
+            Icon(painter = painterResource(R.drawable.ic_settings), contentDescription = "Settings", modifier = Modifier.size(18.dp))
         }
-        if (focused) TopBarButtonLabel("Settings")
+        if (focused) TopBarButtonLabel("Settings", TopBarUtilityButtonSize)
         if (menuOpen) {
             ContextMenu(
                 // The cog says what it is
@@ -77,7 +82,7 @@ fun SettingsButton(
  * it. Takes no room in the bar: centred under the button, in the margin, however long the name.
  */
 @Composable
-fun TopBarButtonLabel(text: String) {
+fun TopBarButtonLabel(text: String, buttonSize: Dp = SettingsButtonSize) {
     Text(
         text,
         style = MaterialTheme.typography.labelMedium,
@@ -86,7 +91,7 @@ fun TopBarButtonLabel(text: String) {
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.layout { measurable, _ ->
             val label = measurable.measure(Constraints(maxWidth = TopBarLabelMaxWidth.roundToPx()))
-            val button = SettingsButtonSize.roundToPx()
+            val button = buttonSize.roundToPx()
             layout(0, 0) {
                 label.place((button - label.width) / 2, button + TopBarLabelGap.roundToPx())
             }
