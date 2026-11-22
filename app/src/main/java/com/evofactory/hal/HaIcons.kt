@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -19,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.math.roundToInt
 
 // Material Design Icons (pictogrammers.com, Apache 2.0), the icons of Home Assistant: the font
@@ -27,12 +30,15 @@ private val MdiFont = FontFamily(Font(R.font.mdi))
 
 @Volatile
 private var mdiCharacters: Map<String, Int>? = null
+private val mdiLoadLock = Mutex()
 
-private suspend fun loadMdiCharacters(context: Context): Map<String, Int> = mdiCharacters ?: withContext(Dispatchers.IO) {
-    context.assets.open("mdi_icons.txt").bufferedReader().useLines { lines ->
-        lines.associate { line -> line.substringBefore(' ') to line.substringAfter(' ').toInt(16) }
-    }
-}.also { mdiCharacters = it }
+private suspend fun loadMdiCharacters(context: Context): Map<String, Int> = mdiCharacters ?: mdiLoadLock.withLock {
+    mdiCharacters ?: withContext(Dispatchers.IO) {
+        context.assets.open("mdi_icons.txt").bufferedReader().useLines { lines ->
+            lines.associate { line -> line.substringBefore(' ') to line.substringAfter(' ').toInt(16) }
+        }
+    }.also { mdiCharacters = it }
+}
 
 /**
  * A Material Design Icons icon by its Home Assistant name, e.g. "mdi:thermometer". Takes its
@@ -43,13 +49,16 @@ private suspend fun loadMdiCharacters(context: Context): Map<String, Int> = mdiC
 fun MdiIcon(name: String, modifier: Modifier = Modifier, size: Dp = 20.dp, color: Color = Color.Unspecified, fallback: String? = null) {
     val context = LocalContext.current
     val characters by produceState(mdiCharacters, context) { value = loadMdiCharacters(context) }
-    val character = (listOf(name) + listOfNotNull(fallback))
-        .firstNotNullOfOrNull { characters?.get(it.removePrefix("mdi:").removePrefix("hass:")) }
+    val character = remember(characters, name, fallback) {
+        characters?.get(name.removePrefix("mdi:").removePrefix("hass:"))
+            ?: fallback?.let { characters?.get(it.removePrefix("mdi:").removePrefix("hass:")) }
+    }
+    val glyph = remember(character) { character?.let { String(Character.toChars(it)) } }
     Box(modifier = modifier.size(size), contentAlignment = Alignment.Center) {
-        if (character != null) {
+        if (glyph != null) {
             val fontSize = with(LocalDensity.current) { size.toSp() }
             Text(
-                String(Character.toChars(character)),
+                glyph,
                 style = TextStyle(fontFamily = MdiFont, fontSize = fontSize, lineHeight = fontSize),
                 color = color,
             )

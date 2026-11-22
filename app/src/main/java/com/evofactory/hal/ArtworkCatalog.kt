@@ -175,7 +175,7 @@ internal class ArtworkCatalog(private val context: Context, private val client: 
     private suspend fun get(url: HttpUrl): String {
         coroutineContext.ensureActive()
         val request = Request.Builder().url(url).build()
-        return client.newCall(request).execute().use { response ->
+        return client.newCall(request).readCancellable { response ->
             if (!response.isSuccessful) throw IOException("JustWatch returned ${response.code}")
             response.body.byteStream().use { readLimited(it, MAX_PAGE_BYTES) }?.decodeToString()
                 ?: throw IOException("JustWatch page exceeded the size limit")

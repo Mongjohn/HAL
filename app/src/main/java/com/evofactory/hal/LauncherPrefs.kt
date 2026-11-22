@@ -27,6 +27,12 @@ internal fun dockTileKeys(appKeys: List<String>, order: List<String>, showAllApp
 class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
     constructor(context: Context) : this(context.getSharedPreferences("launcher", Context.MODE_PRIVATE))
 
+    internal var videoBackgrounds: VideoBackgroundSettings
+        get() = runCatching {
+            prefs.getString("video_backgrounds", null)?.let { videoBackgroundSettingsFromJson(org.json.JSONObject(it)) }
+        }.getOrNull() ?: VideoBackgroundSettings()
+        set(value) = prefs.edit { putString("video_backgrounds", value.toJson().toString()) }
+
     internal var lastDashboardArtwork: String?
         get() = prefs.getString("last_dashboard_artwork", null)
         set(value) = prefs.edit { putString("last_dashboard_artwork", value) }

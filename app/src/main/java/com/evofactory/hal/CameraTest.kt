@@ -98,8 +98,10 @@ fun CameraTestDialog(name: String, url: String, substreamUrl: String, useAudio: 
         listOfNotNull(StreamTestReport("Main Stream"), StreamTestReport("Sub Stream").takeIf { substreamUrl.isNotBlank() })
     }
     var run by remember { mutableIntStateOf(0) }
+    var completed by remember(run) { mutableStateOf(false) }
     val running = reports.any { it.running }
-    LaunchedEffect(run) {
+    VisibleEffect(run) {
+        if (completed) return@VisibleEffect
         reports.forEach { it.lines.clear() }
         reports.forEachIndexed { index, report ->
             report.running = true
@@ -116,6 +118,7 @@ fun CameraTestDialog(name: String, url: String, substreamUrl: String, useAudio: 
                 },
             )
         }
+        completed = true
     }
     val reportFocus = remember { FocusRequester() }
     TopDialog(

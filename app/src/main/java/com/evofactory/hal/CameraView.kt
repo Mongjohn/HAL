@@ -33,7 +33,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -327,7 +326,7 @@ fun CameraView(
             current.value?.stretch = stretch
         }
     } else {
-        LaunchedEffect(url) {
+        VisibleEffect(url) {
             val label = "Player ${Integer.toHexString(url.hashCode()).takeLast(4)}"
             awaitPlayersGone(label, releasedOnly = !waitForOtherPlayers) { status.waitingForDecoders = true }
             status.waitingForDecoders = false
@@ -404,6 +403,7 @@ fun CameraView(
 private fun FullScreenWindow(onClose: () -> Unit, onCameraButton: (Int) -> Unit, onChannel: (Int) -> Unit, content: @Composable () -> Unit) {
     val focus = remember { FocusRequester() }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        TrackHalDialogInput()
         LaunchedEffect(Unit) { focus.requestFocus() }
         Box(
             modifier = Modifier
@@ -1117,7 +1117,7 @@ private fun CompactCameraStatus(status: ConnectionStatus) {
 @Composable
 private fun CameraStatus(status: ConnectionStatus, snapshotTakenAt: Long?) {
     // Ticks for the countdown to the next retry
-    val now by produceState(SystemClock.elapsedRealtime()) {
+    val now by produceVisibleState(SystemClock.elapsedRealtime()) {
         while (true) {
             value = SystemClock.elapsedRealtime()
             delay(250)

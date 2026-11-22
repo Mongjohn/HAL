@@ -17,7 +17,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -137,10 +136,10 @@ private fun MediaArtwork(session: HaSession?, artwork: String?, fallbackIcon: St
     val backing = remember(accent, surface) { Brush.linearGradient(listOf(accent.copy(alpha = 0.32f), surface)) }
     var decodeSize by remember { mutableIntStateOf(0) }
     val target = decodeSize
-    val image = key(session, artwork) {
-        val loaded by produceState<ImageBitmap?>(null, target) {
-            if (session == null || artwork == null || target == 0) return@produceState
-            val bytes = session.mediaArtwork(artwork) ?: return@produceState
+    val image = key(artwork) {
+        val loaded by produceVisibleState<ImageBitmap?>(null, target, session, once = true) {
+            if (session == null || artwork == null || target == 0) return@produceVisibleState
+            val bytes = session.mediaArtwork(artwork) ?: return@produceVisibleState
             value = withContext(Dispatchers.Default) { decodeMediaArtwork(bytes, target) }
         }
         loaded
@@ -181,7 +180,7 @@ internal fun mediaArtworkDecodeSize(width: Int): Int {
 private fun MediaProgress(playback: MediaPlayback) {
     val duration = playback.sample.duration
     val position = key(playback) {
-        produceState(playback.positionAt(mediaClockMillis())) {
+        produceVisibleState(playback.positionAt(mediaClockMillis())) {
             while (playback.playing && value < duration) {
                 delay(250)
                 value = playback.positionAt(mediaClockMillis())

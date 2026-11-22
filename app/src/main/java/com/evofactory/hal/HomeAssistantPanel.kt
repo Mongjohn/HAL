@@ -182,13 +182,13 @@ class HaConnection {
  * Home Assistant, to show the new one.
  */
 @Composable
-fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboards: List<String>): HaConnection {
+fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboards: List<String>, includeScreensaverWeather: Boolean = false): HaConnection {
     val connection = remember(server) { HaConnection() }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
 
-    LaunchedEffect(server, entityIds, dashboards) {
+    LaunchedEffect(server, entityIds, dashboards, includeScreensaverWeather) {
         connection.keepDashboards(dashboards)
-        if (!server.isSet || (entityIds.isEmpty() && dashboards.isEmpty())) return@LaunchedEffect
+        if (!server.isSet || (entityIds.isEmpty() && dashboards.isEmpty() && !includeScreensaverWeather)) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             if (connection.status == HaStatus.TokenRejected) return@repeatOnLifecycle
             while (true) {
@@ -201,9 +201,11 @@ fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboards: 
                         if (dashboards.isNotEmpty()) followDashboardEdits(dashboards.map(::dashboardUrlPath).toSet()) { saved.complete(Unit) }
                         val boards = dashboards.map { key -> parseDashboard(dashboardConfig(dashboardUrlPath(key))) }
                         dashboards.forEachIndexed { index, key -> connection.setDashboard(key, boards[index]) }
-                        val followed = (entityIds + boards.flatMap { it?.entityIds.orEmpty() }).distinct()
+                        val configured = (entityIds + boards.flatMap { it?.entityIds.orEmpty() }).distinct()
+                        val weather = if (includeScreensaverWeather) weatherEntityIds() else emptyList()
+                        val followed = (configured + weather).distinct()
                         followEntities(followed, connection.entities)
-                        for (id in followed.filter(::isHaWeather)) {
+                        for (id in configured.filter(::isHaWeather)) {
                             followForecast(id, "hourly") { connection.hourly[id] = it }
                             followForecast(id, "daily") { connection.daily[id] = it }
                         }

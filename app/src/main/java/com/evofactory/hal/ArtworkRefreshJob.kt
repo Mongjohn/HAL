@@ -23,9 +23,15 @@ private val refreshLock = Mutex()
 private val catalogChanges = MutableStateFlow(0L)
 internal val artworkCatalogChanges = catalogChanges.asStateFlow()
 
+internal fun stopArtworkJobs(context: Context) {
+    val scheduler = context.getSystemService(JobScheduler::class.java)
+    scheduler.cancel(DAILY_ARTWORK_JOB)
+    scheduler.cancel(IMMEDIATE_ARTWORK_JOB)
+}
+
 internal fun scheduleArtwork(context: Context, settings: ArtworkSettings, settingsChanged: Boolean = false) {
     val scheduler = context.getSystemService(JobScheduler::class.java)
-    if (!settings.enabled || settings.useLocal || settings.region.isEmpty() || settings.services.isEmpty()) {
+    if (!HalForegroundWork.visible || !settings.enabled || settings.useLocal || settings.region.isEmpty() || settings.services.isEmpty()) {
         scheduler.cancel(DAILY_ARTWORK_JOB)
         scheduler.cancel(IMMEDIATE_ARTWORK_JOB)
         return
@@ -34,7 +40,7 @@ internal fun scheduleArtwork(context: Context, settings: ArtworkSettings, settin
     fun job(id: Int) = JobInfo.Builder(id, component).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
 
     if (scheduler.getPendingJob(DAILY_ARTWORK_JOB) == null) {
-        scheduler.schedule(job(DAILY_ARTWORK_JOB).setPeriodic(CATALOG_INTERVAL).setPersisted(true).build())
+        scheduler.schedule(job(DAILY_ARTWORK_JOB).setPeriodic(CATALOG_INTERVAL).build())
     }
     if (settingsChanged || scheduler.getPendingJob(IMMEDIATE_ARTWORK_JOB) == null) {
         scheduler.schedule(
@@ -47,6 +53,7 @@ class ArtworkRefreshJob : JobService() {
     private val running = mutableMapOf<Int, Job>()
 
     override fun onStartJob(params: JobParameters): Boolean {
+        if (!HalForegroundWork.visible) return false
         val network = params.network ?: return false
         val client = catalogHttpClient.newBuilder()
             .socketFactory(network.socketFactory)
@@ -55,7 +62,7 @@ class ArtworkRefreshJob : JobService() {
         running[params.jobId] = CoroutineScope(Dispatchers.Main).launch {
             val success = refreshLock.withLock {
                 val settings = LauncherPrefs(this@ArtworkRefreshJob).artworkSettings
-                if (!settings.enabled || settings.useLocal || settings.region.isEmpty() || settings.services.isEmpty()) {
+                if (!HalForegroundWork.visible || !settings.enabled || settings.useLocal || settings.region.isEmpty() || settings.services.isEmpty()) {
                     return@withLock true
                 }
                 val catalog = ArtworkCatalog(this@ArtworkRefreshJob, client)

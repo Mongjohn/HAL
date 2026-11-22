@@ -208,7 +208,7 @@ class FrigateClient(private val server: FrigateServer) {
 
     private suspend fun <T> get(path: String, read: (ResponseBody) -> T): T = withContext(Dispatchers.IO) {
         try {
-            http.newCall(Request.Builder().url(server.url + path).build()).execute().use { response ->
+            http.newCall(Request.Builder().url(server.url + path).build()).readCancellable { response ->
                 when {
                     response.code == 401 -> throw FrigateException("Frigate refused the login: check the username and password", stopRetrying = true)
                     !response.isSuccessful -> throw FrigateException("Frigate at ${server.url} answered HTTP ${response.code}")
