@@ -13,15 +13,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -33,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
 import okhttp3.Cache
 import okhttp3.CacheControl
 import okhttp3.OkHttpClient
@@ -63,6 +66,9 @@ internal data class ArtworkLabel(val title: String, val service: String, val yea
 }
 private data class ArtworkSlide(val uri: String, val label: ArtworkLabel)
 
+/** Share the already decoded slideshow frame with the idle window, including an ongoing fade. */
+internal data class ArtworkFrame(val current: ImageBitmap?, val incoming: ImageBitmap?, val opacity: State<Float>)
+
 internal fun watchNextArtwork(visible: Set<String>, cards: Map<String, List<WatchNextCard>>): List<WatchNextCard> =
     cards.filterKeys { it in visible && it in watchNextServices }.values.flatten()
         .filter { it.programType == null || it.programType in mediaTypes }
@@ -79,6 +85,9 @@ internal fun DashboardArtwork(
     watchNext: Map<String, List<WatchNextCard>>,
     active: Boolean,
     onArtworkChanged: (ArtworkLabel?) -> Unit,
+    onFrameChanged: (ArtworkFrame?) -> Unit = {},
+    dimPercent: Int = 66,
+    draw: () -> Boolean = { true },
 ) {
     if (!settings.enabled) return
     val context = LocalContext.current.applicationContext
@@ -91,10 +100,9 @@ internal fun DashboardArtwork(
     val localChanges by localArtworkChanges.collectAsState()
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (!active) return@Box
         key(settings) {
             val slides = if (settings.useLocal) {
-                val local by produceState(emptyList<ArtworkSlide>(), localChanges) {
+                val local by produceVisibleState(emptyList<ArtworkSlide>(), localChanges, once = true) {
                     value = withContext(Dispatchers.IO) {
                         LocalArtwork(context).slides().map {
                             ArtworkSlide("hal-artwork:$it", ArtworkLabel(it.substringAfter('_').substringBeforeLast('.'), "Local artwork"))
@@ -103,7 +111,7 @@ internal fun DashboardArtwork(
                 }
                 local
             } else {
-                val catalog by produceState<List<ArtworkSlide>?>(null, changes) {
+                val catalog by produceVisibleState<List<ArtworkSlide>?>(null, changes, once = true) {
                     val snapshot = ArtworkCatalog(context, catalogHttpClient).cached()
                     value = snapshot?.takeIf { it.matches(settings) }?.artwork?.map {
                         ArtworkSlide(it.uri, ArtworkLabel(it.title, it.service, it.year))
@@ -113,25 +121,40 @@ internal fun DashboardArtwork(
                 if (cached == null) emptyList()
                 else remember(native, cached) { (cached + native).distinctBy { it.uri }.take(ARTWORK_LIMIT) }
             }
-            key(slides) { ArtworkRotation(slides, onArtworkChanged) }
+            key(slides) { ArtworkRotation(slides, active, onArtworkChanged, onFrameChanged, dimPercent, draw) }
         }
     }
 }
 
 @Composable
-private fun ArtworkRotation(slides: List<ArtworkSlide>, onArtworkChanged: (ArtworkLabel?) -> Unit) {
+private fun ArtworkRotation(slides: List<ArtworkSlide>, active: Boolean, onArtworkChanged: (ArtworkLabel?) -> Unit, onFrameChanged: (ArtworkFrame?) -> Unit, dimPercent: Int, draw: () -> Boolean) {
     if (slides.isEmpty()) return
     val context = LocalContext.current.applicationContext
     var current by remember { mutableStateOf<ImageBitmap?>(null) }
     var incoming by remember { mutableStateOf<ImageBitmap?>(null) }
     val opacity = remember { Animatable(0f) }
-    DisposableEffect(Unit) { onDispose { onArtworkChanged(null) } }
+    val queue = remember(slides) { ArrayDeque<ArtworkSlide>() }
+    var shownUri by remember { mutableStateOf<String?>(null) }
+    var pendingSlide by remember { mutableStateOf<ArtworkSlide?>(null) }
+    DisposableEffect(Unit) { onDispose { onArtworkChanged(null); onFrameChanged(null) } }
 
-    LaunchedEffect(slides) {
+    LaunchedEffect(slides, active) {
+        if (!active) return@LaunchedEffect
         val client = artworkClient(context)
         val prefs = LauncherPrefs(context)
-        val queue = ArrayDeque<ArtworkSlide>()
-        var shownUri: String? = null
+        suspend fun finishFade() {
+            opacity.animateTo(1f, tween(FADE_DURATION))
+            current = incoming
+            incoming = null
+            pendingSlide?.let { slide ->
+                shownUri = slide.uri
+                prefs.lastDashboardArtwork = slide.uri
+                onArtworkChanged(slide.label)
+            }
+            pendingSlide = null
+        }
+        // A stopped window can interrupt a fade; both decoded frames remain immediately drawable.
+        if (incoming != null) finishFade()
         suspend fun next(): Pair<ArtworkSlide, ImageBitmap>? {
             val attempted = mutableSetOf<String>()
             while (attempted.size < slides.size) {
@@ -163,29 +186,39 @@ private fun ArtworkRotation(slides: List<ArtworkSlide>, onArtworkChanged: (Artwo
             }
             opacity.snapTo(0f)
             incoming = slide.second
-            opacity.animateTo(1f, tween(FADE_DURATION))
-            current = slide.second
-            incoming = null
-            shownUri = slide.first.uri
-            prefs.lastDashboardArtwork = slide.first.uri
-            onArtworkChanged(slide.first.label)
+            pendingSlide = slide.first
+            finishFade()
         }
     }
 
-    current?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-    incoming?.let {
-        Image(it, null, Modifier.fillMaxSize().graphicsLayer { alpha = opacity.value }, contentScale = ContentScale.Crop)
-    }
-    if (current != null || incoming != null) {
-        val shade = remember {
-            Brush.verticalGradient(
-                0f to Color.Black.copy(alpha = 0.82f),
-                0.48f to Color.Black.copy(alpha = ArtworkShade),
-                1f to Color.Black.copy(alpha = 0.88f),
-            )
+    val frame = remember(current, incoming) { ArtworkFrame(current, incoming, opacity.asState()) }
+    SideEffect { onFrameChanged(frame) }
+    ArtworkBackground(frame, dimPercent = dimPercent, draw = draw)
+}
+
+@Composable
+internal fun ArtworkBackground(frame: ArtworkFrame?, dimPercent: Int = 66, screensaver: Boolean = false, draw: () -> Boolean = { true }) {
+    // Decide at draw time so a surface transfer/error can reveal the image in that same frame.
+    Box(Modifier.fillMaxSize().drawWithContent { if (draw()) drawContent() }.background(Color.Black)) {
+        frame?.current?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        frame?.incoming?.let {
+            Image(it, null, Modifier.fillMaxSize().graphicsLayer { alpha = frame.opacity.value }, contentScale = ContentScale.Crop)
         }
-        Box(Modifier.fillMaxSize().background(shade))
+        if (frame?.current != null || frame?.incoming != null) {
+            ArtworkShadeOverlay(dimPercent, screensaver)
+        }
     }
+}
+
+@Composable
+internal fun ArtworkShadeOverlay(dimPercent: Int = 66, screensaver: Boolean = false) {
+    val shade = remember(dimPercent, screensaver) {
+        fun alpha(base: Float) = backgroundShadeAlpha(if (screensaver) 0.18f + base * 0.82f else base,
+            dimPercent, if (screensaver) 72 else 66)
+        Brush.verticalGradient(0f to Color.Black.copy(alpha = alpha(0.82f)),
+            0.48f to Color.Black.copy(alpha = alpha(ArtworkShade)), 1f to Color.Black.copy(alpha = alpha(0.88f)))
+    }
+    Box(Modifier.fillMaxSize().background(shade))
 }
 
 private var sharedArtworkClient: OkHttpClient? = null
@@ -197,15 +230,16 @@ private fun artworkClient(context: Context): OkHttpClient = sharedArtworkClient 
     .followSslRedirects(false)
     .build().also { sharedArtworkClient = it }
 
-private fun loadBackdrop(context: Context, client: OkHttpClient, uri: String): ImageBitmap? {
+private suspend fun loadBackdrop(context: Context, client: OkHttpClient, uri: String): ImageBitmap? {
     val bytes = try {
         val parsed = Uri.parse(uri)
         when (parsed.scheme) {
             "hal-artwork" -> LocalArtwork(context).read(parsed.schemeSpecificPart)
             "https" -> {
                 val request = Request.Builder().url(uri).build()
-                fun read(request: Request) = try {
-                    client.newCall(request).execute().use { response ->
+                suspend fun read(request: Request): ByteArray? = try {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    client.newCall(request).readCancellable { response ->
                         if (response.isSuccessful) response.body.byteStream().use { readLimited(it, ARTWORK_BYTES) }
                         else null
                     }
@@ -223,6 +257,7 @@ private fun loadBackdrop(context: Context, client: OkHttpClient, uri: String): I
     } catch (_: RuntimeException) {
         null
     } ?: return null
+    kotlinx.coroutines.currentCoroutineContext().ensureActive()
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     val local = uri.startsWith("hal-artwork:")

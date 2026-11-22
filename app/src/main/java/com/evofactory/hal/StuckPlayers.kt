@@ -9,7 +9,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -105,6 +104,9 @@ class PlayerWatch(private val player: ExoPlayer, private val label: String) {
     /** See [awaitPlayersGone] */
     suspend fun awaitOthersGone(onWait: () -> Unit = {}) = awaitPlayersGone(label, except = this, onWait = onWait)
 
+    fun suspendChecks() { if (!released) handler.removeCallbacks(check) }
+    fun resumeChecks() { handler.removeCallbacks(check); handler.post(check) }
+
     private fun check() {
         val now = SystemClock.elapsedRealtime()
         when {
@@ -157,7 +159,7 @@ fun StuckPlayersWarning(onClick: () -> Unit, modifier: Modifier = Modifier) {
 fun StuckPlayersDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val count = stuckSince.size
-    val now by produceState(SystemClock.elapsedRealtime()) {
+    val now by produceVisibleState(SystemClock.elapsedRealtime()) {
         while (true) {
             value = SystemClock.elapsedRealtime()
             delay(DIALOG_REFRESH_MS)

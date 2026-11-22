@@ -36,6 +36,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -281,7 +283,10 @@ fun HaAssistantTab(
     onHomeFocusUnavailable: () -> Unit = {},
     renderApps: (@Composable (DashboardCard, FocusRequester, FocusRequester, Dp, (FocusDirection) -> FocusRequester) -> Unit)? = null,
     onPanelRemoteKey: (KeyEvent, () -> Unit) -> Boolean = { _, _ -> false },
+    onScreensaverPlayersChanged: (List<ScreensaverMediaPlayer>) -> Unit = {},
 ) {
+    val latestPlayersChanged by rememberUpdatedState(onScreensaverPlayersChanged)
+    DisposableEffect(Unit) { onDispose { latestPlayersChanged(emptyList()) } }
     val board = connection.dashboard(dashboard)
     val missing = connection.dashboardMissing(dashboard)
     val reading = dashboard != null && board == null && !missing
@@ -301,10 +306,12 @@ fun HaAssistantTab(
         }
     }
     if (prompt != null) {
+        SideEffect { onScreensaverPlayersChanged(emptyList()) }
         SettingsPrompt(prompt.first, prompt.second, onSetUp, modifier.cycleUiColors())
         return
     }
     if (reading) {
+        SideEffect { onScreensaverPlayersChanged(emptyList()) }
         Text(
             haStatusMessage(connection) ?: "Reading the dashboard…",
             style = MaterialTheme.typography.bodyMedium,
@@ -354,18 +361,22 @@ fun HaAssistantTab(
     }
     // With something before the columns (the Home tab's camera), every view's cards follow each
     // other, without the views' names above them
-    val views = (customLayout?.pages?.map { DashboardView(it.title, it.cards.map(DashboardCard::card)) } ?: board?.views.orEmpty()).let { all ->
-        if (leading != null && all.size > 1) listOf(DashboardView(all.first().title, all.flatMap { it.cards })) else all
+    val views = remember(customLayout?.pages, board?.views, leading != null) {
+        (customLayout?.pages?.map { DashboardView(it.title, it.cards.map(DashboardCard::card)) } ?: board?.views.orEmpty()).let { all ->
+            if (leading != null && all.size > 1) listOf(DashboardView(all.first().title, all.flatMap { it.cards })) else all
+        }
     }
     val viewTabs = remember(views.size) { List(views.size) { FocusRequester() } }
     val page = customLayout?.pages?.getOrNull(viewIndex)
-    val pageCards = page?.cards?.map(DashboardCard::card) ?: views.getOrNull(viewIndex)?.cards.orEmpty()
+    val pageCards = remember(page, views, viewIndex) {
+        page?.cards?.map(DashboardCard::card) ?: views.getOrNull(viewIndex)?.cards.orEmpty()
+    }
     val cards = if (board != null || customLayout != null) {
         pageCards.filter { it.visibility.isVisible(entities) }
     } else layout.selectionCards(entityIds, entities)
     val visibleKeys = cards.map { it.key }.toSet()
     val visibleItems = page?.cards.orEmpty().filter { it.card.key in visibleKeys }
-    val cardOptions = page?.cards.orEmpty().associateBy { it.card.key }
+    val cardOptions = remember(page) { page?.cards.orEmpty().associateBy { it.card.key } }
     val hiddenItems = cards.associate { card ->
         card.key to cardOptions[card.key]?.itemVisibility.orEmpty().mapNotNull { (key, setting) ->
             key.toIntOrNull()?.takeUnless { setting.rule.isVisible(entities) }?.let { it to setting.keepSpace }
@@ -378,7 +389,17 @@ fun HaAssistantTab(
         card.key to card.itemRows(slots, options?.twoPerRow ?: layout.twoPerRow, options?.halfWidthItems)
     }
     val aliases = customLayout?.aliases.orEmpty()
-    val names = (customLayout?.names ?: board?.names.orEmpty()) + aliases
+    val templateNames = customLayout?.names ?: board?.names.orEmpty()
+    val names = remember(templateNames, aliases) { if (aliases.isEmpty()) templateNames else templateNames + aliases }
+    val visibilityIds = remember(cards, cardOptions) {
+        (cards.flatMap { it.visibility?.entityIds().orEmpty() } +
+            cardOptions.values.flatMap { it.itemVisibility.values.flatMap { item -> item.rule.entityIds() } }).distinct()
+    }
+    val visibilityStates = visibilityIds.map { entities[it]?.state }
+    val screensaverPlayers = remember(cards, cardOptions, names, visibilityStates) {
+        screensaverMediaPlayers(cards, cardOptions, entities, names)
+    }
+    SideEffect { onScreensaverPlayersChanged(screensaverPlayers) }
     // Up from the top cards: to the views, if there are several, else to the tab
     val cardsUp = viewTabs.getOrNull(viewIndex)?.takeIf { views.size > 1 } ?: tabFocus
     // Roughly in rows of sensors: a weather takes about 5, with its next hours, and a heading 1

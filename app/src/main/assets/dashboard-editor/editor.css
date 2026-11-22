@@ -4,6 +4,9 @@
   background: #10141d;
   color: #ecf1fa;
 }
+.video-entry { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(180px, 2fr); gap: 10px; margin: 12px 0; }
+.video-entry .controls { grid-column: 1 / -1; }
+@media (max-width: 600px) { .video-entry { grid-template-columns: minmax(0, 1fr); } }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { max-width: 1500px; margin: auto; padding: clamp(12px, 3vw, 36px); }

@@ -437,7 +437,7 @@ class HaSession internal constructor(
     internal suspend fun mediaArtwork(reference: String): ByteArray? = withContext(Dispatchers.IO) {
         val request = mediaArtworkRequest(baseUrl, reference, token) ?: return@withContext null
         try {
-            mediaArtworkClient.newCall(request).execute().use { response ->
+            mediaArtworkClient.newCall(request).readCancellable { response ->
                 if (response.isSuccessful) response.body.byteStream().use { readLimited(it, 4 * 1024 * 1024) }
                 else null
             }
@@ -472,6 +472,11 @@ class HaSession internal constructor(
             HaEntity(id, state.optString("state"), state.optJSONObject("attributes") ?: JSONObject(), entry?.name, entry?.area)
         }
     }
+
+    /** Discover current weather once per connection; its live values use the existing subscription. */
+    suspend fun weatherEntityIds(): List<String> =
+        (optionalCommand("get_states") as? JSONArray)?.objects().orEmpty()
+            .mapNotNull { it.optString("entity_id").takeIf(::isHaWeather) }.sorted()
 
     /**
      * Each entity's name without its device's name, and its room, by entity id, from Home

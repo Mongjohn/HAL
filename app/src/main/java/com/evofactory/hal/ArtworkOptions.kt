@@ -49,6 +49,7 @@ internal fun ArtworkOptions(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        Text("Manage videos, screensaver activation time and background dimming in the web editor’s Backgrounds & screensaver section.", style = MaterialTheme.typography.bodySmall)
         HomeOption(
             title = "Artwork slideshow",
             description = "Show rotating backgrounds on the dashboard.",

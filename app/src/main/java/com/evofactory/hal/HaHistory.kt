@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -96,8 +95,8 @@ fun HistoryGraph(connection: HaConnection, graph: HaGraph, names: Map<String, St
     var history by remember(graph) { mutableStateOf<Map<String, List<HaHistoryPoint>>>(emptyMap()) }
     // Changes since the history was read
     val live = remember(graph) { mutableStateMapOf<String, List<HaHistoryPoint>>() }
-    LaunchedEffect(session, graph) {
-        if (session == null) return@LaunchedEffect
+    VisibleEffect(session, graph) {
+        if (session == null) return@VisibleEffect
         while (true) {
             val since = System.currentTimeMillis() - (graph.hours * 3_600_000).roundToLong()
             try {
@@ -109,7 +108,7 @@ fun HistoryGraph(connection: HaConnection, graph: HaGraph, names: Map<String, St
             delay(HISTORY_REFRESH_MS)
         }
     }
-    LaunchedEffect(graph) {
+    VisibleEffect(graph) {
         snapshotFlow { graph.entities.map { connection.entities[it.id]?.state } }.collect { states ->
             val time = System.currentTimeMillis()
             graph.entities.forEachIndexed { index, entity ->
@@ -120,19 +119,22 @@ fun HistoryGraph(connection: HaConnection, graph: HaGraph, names: Map<String, St
         }
     }
     // The right edge is now
-    LaunchedEffect(Unit) {
+    VisibleEffect(Unit) {
         while (true) {
             delay(60_000)
             now = System.currentTimeMillis()
         }
     }
 
-    val series = graph.entities.associate { entity ->
-        val points = (history[entity.id].orEmpty() + live[entity.id].orEmpty()).sortedBy { it.time }
-        // Each change once, from the state at the window's start
-        val changes = points.filterIndexed { index, point -> index == 0 || points[index - 1].state != point.state }
-        val before = changes.lastOrNull { it.time <= start }?.copy(time = start)
-        entity.id to listOfNotNull(before) + changes.filter { it.time > start }
+    val liveSnapshot = live.toMap()
+    val series = remember(graph, history, liveSnapshot, start) {
+        graph.entities.associate { entity ->
+            val points = (history[entity.id].orEmpty() + liveSnapshot[entity.id].orEmpty()).sortedBy { it.time }
+            // Each change once, from the state at the window's start
+            val changes = points.filterIndexed { index, point -> index == 0 || points[index - 1].state != point.state }
+            val before = changes.lastOrNull { it.time <= start }?.copy(time = start)
+            entity.id to listOfNotNull(before) + changes.filter { it.time > start }
+        }
     }
     // As Home Assistant: a line for what has a unit and a number, a bar for the rest
     val (lineEntities, barEntities) = graph.entities.partition { entity ->
@@ -194,9 +196,9 @@ private class Chart(
     val high: Double
 
     init {
-        val numbers = lines.flatMap { (_, points) -> points.mapNotNull { it.state.toDoubleOrNull() } }
-        var low = numbers.minOrNull() ?: 0.0
-        var high = numbers.maxOrNull() ?: 1.0
+        val range = historyNumberRange(lines.map { it.second })
+        var low = range.first
+        var high = range.second
         graph.minY?.let { low = if (graph.fitY) minOf(it, low) else it }
         graph.maxY?.let { high = if (graph.fitY) maxOf(it, high) else it }
         if (high - low < 1e-9) {
@@ -209,6 +211,25 @@ private class Chart(
 
     val highLabel = axisValue(high, unit)
     val lowLabel = axisValue(low, unit)
+}
+
+/** Match the scale extrema without materializing a numeric list. */
+internal fun historyNumberRange(series: List<List<HaHistoryPoint>>): Pair<Double, Double> {
+    var low = 0.0
+    var high = 1.0
+    var found = false
+    for (points in series) for (point in points) {
+        val value = point.state.toDoubleOrNull() ?: continue
+        if (!found) {
+            low = value
+            high = value
+            found = true
+        } else {
+            low = minOf(low, value)
+            high = maxOf(high, value)
+        }
+    }
+    return low to high
 }
 
 /** A chart's lines from [start] to [end], with its scale's top and bottom at the left, [labelWidth] wide */

@@ -3,7 +3,6 @@ package com.evofactory.hal
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -12,6 +11,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,31 +61,34 @@ private fun CalmOverviewText(title: String, value: String, detail: String?, hori
     @Composable fun TitleAndDetail() {
         if (title.isNotBlank()) Text(title, fontSize = 22.sp, fontWeight = FontWeight.Light,
             color = colors.onSurfaceVariant, overflow = TextOverflow.Clip)
-        if (detail != null) Text(detail, fontSize = 13.sp, color = colors.onSurfaceVariant,
+        if (!detail.isNullOrBlank()) Text(detail, fontSize = 13.sp, color = colors.onSurfaceVariant,
             overflow = TextOverflow.Clip)
     }
     @Composable fun Value() {
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
             if (weatherIcon != null) MdiIcon(weatherIcon, size = 48.dp, color = colors.onSurfaceVariant)
             Text(value, fontSize = 52.sp, lineHeight = 58.sp, fontWeight = FontWeight.Light,
-                overflow = TextOverflow.Clip)
+                overflow = TextOverflow.Clip, textAlign = TextAlign.Center)
         }
     }
     if (horizontal) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        // Center the visible group, not an equal-width pair of columns with unused space.
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp),
-                horizontalAlignment = Alignment.End) { TitleAndDetail() }
-            Column(Modifier.weight(1f)) { Value() }
+            if (title.isNotBlank() || !detail.isNullOrBlank()) {
+                Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalAlignment = Alignment.End) { TitleAndDetail() }
+            }
+            Column(Modifier.weight(1f, fill = false)) { Value() }
         }
     } else {
         Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (title.isNotBlank()) Text(title, fontSize = 22.sp, fontWeight = FontWeight.Light,
-                color = colors.onSurfaceVariant, overflow = TextOverflow.Clip)
+                color = colors.onSurfaceVariant, overflow = TextOverflow.Clip, textAlign = TextAlign.Center)
             Value()
-            if (detail != null) Text(detail, fontSize = 13.sp, color = colors.onSurfaceVariant,
-                overflow = TextOverflow.Clip)
+            if (!detail.isNullOrBlank()) Text(detail, fontSize = 13.sp, color = colors.onSurfaceVariant,
+                overflow = TextOverflow.Clip, textAlign = TextAlign.Center)
         }
     }
 }

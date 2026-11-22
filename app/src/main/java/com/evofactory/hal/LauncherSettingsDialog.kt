@@ -356,7 +356,7 @@ private fun LauncherAdvancedSettings(
         AppLog.keepHours(hours)
     }
 
-    LaunchedEffect(Unit) {
+    VisibleEffect(Unit) {
         while (true) {
             size = withContext(Dispatchers.IO) { AppLog.sizeBytes() }
             delay(LOG_SIZE_REFRESH_MS)

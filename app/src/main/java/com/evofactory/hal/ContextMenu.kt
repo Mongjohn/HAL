@@ -87,7 +87,7 @@ fun ContextMenu(
         // its release would land on the first item and select it. Ignore OK until a fresh press.
         var waitingForFreshPress by remember { mutableStateOf(true) }
         Surface(
-            modifier = Modifier.cycleUiColors().onPreviewKeyEvent { event ->
+            modifier = Modifier.trackHalPopupInput().cycleUiColors().onPreviewKeyEvent { event ->
                 if (event.key !in ConfirmKeys) return@onPreviewKeyEvent false
                 if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
                     waitingForFreshPress = false

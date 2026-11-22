@@ -205,6 +205,7 @@ internal fun CalmDashboard(
     }
     rooms.firstOrNull { it.key == openCard }?.let { card ->
         Dialog(onDismissRequest = { onOpen(null) }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            TrackHalDialogInput()
             BoxWithConstraints(Modifier.fillMaxSize()
                 .onPreviewKeyEvent { event ->
                     if (event.key == Key.Back) {

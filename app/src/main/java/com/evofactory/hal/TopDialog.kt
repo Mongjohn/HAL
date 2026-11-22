@@ -155,6 +155,7 @@ fun TopDialog(
     val firstTop = tabFocus.firstOrNull() ?: buttons.getOrNull(firstButton)?.let(::focusOf) ?: close
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        TrackHalDialogInput()
         Box(
             modifier = Modifier
                 .fillMaxSize()

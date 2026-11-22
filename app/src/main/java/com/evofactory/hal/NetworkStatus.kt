@@ -27,13 +27,12 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -205,7 +204,7 @@ fun NetworkButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var status by remember(context) { mutableStateOf(context.readNetworkStatus()) }
     var focused by remember { mutableStateOf(false) }
-    DisposableEffect(context) {
+    LifecycleStartEffect(context) {
         val connectivity = context.getSystemService(ConnectivityManager::class.java)
         val prefs = LauncherPrefs(context)
         val callback = object : ConnectivityManager.NetworkCallback() {
@@ -251,7 +250,7 @@ fun NetworkButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
             }
         }
         connectivity.registerDefaultNetworkCallback(callback, Handler(Looper.getMainLooper()))
-        onDispose { connectivity.unregisterNetworkCallback(callback) }
+        onStopOrDispose { connectivity.unregisterNetworkCallback(callback) }
     }
     val broken = status.problem != null
     val name = if (broken) "${status.kind.label}: no connection" else status.kind.label
@@ -388,7 +387,7 @@ private fun wirelessDebuggingPort(): Int? {
     val context = LocalContext.current
     var port by remember { mutableStateOf<Int?>(null) }
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-    DisposableEffect(context) {
+    LifecycleStartEffect(context) {
         val nsd = context.getSystemService(NsdManager::class.java)
         val connectivity = context.getSystemService(ConnectivityManager::class.java)
         val main = Handler(Looper.getMainLooper())
@@ -455,7 +454,7 @@ private fun wirelessDebuggingPort(): Int? {
             }
         }
         nsd.discoverServices(WIRELESS_DEBUGGING_SERVICE, NsdManager.PROTOCOL_DNS_SD, discovery)
-        onDispose {
+        onStopOrDispose {
             runCatching { nsd.stopServiceDiscovery(discovery) }
                 .onFailure { AppLog.w(TAG, "Couldn't stop looking for wireless debugging", it) }
         }
@@ -467,23 +466,23 @@ private fun wirelessDebuggingPort(): Int? {
 @Composable
 fun NetworkStatusDialog(frigate: FrigateFeed?, homeAssistant: HaConnection?, onOpenPing: () -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val status by produceState(context.readNetworkStatus(), context) {
+    val status by produceVisibleState(context.readNetworkStatus(), context) {
         while (true) {
             value = context.readNetworkStatus()
             delay(DETAILS_REFRESH_MS)
         }
     }
-    val adb by produceState<AdbInfo?>(null, context) {
+    val adb by produceVisibleState<AdbInfo?>(null, context) {
         while (true) {
             value = withContext(Dispatchers.IO) { context.readAdbInfo() }
             delay(ADB_PROBE_INTERVAL_MS)
         }
     }
-    val tv by produceState<TvInfo?>(null, context) {
+    val tv by produceVisibleState<TvInfo?>(null, context, once = true) {
         value = withContext(Dispatchers.IO) { context.readTvInfo() }
     }
     val wirelessPort = wirelessDebuggingPort()
-    val now by produceState(System.currentTimeMillis()) {
+    val now by produceVisibleState(System.currentTimeMillis()) {
         while (true) {
             value = System.currentTimeMillis()
             delay(1_000)

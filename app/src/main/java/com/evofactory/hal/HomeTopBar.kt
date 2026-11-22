@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -108,7 +107,7 @@ fun HomeTopBar(
             actions()
         }
         settings()
-        Clock()
+        Box(Modifier.padding(start = 6.dp)) { Clock() }
     }
 }
 
@@ -220,7 +219,7 @@ fun TopBarWarning(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
 @Composable
 private fun FreeMemory() {
     val context = LocalContext.current
-    val free by produceState(0L) {
+    val free by produceVisibleState(0L) {
         val activityManager = context.getSystemService(ActivityManager::class.java)
         val info = ActivityManager.MemoryInfo()
         while (true) {
@@ -252,7 +251,7 @@ private fun Clock() {
     val context = LocalContext.current
     val timeFormat = DateFormat.getTimeFormat(context)
     val dateFormat = SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "MMMd"), Locale.getDefault())
-    val now by produceState(Date()) {
+    val now by produceVisibleState(Date()) {
         while (true) {
             value = Date()
             // Wake up just after the next minute starts

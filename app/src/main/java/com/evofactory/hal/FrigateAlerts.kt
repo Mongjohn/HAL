@@ -32,7 +32,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
@@ -426,7 +425,7 @@ private fun AlertsMessage(text: String, modifier: Modifier, isError: Boolean = f
 
 @Composable
 private fun AlertTile(client: FrigateClient, alert: FrigateAlert, hasNoVideo: Boolean) {
-    val thumbnail by produceState<ImageBitmap?>(null, alert.id) { value = client.thumbnail(alert) }
+    val thumbnail by produceVisibleState<ImageBitmap?>(null, alert.id, once = true) { value = client.thumbnail(alert) }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         thumbnail?.let {
             Image(it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -508,8 +507,10 @@ private fun ClipPlayer(
             }
     }
     val playerWatch = remember(player) { PlayerWatch(player, "Clip player") }
+    var openedId by remember(player) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(player, alert.id) {
+    VisibleEffect(player, alert.id) {
+        if (openedId == alert.id) return@VisibleEffect
         AppLog.i("FrigateClip", "${alert.camera} ${alert.id}: opening, minimize streams ${if (minimizeStreams) "on" else "off"}")
         ended = false
         showingVideo = false
@@ -520,6 +521,7 @@ private fun ClipPlayer(
         player.setMediaItem(MediaItem.fromUri(client.clipUrl(alert)))
         player.playWhenReady = true
         player.prepare()
+        openedId = alert.id
     }
 
     DisposableEffect(player) {
@@ -549,9 +551,16 @@ private fun ClipPlayer(
         player.addListener(listener)
         onDispose { playerWatch.release() }
     }
-    LifecycleStartEffect(player) { onStopOrDispose { player.pause() } }
+    LifecycleStartEffect(player) {
+        playerWatch.resumeChecks()
+        onStopOrDispose {
+            player.pause()
+            playerWatch.suspendChecks()
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        TrackHalDialogInput()
         LaunchedEffect(Unit) { focus.requestFocus() }
         Box(
             modifier = Modifier
@@ -605,7 +614,7 @@ private fun ClipPlayer(
 /** How far the clip has played, along the bottom of the screen */
 @Composable
 private fun ClipProgress(player: Player, alert: FrigateAlert, modifier: Modifier = Modifier) {
-    val progress by produceState(0f, player, alert.id) {
+    val progress by produceVisibleState(0f, player, alert.id) {
         while (true) {
             value = clipProgress(player, alert)
             delay(CLIP_PROGRESS_INTERVAL_MS)

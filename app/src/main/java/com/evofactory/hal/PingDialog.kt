@@ -11,7 +11,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -55,7 +54,7 @@ private fun Context.addressText(): String {
 fun PingDialog(initialHost: String, onHostEntered: (String) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     // Stays current if the network changes while this is open
-    val address by produceState(context.addressText(), context) {
+    val address by produceVisibleState(context.addressText(), context) {
         while (true) {
             value = context.addressText()
             delay(ADDRESS_CHECK_INTERVAL_MS)
@@ -72,6 +71,9 @@ fun PingDialog(initialHost: String, onHostEntered: (String) -> Unit, onDismiss: 
     val closeButton = remember { FocusRequester() }
     val hostField = remember { FocusRequester() }
     val valid = isValidIpv4(host.trim())
+    androidx.lifecycle.compose.LifecycleStartEffect(Unit) {
+        onStopOrDispose { job?.cancel() }
+    }
 
     fun start() {
         val target = host.trim()
