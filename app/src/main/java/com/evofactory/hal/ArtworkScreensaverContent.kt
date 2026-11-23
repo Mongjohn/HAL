@@ -1,7 +1,6 @@
 package com.evofactory.hal
 
 import android.text.format.DateFormat
-import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -27,23 +25,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.foundation.focusable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
@@ -58,34 +49,17 @@ internal fun screensaverWeather(preferred: List<String>, entities: Map<String, H
     return ordered.firstOrNull { it.state !in setOf("unknown", "unavailable", "") } ?: ordered.firstOrNull()
 }
 
-/** Opaque top window covers every HAL surface, including popups and hardware video. */
+/** Screensaver content is hosted directly by Android's DreamService window. */
 @Composable
-internal fun HalScreensaver(
-    visible: Boolean, frame: ArtworkFrame?, weather: HaEntity?, weatherConnected: Boolean,
-    players: List<ScreensaverMediaPlayer>, connection: HaConnection, video: BackgroundVideoController?, dimPercent: Int, onWake: () -> Unit,
+internal fun ArtworkScreensaverContent(
+    frame: ArtworkFrame?, weather: HaEntity?, players: List<ScreensaverMediaPlayer>,
+    connection: HaConnection, video: BackgroundVideoController, dimPercent: Int,
 ) {
-    Dialog(onDismissRequest = onWake, properties = DialogProperties(
-        usePlatformDefaultWidth = false, dismissOnBackPress = false, dismissOnClickOutside = false,
-    )) {
-        TrackHalDialogInput()
-        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
-        DisposableEffect(window) {
-            // The artwork and widget supply their own shade; avoid Android's extra dialog dimming.
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            onDispose {}
-        }
-        val target = remember { FocusRequester() }
-        val motion = remember { ScreensaverBubbleMotion() }
-        LaunchedEffect(Unit) { target.requestFocus() }
-        Box(Modifier.fillMaxSize().focusRequester(target).focusable()) {
-            // Retain the same input window through a held wake key/gesture's release. Its drawing
-            // disappears immediately, so the dashboard is visible without losing the key-up event.
-            if (visible) {
-                ArtworkBackground(frame, dimPercent, screensaver = true, draw = { video?.hasFrame != true })
-                video?.let { VideoBackground(it, dimPercent, screensaver = true) }
-                DriftingClock(weather.takeIf { weatherConnected }, players, connection, motion)
-            }
-        }
+    val motion = remember { ScreensaverBubbleMotion() }
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        ArtworkBackground(frame, dimPercent, screensaver = true, draw = { !video.hasFrame })
+        VideoBackground(video, dimPercent, screensaver = true)
+        DriftingClock(weather, players, connection, motion)
     }
 }
 

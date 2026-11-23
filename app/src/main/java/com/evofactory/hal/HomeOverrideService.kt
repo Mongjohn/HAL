@@ -110,7 +110,7 @@ class HomeOverrideService : AccessibilityService() {
      */
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode != KeyEvent.KEYCODE_HOME || !prefs.catchHomeKey) return false
-        if (MainActivity.idleKeyHandler?.invoke(event) == true) return true
+        if (ArtworkScreensaver.consumeHome(event) == true) return true
         if (MainActivity.appsCardKeyHandler?.invoke(event) == true) return true
         if (event.action == KeyEvent.ACTION_UP && !event.isCanceled && !bringLauncherBack()) {
             // Override just switched off by the crash guard, or the launcher couldn't be opened:
@@ -124,8 +124,8 @@ class HomeOverrideService : AccessibilityService() {
 
     /** Opens this launcher; false if the override is off (or the crash guard just switched it off) */
     private fun bringLauncherBack(): Boolean {
-        // The activity's shared foreground window policy owns ambient-mode suppression.
-        // Enabling this service does not acquire a separate wake lock or change idle settings.
+        // Android owns screensaver activation; the helper never acquires a wake lock
+        // or changes the system idle settings.
         if (!prefs.replaceHome) return false
         if (!MainActivity.running && tooManyFailedLaunches()) {
             // The launcher keeps failing to start: give the TV its own home screen back

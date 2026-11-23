@@ -3,5 +3,6 @@
     <string name="app_name">HAL</string>
     <string name="home_override_label">HAL Helper</string>
     <string name="screensaver_label">HAL Cameras</string>
+    <string name="artwork_screensaver_label">HAL Artwork</string>
     <string name="home_override_description">Makes the Home button open HAL, and opens HAL when the TV\'s own home screen appears. It only reacts to the Home button and checks which app opened; it reads nothing else on screen and no other keys. It does nothing unless \"Open with the Home button\" is switched on in HAL\'s Launcher settings.</string>
 </resources>

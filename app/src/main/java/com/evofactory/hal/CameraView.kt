@@ -403,7 +403,6 @@ fun CameraView(
 private fun FullScreenWindow(onClose: () -> Unit, onCameraButton: (Int) -> Unit, onChannel: (Int) -> Unit, content: @Composable () -> Unit) {
     val focus = remember { FocusRequester() }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        TrackHalDialogInput()
         LaunchedEffect(Unit) { focus.requestFocus() }
         Box(
             modifier = Modifier

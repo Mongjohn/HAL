@@ -13,6 +13,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.awaitCancellation
@@ -22,6 +24,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.Text
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
@@ -30,6 +34,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.DataInputStream
@@ -40,6 +50,21 @@ import java.util.UUID
 
 private const val EditorPort = 8765
 private const val EditorMaxBytes = 4 * 1024 * 1024
+
+/** Retain an enabled editor when Android covers HAL with its own artwork dream. */
+@OptIn(FlowPreview::class)
+@Composable
+private fun EditorVisibleEffect(vararg keys: Any?, block: suspend CoroutineScope.() -> Unit) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val current by rememberUpdatedState(block)
+    LaunchedEffect(lifecycle, *keys) {
+        combine(lifecycle.currentStateFlow, snapshotFlow { ArtworkScreensaver.showing }) { state, dreaming ->
+            state.isAtLeast(Lifecycle.State.STARTED) || dreaming
+        }.debounce(250).distinctUntilChanged().collectLatest { visible ->
+            if (visible) current(this)
+        }
+    }
+}
 
 private class DashboardEditorServer(
     link: LinkAddress,
@@ -250,9 +275,9 @@ internal fun DashboardEditor(
         .put("assistant", seedDashboardLayout(null, emptyList(), 1, false).toJson())
         .put("home", (readLayouts().home ?: initial(true)).toJson())
 
-    VisibleEffect(Unit) {
+    EditorVisibleEffect(Unit) {
         // Binding the optional editor must not get ahead of Home's first retained frame.
-        withFrameNanos { }
+        withTimeoutOrNull(250) { withFrameNanos { } }
         val address = editorAddress(context)
         var listener: DashboardEditorServer? = null
         try {
@@ -261,6 +286,7 @@ internal fun DashboardEditor(
                 val server = DashboardEditorServer(address, context.applicationContext) { path, body ->
                     when (path) {
                         "/api/videos" -> if (body == null) readVideos().toJson() else {
+                            require(body.optInt("schema") == 3) { "Reload the editor. Android TV now controls screensaver activation." }
                             val next = videoBackgroundSettingsFromJson(body)
                             require(next.revision == readVideos().revision) { "The video library changed. Reload it before saving again." }
                             val saved = next.copy(revision = next.revision + 1)
@@ -334,9 +360,9 @@ internal fun DashboardEditor(
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) { listener?.close() }
         }
     }
-    VisibleEffect(editor, haServer) {
-        if (editor == null || catalogLoadedFor == haServer) return@VisibleEffect
-        withFrameNanos { }
+    EditorVisibleEffect(editor, haServer) {
+        if (editor == null || catalogLoadedFor == haServer) return@EditorVisibleEffect
+        withTimeoutOrNull(250) { withFrameNanos { } }
         loading = true
         catalog = emptyList()
         templates = emptyList()

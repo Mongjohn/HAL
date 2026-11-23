@@ -51,20 +51,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-private const val RETRY_DELAY_MS = 5_000L
 
 private val SensorFadeHeight = 40.dp
 
@@ -172,70 +165,6 @@ class HaConnection {
         internal set
     var failedConnections by mutableIntStateOf(0)
         internal set
-}
-
-/**
- * Follows [entityIds] on [server]. Connected only while the launcher is on screen; reconnects on
- * its own, except when the token is rejected: then it waits for a new login or an app restart, so
- * a wrong login doesn't hammer Home Assistant. It also reads the [dashboards] (their keys, see
- * [HaDashboardInfo.key]) and follows their entities, and reconnects at once when one is saved in
- * Home Assistant, to show the new one.
- */
-@Composable
-fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboards: List<String>, includeScreensaverWeather: Boolean = false): HaConnection {
-    val connection = remember(server) { HaConnection() }
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-
-    LaunchedEffect(server, entityIds, dashboards, includeScreensaverWeather) {
-        connection.keepDashboards(dashboards)
-        if (!server.isSet || (entityIds.isEmpty() && dashboards.isEmpty() && !includeScreensaverWeather)) return@LaunchedEffect
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            if (connection.status == HaStatus.TokenRejected) return@repeatOnLifecycle
-            while (true) {
-                // Set when the dashboard was saved: reconnect at once rather than after a wait
-                var reload = false
-                try {
-                    haSession(server) {
-                        val saved = CompletableDeferred<Unit>()
-                        // Followed first, so a save while reading isn't missed
-                        if (dashboards.isNotEmpty()) followDashboardEdits(dashboards.map(::dashboardUrlPath).toSet()) { saved.complete(Unit) }
-                        val boards = dashboards.map { key -> parseDashboard(dashboardConfig(dashboardUrlPath(key))) }
-                        dashboards.forEachIndexed { index, key -> connection.setDashboard(key, boards[index]) }
-                        val configured = (entityIds + boards.flatMap { it?.entityIds.orEmpty() }).distinct()
-                        val weather = if (includeScreensaverWeather) weatherEntityIds() else emptyList()
-                        val followed = (configured + weather).distinct()
-                        followEntities(followed, connection.entities)
-                        for (id in configured.filter(::isHaWeather)) {
-                            followForecast(id, "hourly") { connection.hourly[id] = it }
-                            followForecast(id, "daily") { connection.daily[id] = it }
-                        }
-                        connection.session = this
-                        connection.status = HaStatus.Connected
-                        connection.connectedAt = System.currentTimeMillis()
-                        connection.problem = null
-                        connection.failedConnections = 0
-                        try {
-                            saved.await()
-                            reload = true
-                        } finally {
-                            connection.session = null
-                            connection.connectedAt = null
-                        }
-                    }
-                } catch (e: HaException) {
-                    connection.problem = e.message
-                    connection.failedConnections++
-                    if (e.tokenRejected) {
-                        connection.status = HaStatus.TokenRejected
-                        return@repeatOnLifecycle
-                    }
-                    connection.status = HaStatus.Offline
-                }
-                if (!reload) delay(RETRY_DELAY_MS)
-            }
-        }
-    }
-    return connection
 }
 
 /**

@@ -6,8 +6,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
-import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -62,7 +60,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -118,7 +115,6 @@ class MainActivity : ComponentActivity() {
     private var cycleUiColors by mutableStateOf(false)
     private var resumed by mutableStateOf(false)
     private var watchNextRefresh: Job? = null
-    private val idle = HalIdleState(SystemClock.uptimeMillis())
 
     // Home override's crash guard: the launcher counts as started once it has stayed up a moment
     private val confirmStarted = Runnable {
@@ -127,30 +123,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (handleIdleKey(event)) return true
         if (appsCardKeyHandler?.invoke(event) == true) return true
         return super.dispatchKeyEvent(event)
-    }
-
-    private fun handleIdleKey(event: android.view.KeyEvent): Boolean = idle.onKey(
-        event.keyCode, event.action == android.view.KeyEvent.ACTION_DOWN, event.action == android.view.KeyEvent.ACTION_UP,
-        event.keyCode in setOf(android.view.KeyEvent.KEYCODE_POWER, android.view.KeyEvent.KEYCODE_TV_POWER,
-            android.view.KeyEvent.KEYCODE_SLEEP, android.view.KeyEvent.KEYCODE_WAKEUP), SystemClock.uptimeMillis(),
-    )
-
-    private fun handleIdleTouch(event: MotionEvent): Boolean = handleIdlePointer(
-        event.actionMasked == MotionEvent.ACTION_DOWN,
-        event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL,
-    )
-
-    private fun handleIdlePointer(down: Boolean, finished: Boolean): Boolean =
-        idle.onPointer(down, finished, SystemClock.uptimeMillis())
-
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean = handleIdleTouch(event) || super.dispatchTouchEvent(event)
-
-    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_SCROLL && idle.onPointer(false, true, SystemClock.uptimeMillis())) return true
-        return super.dispatchGenericMotionEvent(event)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -200,21 +174,6 @@ class MainActivity : ComponentActivity() {
                     // Home's retained dashboard gets its first frame before optional catalog work.
                     withFrameNanos { }
                     scheduleArtwork(this@MainActivity, artworkSettings)
-                }
-            }
-            val idleTimeout = halConfiguredIdleTimeout(rememberHalIdleTimeout(), videoBackgrounds.idleMinutes)
-            LaunchedEffect(resumed, idleTimeout) {
-                if (!resumed) {
-                    idle.reset(SystemClock.uptimeMillis())
-                    return@LaunchedEffect
-                }
-                // Key repeats reschedule only this coroutine, rather than recomposing the dashboard.
-                idle.inputChanges.collectLatest {
-                    while (true) {
-                        val wait = idle.waitMillis(SystemClock.uptimeMillis(), idleTimeout) ?: break
-                        if (wait == 0L) { idle.expire(SystemClock.uptimeMillis(), idleTimeout); break }
-                        delay(wait.coerceAtMost(60_000))
-                    }
                 }
             }
             DisposableEffect(resumed, artworkSettings.enabled) {
@@ -450,10 +409,8 @@ class MainActivity : ComponentActivity() {
                         return true
                     }
                     var currentArtwork by remember { mutableStateOf<ArtworkLabel?>(null) }
-                    var artworkFrame by remember { mutableStateOf<ArtworkFrame?>(null) }
-                    var screensaverPlayers by remember { mutableStateOf(emptyList<ScreensaverMediaPlayer>()) }
-                    val video = rememberBackgroundVideo(videoBackgrounds, idle.active, backgroundVideoWanted(videoBackgrounds,
-                        idle.active, resumed, minimizeVideoStreams && (fullScreenCamera != null || frigateFeed?.playing != null)))
+                    val video = rememberBackgroundVideo(videoBackgrounds, false, backgroundVideoWanted(videoBackgrounds,
+                        false, resumed && !ArtworkScreensaver.showing, minimizeVideoStreams && (fullScreenCamera != null || frigateFeed?.playing != null)))
                     if ((cycleUiColors || appearanceTheme != LauncherTheme.Glass) && !artworkSettings.enabled) {
                         Box(Modifier.fillMaxSize().background(Color.Black))
                     }
@@ -461,13 +418,12 @@ class MainActivity : ComponentActivity() {
                         settings = artworkSettings,
                         visibleApps = remember(visible) { visible.orEmpty().associate { it.key to it.label } },
                         watchNext = watchNextByPackage,
-                        active = resumed,
+                        active = resumed && !ArtworkScreensaver.showing,
                         onArtworkChanged = { currentArtwork = it },
-                        onFrameChanged = { artworkFrame = it },
                         dimPercent = videoBackgrounds.dashboardDim,
-                        draw = { !(!idle.active && video.hasFrame) },
+                        draw = { !video.hasFrame },
                     )
-                    if (!idle.active) VideoBackground(video, videoBackgrounds.dashboardDim)
+                    if (resumed && !ArtworkScreensaver.showing) VideoBackground(video, videoBackgrounds.dashboardDim)
                     Column(modifier = Modifier.fillMaxSize().onPreviewKeyEvent(::onRemoteButton)) {
                         HomeTopBar(
                             tab = tab,
@@ -496,7 +452,7 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.weight(1f, fill = false),
                                 )
                                 if (haServer.isSet) HaActionButtons(haConnection, actions)
-                                (if (!idle.active && video.hasFrame) null
+                                (if (video.hasFrame) null
                                     else currentArtwork)?.takeIf { it.title.isNotBlank() }?.let {
                                     ArtworkCaption(it, Modifier.weight(1f, fill = false))
                                 }
@@ -583,7 +539,9 @@ class MainActivity : ComponentActivity() {
                                     HaAssistantTab(
                                         connection = haConnection,
                                         onPanelRemoteKey = ::onPanelRemoteButton,
-                                        onScreensaverPlayersChanged = { screensaverPlayers = it },
+                                        onScreensaverViewChanged = { index ->
+                                            if (prefs.screensaverHomeView != index) prefs.screensaverHomeView = index
+                                        },
                                         homeAssistantSet = haServer.isSet,
                                         entityIds = emptyList(),
                                         dashboard = null,
@@ -821,19 +779,6 @@ class MainActivity : ComponentActivity() {
                             onDismiss = { pingOpen = false },
                         )
                     }
-                    if ((idle.active || idle.waking) && resumed) {
-                        HalScreensaver(
-                            visible = idle.active,
-                            frame = artworkFrame,
-                            weather = screensaverWeather(followed, haConnection.entities),
-                            weatherConnected = haConnection.status == HaStatus.Connected,
-                            players = screensaverPlayers,
-                            connection = haConnection,
-                            video = video,
-                            dimPercent = videoBackgrounds.screensaverDim,
-                            onWake = { idle.reset(SystemClock.uptimeMillis()) },
-                        )
-                    }
                 }
             }
         }
@@ -966,17 +911,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (idle.active) { idle.reset(SystemClock.uptimeMillis()); return }
         if (intent.action == ACTION_FOCUS_HAL_HOME) homeFocusRequest++
     }
 
     override fun onResume() {
         super.onResume()
-        idle.reset(SystemClock.uptimeMillis())
-        idleKeyHandler = ::handleIdleKey
-        idleTouchHandler = ::handleIdleTouch
-        idlePointerHandler = ::handleIdlePointer
-        window.keepHalScreenAwake(true)
         resumed = true
         videoBackgrounds = prefs.videoBackgrounds
         // The home override may have switched itself off meanwhile
@@ -992,7 +931,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         HalForegroundWork.visible = false
-        stopArtworkJobs(this)
+        if (!ArtworkScreensaver.showing) stopArtworkJobs(this)
         super.onStop()
     }
 
@@ -1011,11 +950,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         resumed = false
-        idle.reset(SystemClock.uptimeMillis())
-        idleKeyHandler = null
-        idleTouchHandler = null
-        idlePointerHandler = null
-        window.keepHalScreenAwake(false)
         watchNextRefresh?.cancel()
         super.onPause()
         window.decorView.removeCallbacks(confirmStarted)
@@ -1032,9 +966,6 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        internal var idleKeyHandler: ((android.view.KeyEvent) -> Boolean)? = null
-        internal var idleTouchHandler: ((MotionEvent) -> Boolean)? = null
-        internal var idlePointerHandler: ((Boolean, Boolean) -> Boolean)? = null
         // Home is intercepted by the accessibility helper before Activity.dispatchKeyEvent.
         internal var appsCardKeyHandler: ((android.view.KeyEvent) -> Boolean)? = null
 

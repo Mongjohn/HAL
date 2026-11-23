@@ -38,7 +38,8 @@ async function browserChecks() {
   input('video-switch', '5');
   el('video-save').click();
   expect(el('video-status').textContent.includes('at least 10'), 'invalid switch interval accepted');
-  input('video-switch', '120'); input('screensaver-timeout', '2');
+  input('video-switch', '120');
+  expect(!el('screensaver-timeout'), 'retired HAL timer still exposed');
   input('dashboard-dim', '55'); input('screensaver-dim', '85');
   el('video-list').children[1].querySelector('[aria-label="Move video up"]').click();
   expect(el('video-list').children[1].querySelector('input').value === 'Entré æøå', 'order');
@@ -54,7 +55,7 @@ async function browserChecks() {
   expect(saved.videos[0].url.endsWith('key=renewed'), 'URL edit not saved');
   expect(!saved.videos[0].background && saved.videos[0].screensaver && !saved.videos[0].randomStart, 'per-video settings leaked');
   expect(saved.videos[1].background && saved.videos[1].screensaver && saved.videos[1].randomStart, 'per-video settings lost on reorder');
-  expect(saved.shuffle && saved.switchSeconds === 120 && saved.idleMinutes === 2 && saved.dashboardDim === 55 && saved.screensaverDim === 85, 'timing/dimming settings lost');
+  expect(saved.shuffle && saved.switchSeconds === 120 && !Object.hasOwn(saved, 'idleMinutes') && saved.dashboardDim === 55 && saved.screensaverDim === 85, 'timing/dimming settings lost');
   el('video-list').children[0].querySelector('.controls button:last-child').click();
   await fetch('/__stale');
   el('video-save').click();
@@ -81,7 +82,7 @@ async function browserChecks() {
 
 async function main() {
   let saved, unconfirmed = false, loadFail = false;
-  const reset = () => { saved = { schema: 2, revision: 0, shuffle: false, switchSeconds: 0, idleMinutes: 0, dashboardDim: 66, screensaverDim: 72, videos: [] }; unconfirmed = false; loadFail = false; };
+  const reset = () => { saved = { schema: 3, revision: 0, shuffle: false, switchSeconds: 0, dashboardDim: 66, screensaverDim: 72, videos: [] }; unconfirmed = false; loadFail = false; };
   reset();
   const server = createServer(async (request, response) => {
     const url = request.url.split('?')[0];
