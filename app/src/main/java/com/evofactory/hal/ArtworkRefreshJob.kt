@@ -31,7 +31,7 @@ internal fun stopArtworkJobs(context: Context) {
 
 internal fun scheduleArtwork(context: Context, settings: ArtworkSettings, settingsChanged: Boolean = false) {
     val scheduler = context.getSystemService(JobScheduler::class.java)
-    if (!HalForegroundWork.visible || !settings.enabled || settings.useLocal || settings.region.isEmpty() || settings.services.isEmpty()) {
+    if ((!HalForegroundWork.visible && !ArtworkScreensaver.showing) || !settings.enabled || settings.useLocal || settings.region.isEmpty() || settings.services.isEmpty()) {
         scheduler.cancel(DAILY_ARTWORK_JOB)
         scheduler.cancel(IMMEDIATE_ARTWORK_JOB)
         return
@@ -53,7 +53,7 @@ class ArtworkRefreshJob : JobService() {
     private val running = mutableMapOf<Int, Job>()
 
     override fun onStartJob(params: JobParameters): Boolean {
-        if (!HalForegroundWork.visible) return false
+        if (!HalForegroundWork.visible && !ArtworkScreensaver.showing) return false
         val network = params.network ?: return false
         val client = catalogHttpClient.newBuilder()
             .socketFactory(network.socketFactory)
@@ -62,7 +62,7 @@ class ArtworkRefreshJob : JobService() {
         running[params.jobId] = CoroutineScope(Dispatchers.Main).launch {
             val success = refreshLock.withLock {
                 val settings = LauncherPrefs(this@ArtworkRefreshJob).artworkSettings
-                if (!HalForegroundWork.visible || !settings.enabled || settings.useLocal || settings.region.isEmpty() || settings.services.isEmpty()) {
+                if ((!HalForegroundWork.visible && !ArtworkScreensaver.showing) || !settings.enabled || settings.useLocal || settings.region.isEmpty() || settings.services.isEmpty()) {
                     return@withLock true
                 }
                 val catalog = ArtworkCatalog(this@ArtworkRefreshJob, client)

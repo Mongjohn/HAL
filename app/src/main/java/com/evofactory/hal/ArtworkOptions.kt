@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
@@ -30,6 +31,7 @@ internal fun ArtworkOptions(
     onSave: (String, Set<String>) -> Unit,
     rowModifier: (String) -> Modifier,
 ) {
+    val context = LocalContext.current
     var country by remember { mutableStateOf(settings.region) }
     var services by remember { mutableStateOf(settings.services) }
     var feedback by remember { mutableStateOf("") }
@@ -49,7 +51,8 @@ internal fun ArtworkOptions(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("Manage videos, screensaver activation time and background dimming in the web editor’s Backgrounds & screensaver section.", style = MaterialTheme.typography.bodySmall)
+        Text("Manage videos and background dimming in the web editor’s Backgrounds & screensaver section. Choose HAL Artwork and its activation delay in Android TV screensaver settings.", style = MaterialTheme.typography.bodySmall)
+        Button(onClick = { context.openScreensaverSettings() }, modifier = rowModifier("system-screensaver")) { Text("Android TV screensaver settings") }
         HomeOption(
             title = "Artwork slideshow",
             description = "Show rotating backgrounds on the dashboard.",

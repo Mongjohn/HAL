@@ -54,12 +54,11 @@
       <div class="controls">
         <label><input id="video-shuffle" type="checkbox"> Shuffle videos</label>
         <label>Switch video after (seconds)<input id="video-switch" type="number" min="0" max="86400" step="1"></label>
-        <label>Activate screensaver after (minutes)<input id="screensaver-timeout" type="number" min="0" max="1440" step="1"></label>
         <label>Dashboard background dimming (%)<input id="dashboard-dim" type="number" min="0" max="100" step="1"></label>
         <label>Screensaver background dimming (%)<input id="screensaver-dim" type="number" min="0" max="100" step="1"></label>
       </div>
       <p class="hint">Switch interval: 0 plays to the end; otherwise use 10–86400 seconds. Shorter videos advance at their end. Only videos enabled for the current surface participate, in saved order or shuffled. A single video repeats. Random starts apply once its seekable duration is known; live or non-seekable files start normally.</p>
-      <p class="hint">Activation: 0 follows the Android TV timeout; 1–1440 selects minutes of inactivity in HAL. The screensaver also works while the web editor is enabled. Dimming affects images and videos, with 0% clear and 100% black; controls and the moving widget stay readable. Artwork remains the fallback when no eligible video can play.</p>
+      <p class="hint">Select HAL Artwork in Android TV’s screensaver settings. Android controls activation timing and sleep across apps; HAL has no separate idle timeout. Dimming affects images and videos, with 0% clear and 100% black; controls and the moving widget stay readable. Artwork remains the fallback when no eligible video can play.</p>
       <ol id="video-list"></ol>
       <form id="video-add" class="controls">
         <label>Name <input id="video-title" maxlength="160" required></label>

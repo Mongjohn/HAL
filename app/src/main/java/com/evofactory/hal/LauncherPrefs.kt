@@ -33,6 +33,10 @@ class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
         }.getOrNull() ?: VideoBackgroundSettings()
         set(value) = prefs.edit { putString("video_backgrounds", value.toJson().toString()) }
 
+    internal var screensaverHomeView: Int
+        get() = prefs.getInt("screensaver_home_view", 0).coerceAtLeast(0)
+        set(value) = prefs.edit { putInt("screensaver_home_view", value.coerceAtLeast(0)) }
+
     internal var lastDashboardArtwork: String?
         get() = prefs.getString("last_dashboard_artwork", null)
         set(value) = prefs.edit { putString("last_dashboard_artwork", value) }

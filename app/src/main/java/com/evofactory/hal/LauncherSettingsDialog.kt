@@ -97,7 +97,7 @@ internal fun LauncherSettingsDialog(
     val items = remember(tab) { ListFocus() }
     val itemKeys = when (tab) {
         LauncherSettingsTab.Launcher -> listOf("catch", "reopen", "accessibility", "dashboard")
-        LauncherSettingsTab.Background -> listOf("artwork", "local-artwork") +
+        LauncherSettingsTab.Background -> listOf("system-screensaver", "artwork", "local-artwork") +
             if (artworkSettings.useLocal) emptyList()
             else listOf("country", "save-catalog") + streamingServices.map { it.name }
         LauncherSettingsTab.Advanced -> listOf("hours-", "hours+", "memory")

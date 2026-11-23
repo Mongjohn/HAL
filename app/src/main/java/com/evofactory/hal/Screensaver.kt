@@ -339,9 +339,9 @@ fun ScreensaverSettings(
     val state = when {
         !status.readable -> "This TV doesn't let apps see which screensaver is chosen."
         status.enabled == false -> "The TV's screensaver is turned off."
-        isOurs -> "HAL is the TV's screensaver."
+        isOurs -> "HAL Cameras is the TV's screensaver."
         status.chosen == null -> "The TV has no screensaver chosen."
-        else -> context.screensaverName(status.chosen)?.let { "The TV's screensaver is $it, not HAL." }
+        else -> context.screensaverName(status.chosen)?.let { "The TV's screensaver is $it." }
             ?: "The TV's screensaver is set to ${status.chosen.packageName}, which isn't installed."
     }
     val startsAfter = status.startsAfterMs?.takeIf { status.enabled != false && it > 0 && it < Int.MAX_VALUE }
@@ -359,7 +359,7 @@ fun ScreensaverSettings(
         Text(
             (
                 if (hasScreen) {
-                    "Choose HAL in the TV's screensaver settings, with the button above. If it isn't offered there, a computer can choose it over ADB:\n"
+                    "Choose HAL Cameras in the TV's screensaver settings, with the button above. If it isn't offered there, a computer can choose it over ADB:\n"
                 } else if (googleTv) {
                     "Google TV's Settings can't choose another screensaver, but a computer can over ADB:\n"
                 } else {

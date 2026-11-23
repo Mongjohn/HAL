@@ -12,10 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -36,6 +34,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.cancelAndJoin
 import okhttp3.Cache
 import okhttp3.CacheControl
 import okhttp3.OkHttpClient
@@ -64,10 +66,37 @@ private val watchNextServices = catalogServices + setOf(
 internal data class ArtworkLabel(val title: String, val service: String, val year: Int? = null) {
     val captionTitle get() = if (year == null || title.isBlank()) title else "$title ($year)"
 }
-private data class ArtworkSlide(val uri: String, val label: ArtworkLabel)
+internal data class ArtworkSlide(val uri: String, val label: ArtworkLabel)
 
-/** Share the already decoded slideshow frame with the idle window, including an ongoing fade. */
+/** Share the decoded slideshow with Android's dream window, including an ongoing fade. */
 internal data class ArtworkFrame(val current: ImageBitmap?, val incoming: ImageBitmap?, val opacity: State<Float>)
+
+/** One decoded slideshow survives dashboard/dream handoff and ordinary background suspension. */
+internal class ArtworkRotationState {
+    var runner: Job? = null
+    var current by mutableStateOf<ImageBitmap?>(null)
+    var incoming by mutableStateOf<ImageBitmap?>(null)
+    val opacity = Animatable(0f)
+    val queue = ArrayDeque<ArtworkSlide>()
+    var shownUri: String? = null
+    var pendingSlide: ArtworkSlide? = null
+    var slides = emptyList<ArtworkSlide>()
+    var label by mutableStateOf<ArtworkLabel?>(null)
+    val frame get() = ArtworkFrame(current, incoming, opacity.asState())
+}
+
+internal object SharedArtworkRotation {
+    private var settings: ArtworkSettings? = null
+    private var rotation = ArtworkRotationState()
+    fun forSettings(next: ArtworkSettings): ArtworkRotationState {
+        if (settings != next) {
+            rotation.runner?.cancel()
+            settings = next
+            rotation = ArtworkRotationState()
+        }
+        return rotation
+    }
+}
 
 internal fun watchNextArtwork(visible: Set<String>, cards: Map<String, List<WatchNextCard>>): List<WatchNextCard> =
     cards.filterKeys { it in visible && it in watchNextServices }.values.flatten()
@@ -88,8 +117,9 @@ internal fun DashboardArtwork(
     onFrameChanged: (ArtworkFrame?) -> Unit = {},
     dimPercent: Int = 66,
     draw: () -> Boolean = { true },
+    inputsReady: Boolean = true,
 ) {
-    if (!settings.enabled) return
+    if (!settings.enabled || !inputsReady) return
     val context = LocalContext.current.applicationContext
     val native = remember(visibleApps, watchNext) {
         watchNextArtwork(visibleApps.keys, watchNext).mapNotNull { card ->
@@ -102,7 +132,7 @@ internal fun DashboardArtwork(
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         key(settings) {
             val slides = if (settings.useLocal) {
-                val local by produceVisibleState(emptyList<ArtworkSlide>(), localChanges, once = true) {
+                val local by produceVisibleState<List<ArtworkSlide>?>(null, localChanges, once = true) {
                     value = withContext(Dispatchers.IO) {
                         LocalArtwork(context).slides().map {
                             ArtworkSlide("hal-artwork:$it", ArtworkLabel(it.substringAfter('_').substringBeforeLast('.'), "Local artwork"))
@@ -118,81 +148,97 @@ internal fun DashboardArtwork(
                     }.orEmpty()
                 }
                 val cached = catalog
-                if (cached == null) emptyList()
+                if (cached == null) null
                 else remember(native, cached) { (cached + native).distinctBy { it.uri }.take(ARTWORK_LIMIT) }
             }
-            key(slides) { ArtworkRotation(slides, active, onArtworkChanged, onFrameChanged, dimPercent, draw) }
+            val rotation = remember(settings) { SharedArtworkRotation.forSettings(settings) }
+            ArtworkRotation(slides, rotation, active, onArtworkChanged, onFrameChanged, dimPercent, draw)
         }
     }
 }
 
 @Composable
-private fun ArtworkRotation(slides: List<ArtworkSlide>, active: Boolean, onArtworkChanged: (ArtworkLabel?) -> Unit, onFrameChanged: (ArtworkFrame?) -> Unit, dimPercent: Int, draw: () -> Boolean) {
-    if (slides.isEmpty()) return
+private fun ArtworkRotation(slides: List<ArtworkSlide>?, rotation: ArtworkRotationState, active: Boolean, onArtworkChanged: (ArtworkLabel?) -> Unit, onFrameChanged: (ArtworkFrame?) -> Unit, dimPercent: Int, draw: () -> Boolean) {
     val context = LocalContext.current.applicationContext
-    var current by remember { mutableStateOf<ImageBitmap?>(null) }
-    var incoming by remember { mutableStateOf<ImageBitmap?>(null) }
-    val opacity = remember { Animatable(0f) }
-    val queue = remember(slides) { ArrayDeque<ArtworkSlide>() }
-    var shownUri by remember { mutableStateOf<String?>(null) }
-    var pendingSlide by remember { mutableStateOf<ArtworkSlide?>(null) }
-    DisposableEffect(Unit) { onDispose { onArtworkChanged(null); onFrameChanged(null) } }
+    var current by rotation::current
+    var incoming by rotation::incoming
+    val opacity = rotation.opacity
+    val queue = rotation.queue
+    var shownUri by rotation::shownUri
+    var pendingSlide by rotation::pendingSlide
 
-    LaunchedEffect(slides, active) {
-        if (!active) return@LaunchedEffect
-        val client = artworkClient(context)
-        val prefs = LauncherPrefs(context)
-        suspend fun finishFade() {
-            opacity.animateTo(1f, tween(FADE_DURATION))
-            current = incoming
-            incoming = null
-            pendingSlide?.let { slide ->
-                shownUri = slide.uri
-                prefs.lastDashboardArtwork = slide.uri
-                onArtworkChanged(slide.label)
-            }
-            pendingSlide = null
-        }
-        // A stopped window can interrupt a fade; both decoded frames remain immediately drawable.
-        if (incoming != null) finishFade()
-        suspend fun next(): Pair<ArtworkSlide, ImageBitmap>? {
-            val attempted = mutableSetOf<String>()
-            while (attempted.size < slides.size) {
-                if (queue.isEmpty()) {
-                    queue.addAll(slides.shuffled())
-                    // On startup or at the end of a pass, try the previous slide last.
-                    val previousUri = shownUri ?: prefs.lastDashboardArtwork
-                    val previous = queue.firstOrNull { it.uri == previousUri }
-                    if (previous != null) {
-                        queue.remove(previous)
-                        queue.addLast(previous)
-                    }
+    VisibleEffect(slides, active, rotation) {
+        if (!active || slides == null) return@VisibleEffect
+        val runner = currentCoroutineContext().job
+        val previous = rotation.runner
+        rotation.runner = runner
+        try {
+            if (previous !== runner) previous?.cancelAndJoin()
+            if (rotation.slides != slides) {
+                queue.clear()
+                rotation.slides = slides
+                if (slides.isEmpty() || (shownUri != null && slides.none { it.uri == shownUri }) ||
+                    (pendingSlide != null && slides.none { it.uri == pendingSlide?.uri })) {
+                    current = null; incoming = null; shownUri = null; pendingSlide = null; rotation.label = null
                 }
-                val slide = queue.removeFirst()
-                if (!attempted.add(slide.uri) || slide.uri == shownUri) continue
-                val image = withContext(Dispatchers.IO) { loadBackdrop(context, client, slide.uri) }
-                if (image != null) return slide to image
             }
-            return null
-        }
-        while (true) {
-            val pending = async { next() }
-            if (current != null) delay(SLIDE_DURATION)
-            val slide = pending.await()
-            if (slide == null) {
-                // Keep an eligible slide visible if the other files are temporarily unavailable.
-                if (current == null) delay(SLIDE_DURATION)
-                continue
+            if (slides.isEmpty()) return@VisibleEffect
+            val client = artworkClient(context)
+            val prefs = LauncherPrefs(context)
+            suspend fun finishFade() {
+                opacity.animateTo(1f, tween(FADE_DURATION))
+                current = incoming
+                incoming = null
+                pendingSlide?.let { slide ->
+                    shownUri = slide.uri
+                    prefs.lastDashboardArtwork = slide.uri
+                    rotation.label = slide.label
+                }
+                pendingSlide = null
             }
-            opacity.snapTo(0f)
-            incoming = slide.second
-            pendingSlide = slide.first
-            finishFade()
+            // A stopped window can interrupt a fade; both decoded frames remain immediately drawable.
+            if (incoming != null) finishFade()
+            suspend fun next(): Pair<ArtworkSlide, ImageBitmap>? {
+                val attempted = mutableSetOf<String>()
+                while (attempted.size < slides.size) {
+                    if (queue.isEmpty()) {
+                        queue.addAll(slides.shuffled())
+                        // On startup or at the end of a pass, try the previous slide last.
+                        val previousUri = shownUri ?: prefs.lastDashboardArtwork
+                        val previous = queue.firstOrNull { it.uri == previousUri }
+                        if (previous != null) {
+                            queue.remove(previous)
+                            queue.addLast(previous)
+                        }
+                    }
+                    val slide = queue.removeFirst()
+                    if (!attempted.add(slide.uri) || slide.uri == shownUri) continue
+                    val image = withContext(Dispatchers.IO) { loadBackdrop(context, client, slide.uri) }
+                    if (image != null) return slide to image
+                }
+                return null
+            }
+            while (true) {
+                val pending = async { next() }
+                if (current != null) delay(SLIDE_DURATION)
+                val slide = pending.await()
+                if (slide == null) {
+                    // Keep an eligible slide visible if the other files are temporarily unavailable.
+                    if (current == null) delay(SLIDE_DURATION)
+                    continue
+                }
+                opacity.snapTo(0f)
+                incoming = slide.second
+                pendingSlide = slide.first
+                finishFade()
+            }
+        } finally {
+            if (rotation.runner === runner) rotation.runner = null
         }
     }
 
     val frame = remember(current, incoming) { ArtworkFrame(current, incoming, opacity.asState()) }
-    SideEffect { onFrameChanged(frame) }
+    SideEffect { onArtworkChanged(rotation.label); onFrameChanged(frame) }
     ArtworkBackground(frame, dimPercent = dimPercent, draw = draw)
 }
 

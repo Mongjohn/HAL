@@ -4,7 +4,7 @@
   const el = id => document.getElementById(id);
   const panel = el("video-library"), fields = el("video-fields"), status = el("video-status");
   let draft = null, dirty = false, busy = false;
-  const numeric = [["video-switch", "switchSeconds"], ["screensaver-timeout", "idleMinutes"],
+  const numeric = [["video-switch", "switchSeconds"],
     ["dashboard-dim", "dashboardDim"], ["screensaver-dim", "screensaverDim"]];
   const say = text => { status.textContent = text; };
   const validUrl = text => {
@@ -35,7 +35,7 @@
     return data;
   }
   function validate(data) {
-    if (!Number.isSafeInteger(data?.revision) || data.schema !== 2 || !Array.isArray(data?.videos) ||
+    if (!Number.isSafeInteger(data?.revision) || data.schema !== 3 || !Array.isArray(data?.videos) ||
         typeof data.shuffle !== "boolean" || numeric.some(([, key]) => !Number.isInteger(data[key])) ||
         data.videos.some(video => ["background", "screensaver", "randomStart"].some(key => typeof video[key] !== "boolean"))) {
       throw new Error("HAL did not return video settings.");

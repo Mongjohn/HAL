@@ -10,7 +10,7 @@ class VideoBackgroundSettingsTest {
     @Test fun libraryRoundTripPreservesOrderUnicodeTargetsAndQuery() {
         val settings = VideoBackgroundSettings(2,
             videos = listOf(video.copy(background = true, randomStart = true), video.copy(id = "second", title = "Second", screensaver = true)),
-            shuffle = true, switchSeconds = 120, idleMinutes = 3, dashboardDim = 50, screensaverDim = 80)
+            shuffle = true, switchSeconds = 120, dashboardDim = 50, screensaverDim = 80)
         assertEquals(settings, videoBackgroundSettingsFromJson(settings.toJson()))
         assertEquals(VideoBackgroundSettings(), videoBackgroundSettingsFromJson(VideoBackgroundSettings().toJson()))
     }
@@ -73,9 +73,9 @@ class VideoBackgroundSettingsTest {
         assertEquals(listOf(idle, both), settings.videosFor(true))
     }
 
-    @Test fun rejectsInvalidIntervalsTimeoutsAndDimming() {
+    @Test fun rejectsInvalidIntervalsAndDimming() {
         for ((key, values) in mapOf("switchSeconds" to listOf(-1, 1, 9, 86401, 10.5),
-            "idleMinutes" to listOf(-1, 1441, 0.5), "dashboardDim" to listOf(-1, 101), "screensaverDim" to listOf(-1, 101))) {
+            "dashboardDim" to listOf(-1, 101), "screensaverDim" to listOf(-1, 101))) {
             for (value in values) assertThrows("$key=$value", IllegalArgumentException::class.java) {
                 videoBackgroundSettingsFromJson(VideoBackgroundSettings().toJson().put(key, value))
             }
@@ -84,14 +84,16 @@ class VideoBackgroundSettingsTest {
             videoBackgroundSettingsFromJson(VideoBackgroundSettings(switchSeconds = seconds).toJson()).switchSeconds)
     }
 
-    @Test fun customIdleDeadlineOverridesSystemWithoutChangingSystemDefault() {
-        assertEquals(300_000L, halConfiguredIdleTimeout(300_000L, 0))
-        assertEquals(60_000L, halConfiguredIdleTimeout(300_000L, 1))
-        assertEquals(86_400_000L, halConfiguredIdleTimeout(300_000L, 1440))
-        val idle = HalIdleState(0)
-        val timeout = halConfiguredIdleTimeout(300_000L, 1)
-        assertFalse(idle.expire(59_999, timeout))
-        assertTrue(idle.expire(60_000, timeout))
+    @Test fun retiredIdleTimeoutIsIgnoredAndDroppedWithoutLosingSavedSettings() {
+        val original = VideoBackgroundSettings(revision = 12, videos = listOf(video.copy(screensaver = true)),
+            shuffle = true, switchSeconds = 75, dashboardDim = 42, screensaverDim = 81)
+        for (timeout in listOf(0, 1440, -1, "obsolete")) {
+            val old = original.toJson().put("schema", 2).put("idleMinutes", timeout)
+            val migrated = videoBackgroundSettingsFromJson(old)
+            assertEquals(original, migrated)
+            assertFalse(migrated.toJson().has("idleMinutes"))
+            assertEquals(3, migrated.toJson().getInt("schema"))
+        }
     }
 
     @Test fun dimmingPreservesDefaultGradientAndClearBlackEndpoints() {
@@ -101,5 +103,22 @@ class VideoBackgroundSettingsTest {
             assertEquals(1f, backgroundShadeAlpha(base, 100, reference), 0.00001f)
             assertTrue(backgroundShadeAlpha(base, 30, reference) < backgroundShadeAlpha(base, 80, reference))
         }
+    }
+
+    @Test fun dreamHandoffKeepsMatchingPlaybackAndIgnoresLateLauncherDisposal() {
+        val ownership = BackgroundVideoOwnership()
+        val launcher = Any()
+        val dream = Any()
+        val settings = VideoBackgroundSettings(videos = listOf(video))
+        assertTrue(ownership.acquire(launcher, settings, false))
+        assertFalse(ownership.acquire(dream, settings, true))
+        assertFalse(ownership.relinquish(launcher))
+        assertTrue(ownership.relinquish(dream))
+        // Return inside the bounded grace period keeps the same prepared session.
+        assertFalse(ownership.acquire(launcher, settings, true))
+        assertTrue(ownership.relinquish(launcher))
+        ownership.released()
+        assertTrue(ownership.acquire(dream, settings, false))
+        assertTrue(ownership.acquire(launcher, settings.copy(videos = listOf(video.copy(id = "other"))), true))
     }
 }

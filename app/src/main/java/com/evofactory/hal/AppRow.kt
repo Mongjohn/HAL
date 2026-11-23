@@ -163,7 +163,6 @@ fun AllAppsDrawer(apps: List<InstalledApp>, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val first = remember { FocusRequester() }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        TrackHalDialogInput()
         Column(
             Modifier.fillMaxSize().background(cycleUiColor(darkenCycleSurface(MaterialTheme.colorScheme.surface)))
                 .padding(horizontal = EdgePadding, vertical = TopPadding),

@@ -560,7 +560,6 @@ private fun ClipPlayer(
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        TrackHalDialogInput()
         LaunchedEffect(Unit) { focus.requestFocus() }
         Box(
             modifier = Modifier

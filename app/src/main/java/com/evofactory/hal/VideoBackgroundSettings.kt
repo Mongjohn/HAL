@@ -15,12 +15,11 @@ internal data class VideoBackgroundSettings(
     val videos: List<BackgroundVideo> = emptyList(),
     val shuffle: Boolean = false,
     val switchSeconds: Int = 0,
-    val idleMinutes: Int = 0,
     val dashboardDim: Int = 66,
     val screensaverDim: Int = 72,
 ) {
-    fun toJson(): JSONObject = JSONObject().put("revision", revision).put("schema", 2)
-        .put("shuffle", shuffle).put("switchSeconds", switchSeconds).put("idleMinutes", idleMinutes)
+    fun toJson(): JSONObject = JSONObject().put("revision", revision).put("schema", 3)
+        .put("shuffle", shuffle).put("switchSeconds", switchSeconds)
         .put("dashboardDim", dashboardDim).put("screensaverDim", screensaverDim)
         .put("videos", JSONArray(videos.map { video ->
             JSONObject().put("id", video.id).put("title", video.title).put("url", video.url)
@@ -32,7 +31,7 @@ internal fun videoBackgroundSettingsFromJson(json: JSONObject): VideoBackgroundS
     val revision = json.getLong("revision").also { require(it >= 0) { "Invalid video library revision." } }
     val source = json.getJSONArray("videos")
     val legacy = !json.has("schema")
-    require(legacy || json.getInt("schema") == 2) { "Unsupported video settings version." }
+    require(legacy || json.getInt("schema") in 2..3) { "Unsupported video settings version." }
     require(source.length() <= VIDEO_LIBRARY_LIMIT) { "Keep at most $VIDEO_LIBRARY_LIMIT videos in the library." }
     val videos = (0 until source.length()).map { index ->
         val item = source.getJSONObject(index)
@@ -54,14 +53,11 @@ internal fun videoBackgroundSettingsFromJson(json: JSONObject): VideoBackgroundS
     }
     return VideoBackgroundSettings(revision, videos, if (legacy) false else json.getBoolean("shuffle"),
         integer("switchSeconds", 0, 0..86400).also { require(it == 0 || it >= 10) { "Switch videos at least 10 seconds apart." } },
-        integer("idleMinutes", 0, 0..1440), integer("dashboardDim", 66, 0..100), integer("screensaverDim", 72, 0..100))
+        integer("dashboardDim", 66, 0..100), integer("screensaverDim", 72, 0..100))
 }
 
-internal fun VideoBackgroundSettings.videosFor(idle: Boolean): List<BackgroundVideo> =
-    videos.filter { if (idle) it.screensaver else it.background }
-
-internal fun halConfiguredIdleTimeout(systemTimeout: Long, minutes: Int): Long =
-    if (minutes > 0) minutes * 60_000L else systemTimeout
+internal fun VideoBackgroundSettings.videosFor(screensaver: Boolean): List<BackgroundVideo> =
+    videos.filter { if (screensaver) it.screensaver else it.background }
 
 /** Keep the original gradients at the defaults, with truly clear/black endpoints. */
 internal fun backgroundShadeAlpha(base: Float, percent: Int, reference: Int): Float {
@@ -82,5 +78,26 @@ internal fun backgroundVideoStart(duration: Long, seekable: Boolean, random: Boo
     return (upper.toDouble() * fraction.coerceIn(0.0, 0.999999999)).toLong().coerceIn(0, duration - 1)
 }
 
-internal fun backgroundVideoWanted(settings: VideoBackgroundSettings, idle: Boolean, foreground: Boolean, decoderReserved: Boolean): Boolean =
-    foreground && !decoderReserved && settings.videos.any { if (idle) it.screensaver else it.background }
+internal fun backgroundVideoWanted(settings: VideoBackgroundSettings, screensaver: Boolean, foreground: Boolean, decoderReserved: Boolean): Boolean =
+    foreground && !decoderReserved && settings.videos.any { if (screensaver) it.screensaver else it.background }
+
+/** Ownership can transfer before the previous Compose host disposes its effects. */
+internal class BackgroundVideoOwnership {
+    private var owner: Any? = null
+    private var playback: VideoBackgroundSettings? = null
+
+    fun acquire(token: Any, settings: VideoBackgroundSettings, hasSession: Boolean): Boolean {
+        owner = token
+        val restart = playback != settings || !hasSession
+        playback = settings
+        return restart
+    }
+
+    fun relinquish(token: Any): Boolean {
+        if (owner !== token) return false
+        owner = null
+        return true
+    }
+
+    fun released() { playback = null }
+}

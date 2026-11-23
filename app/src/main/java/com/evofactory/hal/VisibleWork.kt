@@ -13,11 +13,11 @@ import kotlinx.coroutines.CoroutineScope
 
 /** Suspend producers, not their remembered values/layout/focus, while the owning window is hidden. */
 @Composable
-internal fun VisibleEffect(vararg keys: Any?, block: suspend CoroutineScope.() -> Unit) {
+internal fun VisibleEffect(vararg keys: Any?, minimumState: Lifecycle.State = Lifecycle.State.STARTED, block: suspend CoroutineScope.() -> Unit) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val current = rememberUpdatedState(block)
-    LaunchedEffect(lifecycle, *keys) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { current.value(this) }
+    LaunchedEffect(lifecycle, minimumState, *keys) {
+        lifecycle.repeatOnLifecycle(minimumState) { current.value(this) }
     }
 }
 
@@ -40,7 +40,7 @@ internal fun <T> produceVisibleState(
     }
 }
 
-/** Only the launcher activity grants permission for catalog jobs; the Home helper never does. */
+/** Launcher visibility; catalog work may also be owned by the visible artwork DreamService. */
 internal object HalForegroundWork {
     @Volatile var visible = false
 }

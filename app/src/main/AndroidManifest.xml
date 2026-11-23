@@ -95,7 +95,20 @@
                 android:resource="@xml/home_override_service" />
         </service>
 
-        <!-- The screensaver: the cameras one after the other, once chosen in the TV's screensaver settings -->
+        <!-- Android owns activation and power behavior for the global artwork screensaver. -->
+        <service
+            android:name=".ArtworkScreensaver"
+            android:exported="true"
+            android:label="@string/artwork_screensaver_label"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data android:name="android.service.dream" android:resource="@xml/artwork_screensaver" />
+        </service>
+
+        <!-- Preserve the separately selected camera screensaver and its saved configuration. -->
         <service
             android:name=".CameraScreensaver"
             android:exported="true"

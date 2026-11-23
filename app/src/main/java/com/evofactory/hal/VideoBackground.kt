@@ -1,5 +1,7 @@
 package com.evofactory.hal
 
+import android.os.Handler
+import android.os.Looper
 import android.content.Context
 import android.view.LayoutInflater
 import androidx.annotation.OptIn
@@ -7,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -17,6 +18,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -165,28 +169,61 @@ private val videoHttp by lazy {
     OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).build()
 }
 
+/** A short paused handoff retains the decoder; a hidden HAL releases it within 750 ms. */
+private object SharedBackgroundVideo {
+    private var controller: BackgroundVideoController? = null
+    private val ownership = BackgroundVideoOwnership()
+    private val handler = Handler(Looper.getMainLooper())
+    private val release = Runnable { controller?.release(); ownership.released() }
+
+    fun controller(context: Context): BackgroundVideoController = controller
+        ?: BackgroundVideoController(context.applicationContext).also { controller = it }
+
+    fun acquire(token: Any, settings: VideoBackgroundSettings) {
+        handler.removeCallbacks(release)
+        val video = controller ?: return
+        if (ownership.acquire(token, settings, video.player != null || video.retryNeeded)) {
+            video.start(settings)
+        } else video.player?.play()
+    }
+
+    fun relinquish(token: Any) {
+        if (!ownership.relinquish(token)) return
+        controller?.player?.pause()
+        handler.postDelayed(release, 750)
+    }
+}
+
 @Composable
-internal fun rememberBackgroundVideo(settings: VideoBackgroundSettings, idle: Boolean, active: Boolean): BackgroundVideoController {
+internal fun rememberBackgroundVideo(settings: VideoBackgroundSettings, screensaver: Boolean, active: Boolean): BackgroundVideoController {
     val context = LocalContext.current.applicationContext
-    val controller = remember(context) { BackgroundVideoController(context) }
+    val controller = remember(context) { SharedBackgroundVideo.controller(context) }
+    val owner = remember { Any() }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     // Revision/target-only changes do not change the playlist or its playback position.
-    val playback = remember(settings.videos, settings.shuffle, idle) {
-        VideoBackgroundSettings(videos = settings.videosFor(idle).map { it.copy(background = false, screensaver = false) }, shuffle = settings.shuffle)
+    val playback = remember(settings.videos, settings.shuffle, screensaver) {
+        VideoBackgroundSettings(videos = settings.videosFor(screensaver).map { it.copy(background = false, screensaver = false) }, shuffle = settings.shuffle)
     }
-    DisposableEffect(playback, active) {
-        if (active) controller.start(playback)
-        onDispose { controller.release() }
+    DisposableEffect(playback, active, lifecycle) {
+        fun update() {
+            if (active && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) SharedBackgroundVideo.acquire(owner, playback)
+            else SharedBackgroundVideo.relinquish(owner)
+        }
+        val observer = LifecycleEventObserver { _, _ -> update() }
+        lifecycle.addObserver(observer)
+        update()
+        onDispose { lifecycle.removeObserver(observer); SharedBackgroundVideo.relinquish(owner) }
     }
-    LaunchedEffect(controller.retryGeneration, playback, active) {
+    VisibleEffect(controller.retryGeneration, playback, active, minimumState = Lifecycle.State.RESUMED) {
         if (active && controller.retryNeeded) { delay(60_000); controller.retry() }
     }
-    LaunchedEffect(controller.player, controller.epoch, controller.hasFrame) {
+    VisibleEffect(controller.player, controller.epoch, controller.hasFrame, active, minimumState = Lifecycle.State.RESUMED) {
         if (controller.player != null && active && !controller.hasFrame) {
             delay(20_000)
             if (!controller.hasFrame) controller.failCurrent()
         }
     }
-    LaunchedEffect(controller.player, controller.itemGeneration, controller.hasFrame, settings.switchSeconds, active) {
+    VisibleEffect(controller.player, controller.itemGeneration, controller.hasFrame, settings.switchSeconds, active, minimumState = Lifecycle.State.RESUMED) {
         // Do not rotate away from an opening source before its first-frame watchdog can run.
         if (active && controller.player != null && controller.hasFrame && settings.switchSeconds > 0) {
             while (true) { delay(settings.switchSeconds * 1_000L); controller.advance() }

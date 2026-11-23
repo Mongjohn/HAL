@@ -283,10 +283,8 @@ fun HaAssistantTab(
     onHomeFocusUnavailable: () -> Unit = {},
     renderApps: (@Composable (DashboardCard, FocusRequester, FocusRequester, Dp, (FocusDirection) -> FocusRequester) -> Unit)? = null,
     onPanelRemoteKey: (KeyEvent, () -> Unit) -> Boolean = { _, _ -> false },
-    onScreensaverPlayersChanged: (List<ScreensaverMediaPlayer>) -> Unit = {},
+    onScreensaverViewChanged: (Int) -> Unit = {},
 ) {
-    val latestPlayersChanged by rememberUpdatedState(onScreensaverPlayersChanged)
-    DisposableEffect(Unit) { onDispose { latestPlayersChanged(emptyList()) } }
     val board = connection.dashboard(dashboard)
     val missing = connection.dashboardMissing(dashboard)
     val reading = dashboard != null && board == null && !missing
@@ -306,12 +304,10 @@ fun HaAssistantTab(
         }
     }
     if (prompt != null) {
-        SideEffect { onScreensaverPlayersChanged(emptyList()) }
         SettingsPrompt(prompt.first, prompt.second, onSetUp, modifier.cycleUiColors())
         return
     }
     if (reading) {
-        SideEffect { onScreensaverPlayersChanged(emptyList()) }
         Text(
             haStatusMessage(connection) ?: "Reading the dashboard…",
             style = MaterialTheme.typography.bodyMedium,
@@ -391,15 +387,7 @@ fun HaAssistantTab(
     val aliases = customLayout?.aliases.orEmpty()
     val templateNames = customLayout?.names ?: board?.names.orEmpty()
     val names = remember(templateNames, aliases) { if (aliases.isEmpty()) templateNames else templateNames + aliases }
-    val visibilityIds = remember(cards, cardOptions) {
-        (cards.flatMap { it.visibility?.entityIds().orEmpty() } +
-            cardOptions.values.flatMap { it.itemVisibility.values.flatMap { item -> item.rule.entityIds() } }).distinct()
-    }
-    val visibilityStates = visibilityIds.map { entities[it]?.state }
-    val screensaverPlayers = remember(cards, cardOptions, names, visibilityStates) {
-        screensaverMediaPlayers(cards, cardOptions, entities, names)
-    }
-    SideEffect { onScreensaverPlayersChanged(screensaverPlayers) }
+    SideEffect { onScreensaverViewChanged(viewIndex) }
     // Up from the top cards: to the views, if there are several, else to the tab
     val cardsUp = viewTabs.getOrNull(viewIndex)?.takeIf { views.size > 1 } ?: tabFocus
     // Roughly in rows of sensors: a weather takes about 5, with its next hours, and a heading 1
