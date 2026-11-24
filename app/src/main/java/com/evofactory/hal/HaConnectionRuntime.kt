@@ -64,8 +64,10 @@ private class VisibleHaConnection(private val config: HaSubscription) {
                     val weather = if (config.weather) weatherEntityIds() else emptyList()
                     // Includes visibility-only references; followEntities reconciles the first snapshot.
                     followEntities((configured + weather).distinct(), connection.entities)
-                    for (id in configured.filter(::isHaWeather)) {
+                    for (id in (configured.filter(::isHaWeather) + weather).distinct()) {
                         followForecast(id, "hourly") { connection.hourly[id] = it }
+                    }
+                    for (id in (configured.filter(::isHaWeather) + weather).distinct()) {
                         followForecast(id, "daily") { connection.daily[id] = it }
                     }
                     connection.session = this

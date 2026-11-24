@@ -55,6 +55,7 @@ private enum class LauncherSettingsTab(val label: String) {
     Launcher("Launcher"),
     Background("Background"),
     Appearance("Appearance"),
+    Weather("Weather"),
     Advanced("Advanced"),
 }
 
@@ -75,6 +76,9 @@ internal fun LauncherSettingsDialog(
     onCardOpacityChanged: (Int?) -> Unit,
     appsCardCollapse: AppsCardCollapse,
     onAppsCardCollapseChanged: (AppsCardCollapse) -> Unit,
+    dashboardForecast: ForecastDisplay,
+    screensaverForecast: ForecastDisplay,
+    onForecastChanged: (ForecastDisplay, ForecastDisplay) -> Unit,
     cycleUiColors: Boolean,
     onCycleUiColorsChanged: (Boolean) -> Unit,
     onArtworkEnabled: (Boolean) -> Unit,
@@ -100,6 +104,7 @@ internal fun LauncherSettingsDialog(
         LauncherSettingsTab.Background -> listOf("system-screensaver", "artwork", "local-artwork") +
             if (artworkSettings.useLocal) emptyList()
             else listOf("country", "save-catalog") + streamingServices.map { it.name }
+        LauncherSettingsTab.Weather -> listOf("dashboard", "screensaver").flatMap { surface -> ForecastDisplay.entries.map { "$surface-${it.value}" } }
         LauncherSettingsTab.Advanced -> listOf("hours-", "hours+", "memory")
         LauncherSettingsTab.Appearance -> LauncherTheme.entries.map { it.name } +
             listOf("opacity-", "opacity+", "opacity-default") +
@@ -144,6 +149,24 @@ internal fun LauncherSettingsDialog(
         contentFocus = { items.currentOrNull(itemKeys) },
     ) {
         LaunchedEffect(Unit) { toggle.requestFocus() }
+        if (tab == LauncherSettingsTab.Weather) {
+            Text("Extended weather", style = MaterialTheme.typography.titleMedium)
+            Text("Choose a forecast for each surface. Off shows current conditions only.", style = MaterialTheme.typography.bodySmall)
+            listOf("dashboard" to dashboardForecast, "screensaver" to screensaverForecast).forEach { (surface, selected) ->
+                Text(if (surface == "dashboard") "Dashboard" else "Screensaver", modifier = Modifier.padding(top = 12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ForecastDisplay.entries.forEach { mode ->
+                        OutlinedButton(onClick = {
+                            if (surface == "dashboard") onForecastChanged(mode, screensaverForecast)
+                            else onForecastChanged(dashboardForecast, mode)
+                        }, modifier = items.row("$surface-${mode.value}").ringToTop(left = mode == ForecastDisplay.Off, right = mode == ForecastDisplay.Daily)) {
+                            Text((if (selected == mode) "✓ " else "") + mode.label)
+                        }
+                    }
+                }
+            }
+            return@TopDialog
+        }
         if (tab == LauncherSettingsTab.Advanced) {
             LauncherAdvancedSettings(
                 showFreeMemory = showFreeMemory,
@@ -274,7 +297,7 @@ private fun AppearanceOptions(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Card opacity", style = MaterialTheme.typography.titleSmall)
+            Text("Base card opacity", style = MaterialTheme.typography.titleSmall)
             OutlinedButton(
                 onClick = { onChange((cardOpacity - 10).coerceAtLeast(0)) },
                 modifier = rowModifier("opacity-", true, false),
@@ -289,6 +312,7 @@ private fun AppearanceOptions(
                 modifier = rowModifier("opacity-default", false, true),
             ) { Text("Use theme default") }
         }
+        Text("Set separate focused and unfocused card opacity in the web editor’s Backgrounds & appearance settings.", style = MaterialTheme.typography.bodySmall)
         Row(
             modifier = Modifier.height(44.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),

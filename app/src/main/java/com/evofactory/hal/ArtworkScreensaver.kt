@@ -165,14 +165,17 @@ private fun SystemArtworkScreensaver(context: Context) {
     }
     val native = remember(watchNext, revision) { watchNextByApp(watchNext, prefs.hiddenWatchNext) }
     val video = rememberBackgroundVideo(settings, true, true)
+    var caption by remember { mutableStateOf<ArtworkLabel?>(null) }
     var frame by remember(artwork) { mutableStateOf<ArtworkFrame?>(SharedArtworkRotation.forSettings(artwork).frame) }
     val theme = remember(revision) { prefs.appearanceTheme }
     val cycling = remember(revision) { prefs.cycleUiColors }
-    HalTheme(prefs.dashboardCardOpacity ?: DefaultCardOpacity, rememberUiColorCycle(cycling, true), theme = theme) {
+    HalTheme(prefs.dashboardCardOpacity ?: DefaultCardOpacity, rememberUiColorCycle(cycling, true), theme = theme,
+        focusedCardOpacity = settings.focusedCardOpacity, unfocusedCardOpacity = settings.unfocusedCardOpacity,
+        dashboardForecast = settings.dashboardForecast, screensaverForecast = settings.screensaverForecast) {
         Box(Modifier.fillMaxSize()) {
-            DashboardArtwork(artwork, apps, native, active = true, onArtworkChanged = {},
+            DashboardArtwork(artwork, apps, native, active = true, onArtworkChanged = { caption = it },
                 onFrameChanged = { frame = it }, draw = { false }, inputsReady = watchNextReady)
-            ArtworkScreensaverContent(frame.takeIf { artwork.enabled }, weather, players, connection, video, settings.screensaverDim)
+            ArtworkScreensaverContent(frame.takeIf { artwork.enabled }, weather, players, connection, video, settings.screensaverDim, caption.takeIf { artwork.enabled })
         }
     }
 }

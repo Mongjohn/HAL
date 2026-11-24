@@ -20,6 +20,10 @@ async function browserChecks() {
   window.confirm = () => true;
   await fetch('/__reset');
   await fetch('/__loadfail');
+  expect(el('tab-dashboard').getAttribute('aria-selected') === 'true', 'dashboard should open first');
+  expect(el('backgrounds-panel').hidden, 'background settings clutter the dashboard');
+  el('tab-backgrounds').click();
+  expect(el('tab-backgrounds').getAttribute('aria-selected') === 'true' && el('dashboard-panel').hidden, 'background workspace navigation');
   el('video-library').open = true;
   await wait(() => el('video-status').textContent.includes('load failed'));
   expect(!el('video-reload').disabled, 'failed initial load cannot be retried');
@@ -41,6 +45,27 @@ async function browserChecks() {
   input('video-switch', '120');
   expect(!el('screensaver-timeout'), 'retired HAL timer still exposed');
   input('dashboard-dim', '55'); input('screensaver-dim', '85');
+  el('card-focused-opacity').value = '80'; el('card-focused-opacity').dispatchEvent(new Event('change'));
+  el('card-unfocused-opacity').value = '20'; el('card-unfocused-opacity').dispatchEvent(new Event('change'));
+  el('dashboard-forecast').value = 'hourly'; el('dashboard-forecast').dispatchEvent(new Event('change'));
+  el('screensaver-forecast').value = 'daily'; el('screensaver-forecast').dispatchEvent(new Event('change'));
+  input('playlist-title', 'Landscapes æøå'); el('playlist-add').requestSubmit();
+  const playlist = el('playlist-list').firstElementChild;
+  expect(!playlist.querySelector('[data-option="playlist-enabled"]').checked, 'new playlists should be opt-in');
+  playlist.querySelector('[data-option="playlist-enabled"]').click();
+  for (const member of playlist.querySelectorAll('[data-option="playlist-member"]')) member.click();
+  expect(el('playlist-overview').textContent.includes('1 playlist enabled'), 'active playlist overview');
+  el('tab-dashboard').click(); el('tab-backgrounds').click();
+  expect(el('playlist-list').firstElementChild.querySelector('input[type=text]').value === 'Landscapes æøå', 'workspace switch lost unsaved draft');
+  el('tab-backgrounds').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight',bubbles:true}));
+  expect(!el('settings-panel').hidden && el('backgrounds-panel').hidden, 'keyboard workspace navigation');
+  el('settings-transfer').open = true;
+  expect(el('settings-transfer').scrollWidth <= el('settings-transfer').clientWidth, 'settings transfer overflow');
+  el('tab-settings').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowLeft',bubbles:true}));
+  expect(!el('backgrounds-panel').hidden, 'keyboard return to backgrounds');
+  const disclosure = el('video-list').children[0].querySelector('details');
+  disclosure.open = false; disclosure.querySelector('summary').click();
+  expect(disclosure.open, 'video disclosure is not usable');
   el('video-list').children[1].querySelector('[aria-label="Move video up"]').click();
   expect(el('video-list').children[1].querySelector('input').value === 'Entré æøå', 'order');
   const first = el('video-list').children[0].querySelector('input');
@@ -55,14 +80,19 @@ async function browserChecks() {
   expect(saved.videos[0].url.endsWith('key=renewed'), 'URL edit not saved');
   expect(!saved.videos[0].background && saved.videos[0].screensaver && !saved.videos[0].randomStart, 'per-video settings leaked');
   expect(saved.videos[1].background && saved.videos[1].screensaver && saved.videos[1].randomStart, 'per-video settings lost on reorder');
+  expect(saved.playlists.length === 1 && saved.playlists[0].enabled && saved.playlists[0].videoIds.length === 2, 'playlist membership was not saved');
+  expect(saved.focusedCardOpacity === 80 && saved.unfocusedCardOpacity === 20, 'independent focus opacity was not saved');
+  expect(saved.dashboardForecast === 'hourly' && saved.screensaverForecast === 'daily', 'independent weather choices were not saved');
   expect(saved.shuffle && saved.switchSeconds === 120 && !Object.hasOwn(saved, 'idleMinutes') && saved.dashboardDim === 55 && saved.screensaverDim === 85, 'timing/dimming settings lost');
   el('video-list').children[0].querySelector('.controls button:last-child').click();
+  expect(el('playlist-list').querySelectorAll('[data-option="playlist-member"]').length === 1, 'removed video remains in playlist picker');
   await fetch('/__stale');
   el('video-save').click();
   await wait(() => el('video-status').textContent.includes('changed'));
   expect(el('video-list').children.length === 1 && !el('video-save').disabled, 'stale save lost draft');
   el('video-reload').click();
   await wait(() => !el('video-fields').disabled && el('video-list').children.length === 2);
+  expect(el('dashboard-forecast').value === 'hourly' && el('screensaver-forecast').value === 'daily', 'weather choices lost on reload');
   option(0, 'background').click();
   await fetch('/__unconfirmed');
   el('video-save').click();
@@ -82,7 +112,7 @@ async function browserChecks() {
 
 async function main() {
   let saved, unconfirmed = false, loadFail = false;
-  const reset = () => { saved = { schema: 3, revision: 0, shuffle: false, switchSeconds: 0, dashboardDim: 66, screensaverDim: 72, videos: [] }; unconfirmed = false; loadFail = false; };
+  const reset = () => { saved = { schema: 4, revision: 0, shuffle: false, switchSeconds: 0, dashboardDim: 66, screensaverDim: 72, playlists: [], dashboardForecast: "off", screensaverForecast: "off", focusedCardOpacity: null, unfocusedCardOpacity: null, videos: [] }; unconfirmed = false; loadFail = false; };
   reset();
   const server = createServer(async (request, response) => {
     const url = request.url.split('?')[0];
@@ -127,13 +157,30 @@ async function main() {
     socket = new WebSocket(targets.find(target => target.type === 'page').webSocketDebuggerUrl);
     await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
     let sequence = 0; const pending = new Map();
-    socket.onmessage = event => { const message = JSON.parse(event.data); if (message.id) pending.get(message.id)?.(message); };
+    socket.onmessage = event => { const message = JSON.parse(event.data); if (message.id) pending.get(message.id)?.(message); else if (message.method === 'Page.javascriptDialogOpening') call('Page.handleJavaScriptDialog', {accept:true}).catch(() => {}); };
     const call = async (method, params) => {
       const id = ++sequence;
       const message = await new Promise(resolve => { pending.set(id, resolve); socket.send(JSON.stringify({ id, method, params })); });
       pending.delete(id); if (message.error) throw new Error(JSON.stringify(message.error)); return message.result;
     };
-    for (const width of [1280, 420]) {
+    await call('Page.enable', {});
+    const evaluate = async expression => {
+      const result = await call('Runtime.evaluate', { expression, returnByValue: true });
+      if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || 'Browser evaluation failed');
+      return result.result.value;
+    };
+    const pointer = (type, x, y, buttons) => call('Input.dispatchMouseEvent', { type, x, y, buttons, ...(type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 }) });
+    async function gesture(selector) {
+      await evaluate('document.querySelector(' + JSON.stringify(selector) + ').scrollIntoView({block:"center",inline:"nearest"})');
+      await sleep(40);
+      const geometry = await evaluate('(() => { const b=document.querySelector(' + JSON.stringify(selector) + ').getBoundingClientRect(), s=getComputedStyle(document.getElementById("grid"));return {x:b.left+b.width/2,y:b.top+b.height/2,dx:parseFloat(s.gridTemplateColumns)+parseFloat(s.columnGap),dy:parseFloat(s.gridTemplateRows)+parseFloat(s.rowGap)};})()');
+      await pointer('mouseMoved', geometry.x, geometry.y, 0);
+      await pointer('mousePressed', geometry.x, geometry.y, 1);
+      for (let n=1;n<=10;n++) { await pointer('mouseMoved',geometry.x+geometry.dx*n/10,geometry.y+geometry.dy*n/10,1); await sleep(12); }
+      await pointer('mouseReleased', geometry.x+geometry.dx, geometry.y+geometry.dy, 0);
+      await sleep(60);
+    }
+    for (const width of [Number(process.env.HAL_TEST_WIDTH)]) {
       await call('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
       await call('Page.navigate', { url: origin + '/?width=' + width });
       await until(async () => (await call('Runtime.evaluate', { expression: `location.search === '?width=${width}' && document.readyState === 'complete'` })).result.value);
@@ -143,8 +190,26 @@ async function main() {
       const png = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       await fs.writeFile(path.resolve(`build/video-editor-${width}.png`), Buffer.from(png.data, 'base64'));
       console.log(`Video library checks passed at ${width}px`);
+      await evaluate('document.getElementById("tab-dashboard").click();document.getElementById("view-settings").open=true;const columns=document.getElementById("columns");columns.value=4;columns.dispatchEvent(new Event("change"));document.getElementById("add-card").click();document.getElementById("view-settings").open=false');
+      await gesture('.tile .tile-title');
+      const moved = await evaluate('({x:Number(document.getElementById("x").value),y:Number(document.getElementById("y").value),h:Number(document.getElementById("h").value)})');
+      assert.ok(moved.x >= 2 && moved.y >= 2, 'real diagonal drag failed: ' + JSON.stringify(moved));
+      await gesture('.tile .resize');
+      const resized = await evaluate('({w:Number(document.getElementById("w").value),h:Number(document.getElementById("h").value)})');
+      assert.ok(resized.w >= 2 && resized.h > moved.h, 'real resize failed: ' + JSON.stringify(resized));
+      await evaluate('document.getElementById("dashboard-panel").scrollIntoView({block:"start"})');
+      const dashboard = await call('Page.captureScreenshot', {format:'png', captureBeyondViewport:false});
+      await fs.writeFile(path.resolve(`build/dashboard-editor-${width}.png`), Buffer.from(dashboard.data,'base64'));
+      console.log(`Dashboard pointer checks passed at ${width}px`);
     }
     await call('Browser.close', {});
   } finally { socket?.close(); browser.kill(); await new Promise(resolve => server.close(resolve)); }
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+async function runWidths() {
+  if (process.env.HAL_TEST_WIDTH) return main();
+  for (const width of [1280, 420]) await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [__filename], {env:{...process.env, HAL_TEST_WIDTH:String(width)},stdio:'inherit',windowsHide:true});
+    child.on('error', reject); child.on('exit', code => code === 0 ? resolve() : reject(new Error('Browser check failed at ' + width + 'px')));
+  });
+}
+runWidths().catch(error => { console.error(error); process.exitCode = 1; });

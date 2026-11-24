@@ -115,7 +115,7 @@ internal fun CalmMediaRow(
                             onFocused(slot.cardKey, it.hasFocus)
                         }
                         .focusGroup()
-                        .dashboardCard(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp), cyclePaints = true)
+                        .dashboardCard(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp), cyclePaints = true, focused = focused?.let { it.cardKey == slot.cardKey && it.id == slot.id } == true)
                         .padding(horizontal = 10.dp, vertical = MediaPanelVerticalPadding),
                         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         val playerName = names[slot.id] ?: entity?.name ?: slot.id

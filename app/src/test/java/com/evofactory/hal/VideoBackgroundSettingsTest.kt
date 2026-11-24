@@ -45,7 +45,8 @@ class VideoBackgroundSettingsTest {
     }
 
     @Test fun targetsAreIndependentAndOnlyTheForegroundRequestedSurfacePlays() {
-        val both = VideoBackgroundSettings(videos = listOf(video.copy(background = true, screensaver = true)))
+        val both = VideoBackgroundSettings(videos = listOf(video.copy(background = true, screensaver = true)),
+            playlists = listOf(VideoPlaylist("on", "On", listOf(video.id), true)))
         assertTrue(backgroundVideoWanted(both, false, true, false))
         assertTrue(backgroundVideoWanted(both, true, true, false))
         assertFalse(backgroundVideoWanted(both, true, false, false))
@@ -68,7 +69,8 @@ class VideoBackgroundSettingsTest {
         val dashboard = video.copy(background = true)
         val idle = video.copy(id = "idle", screensaver = true, randomStart = true)
         val both = video.copy(id = "both", background = true, screensaver = true)
-        val settings = VideoBackgroundSettings(videos = listOf(video.copy(id = "disabled"), dashboard, idle, both))
+        val settings = VideoBackgroundSettings(videos = listOf(video.copy(id = "disabled"), dashboard, idle, both),
+            playlists = listOf(VideoPlaylist("on", "On", listOf("disabled", dashboard.id, idle.id, both.id), true)))
         assertEquals(listOf(dashboard, both), settings.videosFor(false))
         assertEquals(listOf(idle, both), settings.videosFor(true))
     }
@@ -86,13 +88,14 @@ class VideoBackgroundSettingsTest {
 
     @Test fun retiredIdleTimeoutIsIgnoredAndDroppedWithoutLosingSavedSettings() {
         val original = VideoBackgroundSettings(revision = 12, videos = listOf(video.copy(screensaver = true)),
-            shuffle = true, switchSeconds = 75, dashboardDim = 42, screensaverDim = 81)
+            shuffle = true, switchSeconds = 75, dashboardDim = 42, screensaverDim = 81,
+            playlists = listOf(VideoPlaylist("existing-videos", "Existing videos", listOf(video.id), true)))
         for (timeout in listOf(0, 1440, -1, "obsolete")) {
             val old = original.toJson().put("schema", 2).put("idleMinutes", timeout)
             val migrated = videoBackgroundSettingsFromJson(old)
             assertEquals(original, migrated)
             assertFalse(migrated.toJson().has("idleMinutes"))
-            assertEquals(3, migrated.toJson().getInt("schema"))
+            assertEquals(4, migrated.toJson().getInt("schema"))
         }
     }
 
@@ -120,5 +123,60 @@ class VideoBackgroundSettingsTest {
         ownership.released()
         assertTrue(ownership.acquire(dream, settings, false))
         assertTrue(ownership.acquire(launcher, settings.copy(videos = listOf(video.copy(id = "other"))), true))
+    }
+
+    @Test fun enabledPlaylistsSelectAUnionWithoutReorderingOrDuplicatingVideos() {
+        val a = video.copy(id = "a", background = true, screensaver = true)
+        val b = video.copy(id = "b", screensaver = true)
+        val c = video.copy(id = "c", background = true)
+        val settings = VideoBackgroundSettings(videos = listOf(a, b, c), playlists = listOf(
+            VideoPlaylist("first", "First", listOf("b", "a"), true),
+            VideoPlaylist("second", "Second", listOf("a", "c"), true)))
+        assertEquals(listOf(a, b), settings.videosFor(true))
+        assertEquals(listOf(a, c), settings.videosFor(false))
+        assertEquals(settings, videoBackgroundSettingsFromJson(settings.toJson()))
+        assertTrue(settings.copy(playlists = settings.playlists.map { it.copy(enabled = false) }).videosFor(false).isEmpty())
+        assertFalse(backgroundVideoWanted(settings.copy(playlists = emptyList()), false, true, false))
+    }
+
+    @Test fun oldLibrariesMigrateToAnEnabledPlaylistButFreshLibrariesNeedExplicitSelection() {
+        val old = VideoBackgroundSettings(videos = listOf(video.copy(background = true))).toJson()
+            .put("schema", 3).put("idleMinutes", 17)
+        old.remove("playlists")
+        val migrated = videoBackgroundSettingsFromJson(old)
+        assertEquals(listOf(video.id), migrated.playlists.single().videoIds)
+        assertTrue(migrated.playlists.single().enabled)
+        assertEquals(1, migrated.videosFor(false).size)
+        assertTrue(VideoBackgroundSettings(videos = migrated.videos).videosFor(false).isEmpty())
+    }
+
+    @Test fun optionalForecastModesAreIndependentAndValidated() {
+        val settings = VideoBackgroundSettings(dashboardForecast = ForecastDisplay.Hourly, screensaverForecast = ForecastDisplay.Daily)
+        assertEquals(settings, videoBackgroundSettingsFromJson(settings.toJson()))
+        val old = settings.toJson().also { it.remove("dashboardForecast"); it.remove("screensaverForecast") }
+        assertEquals(ForecastDisplay.Off, videoBackgroundSettingsFromJson(old).dashboardForecast)
+        assertEquals(ForecastDisplay.Off, videoBackgroundSettingsFromJson(old).screensaverForecast)
+        for (key in listOf("dashboardForecast", "screensaverForecast")) {
+            assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.toJson().put(key, "both")) }
+            assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.toJson().put(key, JSONObject.NULL)) }
+        }
+    }
+
+    @Test fun playlistMembershipAndIndependentOpacityAreValidated() {
+        val settings = VideoBackgroundSettings(videos = listOf(video), playlists = listOf(VideoPlaylist("one", "One", listOf(video.id), true)),
+            focusedCardOpacity = 90, unfocusedCardOpacity = 10)
+        assertEquals(settings, videoBackgroundSettingsFromJson(settings.toJson()))
+        assertEquals(settings.copy(focusedCardOpacity = null), videoBackgroundSettingsFromJson(settings.copy(focusedCardOpacity = null).toJson()))
+        for (ids in listOf(listOf("missing"), listOf(video.id, video.id))) {
+            assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.copy(
+                playlists = listOf(VideoPlaylist("one", "One", ids))).toJson()) }
+        }
+        for (key in listOf("focusedCardOpacity", "unfocusedCardOpacity")) for (value in listOf(-1, 101, 50.5)) {
+            assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.toJson().put(key, value)) }
+        }
+        assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.copy(
+            playlists = List(25) { VideoPlaylist("p$it", "Playlist", emptyList()) }).toJson()) }
+        assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.copy(
+            playlists = listOf(VideoPlaylist("same", "One", emptyList()), VideoPlaylist("same", "Two", emptyList()))).toJson()) }
     }
 }

@@ -127,9 +127,19 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    /** Explicit activity intent, also usable with adb shell am start. Does not persist across launches. */
+    private fun handleEditorIntent(intent: Intent) {
+        if (intent.action == "com.evofactory.hal.ENABLE_WEB_EDITOR") {
+            dashboardEditorEnabled = true
+            dashboardEditorInfoOpen = true
+            intent.action = Intent.ACTION_MAIN
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (intent.action == ACTION_FOCUS_HAL_HOME) homeFocusRequest++
+        handleEditorIntent(intent)
         // Last time's list: the tiles and the selection are there from the first frame
         installed = prefs.installedApps.ifEmpty { null }
         order = prefs.order
@@ -192,7 +202,9 @@ class MainActivity : ComponentActivity() {
                 onDispose { if (registered) contentResolver.unregisterContentObserver(observer) }
             }
             val cardOpacity = cardOpacityOverride ?: DefaultCardOpacity
-            HalTheme(cardOpacity, rememberUiColorCycle(cycleUiColors, resumed), theme = appearanceTheme) {
+            HalTheme(cardOpacity, rememberUiColorCycle(cycleUiColors, resumed), theme = appearanceTheme,
+                focusedCardOpacity = videoBackgrounds.focusedCardOpacity, unfocusedCardOpacity = videoBackgrounds.unfocusedCardOpacity,
+                dashboardForecast = videoBackgrounds.dashboardForecast, screensaverForecast = videoBackgrounds.screensaverForecast) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val all = installed
                     val visible = remember(all, order, hidden) { all?.let { arrange(it, order, hidden) } }
@@ -731,6 +743,13 @@ class MainActivity : ComponentActivity() {
                                 appsCardCollapse = collapse
                                 prefs.appsCardCollapse = collapse
                             },
+                            dashboardForecast = videoBackgrounds.dashboardForecast,
+                            screensaverForecast = videoBackgrounds.screensaverForecast,
+                            onForecastChanged = { dashboard, screensaver ->
+                                videoBackgrounds = videoBackgrounds.copy(revision = videoBackgrounds.revision + 1,
+                                    dashboardForecast = dashboard, screensaverForecast = screensaver)
+                                prefs.videoBackgrounds = videoBackgrounds
+                            },
                             cycleUiColors = cycleUiColors,
                             onCycleUiColorsChanged = { enabled ->
                                 cycleUiColors = enabled
@@ -912,6 +931,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == ACTION_FOCUS_HAL_HOME) homeFocusRequest++
+        handleEditorIntent(intent)
     }
 
     override fun onResume() {

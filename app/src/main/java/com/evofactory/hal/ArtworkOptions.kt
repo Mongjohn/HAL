@@ -51,7 +51,7 @@ internal fun ArtworkOptions(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("Manage videos and background dimming in the web editor’s Backgrounds & screensaver section. Choose HAL Artwork and its activation delay in Android TV screensaver settings.", style = MaterialTheme.typography.bodySmall)
+        Text("Manage videos and background dimming in the web editor’s Backgrounds & appearance section. Choose HAL Artwork and its activation delay in Android TV screensaver settings.", style = MaterialTheme.typography.bodySmall)
         Button(onClick = { context.openScreensaverSettings() }, modifier = rowModifier("system-screensaver")) { Text("Android TV screensaver settings") }
         HomeOption(
             title = "Artwork slideshow",

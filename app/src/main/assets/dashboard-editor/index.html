@@ -11,15 +11,89 @@
 <body>
   <header>
     <h1>HAL Dashboard Editor</h1>
-    <div class="controls">
+    <div class="controls header-actions">
       <a href="/api/logs" download="hal-logs.txt">Download HAL logs</a>
       <button id="undo" disabled>Undo</button>
       <button id="restore" disabled>Restore previous layout</button>
       <button id="apply" class="primary" disabled>Apply to TV</button>
     </div>
   </header>
+  <nav class="workspace-tabs" role="tablist" aria-label="Editor workspace">
+    <button role="tab" id="tab-dashboard" data-workspace="dashboard" aria-controls="dashboard-panel" aria-selected="true">Dashboard</button>
+    <button role="tab" id="tab-backgrounds" data-workspace="backgrounds" aria-controls="backgrounds-panel" aria-selected="false" tabindex="-1">Backgrounds &amp; appearance</button>
+    <button role="tab" id="tab-settings" data-workspace="settings" aria-controls="settings-panel" aria-selected="false" tabindex="-1">Settings transfer</button>
+  </nav>
   <p id="apply-result" role="status" hidden></p>
   <p id="status" role="status">Loading dashboard…</p>
+  <section id="backgrounds-panel" data-workspace-panel="backgrounds" role="tabpanel" aria-labelledby="tab-backgrounds" hidden>
+    <div class="section-heading"><div><h2>Backgrounds &amp; appearance</h2><p class="hint">Choose what plays and how it looks. Save these settings independently of your dashboard.</p></div></div>
+  <details id="video-library">
+    <summary>Video backgrounds &amp; playlists</summary>
+    <fieldset id="video-fields" disabled>
+      <section class="settings-block" aria-label="Video playlists">
+        <div class="section-heading"><h2>Active playlists</h2><span class="hint">Up to 24</span></div>
+        <p id="playlist-overview" class="hint" role="status"></p>
+        <p class="hint">Enable one or more playlists. HAL combines their videos once, then applies each video’s screen choices. Playlists select videos; they do not set playback order.</p>
+        <ul id="playlist-list" class="entry-list"></ul>
+        <form id="playlist-add" class="controls"><label>Playlist name<input id="playlist-title" maxlength="160" required placeholder="e.g. Landscapes"></label><button id="playlist-add-button" type="submit">Create playlist</button></form>
+      </section>
+      <details class="settings-block" id="background-options">
+        <summary>Playback &amp; dimming</summary>
+        <div class="controls">
+        <label><input id="video-shuffle" type="checkbox"> Shuffle videos</label>
+        <label>Switch video after (seconds)<input id="video-switch" type="number" min="0" max="86400" step="1"></label>
+        <label>Dashboard background dimming (%)<input id="dashboard-dim" type="number" min="0" max="100" step="1"></label>
+        <label>Screensaver background dimming (%)<input id="screensaver-dim" type="number" min="0" max="100" step="1"></label>
+      </div>
+      <p class="hint">0 plays to the end. Otherwise switch every 10–86400 seconds. Random starts need a known, seekable duration. Dimming changes images and videos, leaving text readable.</p>
+      </details>
+      <details class="settings-block" id="weather-options">
+        <summary>Extended weather</summary>
+        <p class="hint">Choose one forecast for each surface. Off shows current conditions only. Availability depends on your Home Assistant weather provider.</p>
+        <div class="controls">
+          <label>Dashboard forecast<select id="dashboard-forecast"><option value="off">Off</option><option value="hourly">Hourly</option><option value="daily">5-day</option></select></label>
+          <label>Screensaver forecast<select id="screensaver-forecast"><option value="off">Off</option><option value="hourly">Hourly</option><option value="daily">5-day</option></select></label>
+        </div>
+      </details>
+      <details class="settings-block" id="card-opacity-options">
+        <summary>Dashboard card appearance</summary>
+        <div class="controls">
+          <label>Focused card opacity<select id="card-focused-opacity"><option value="">Use TV base opacity</option></select></label>
+          <label>Unfocused card opacity<select id="card-unfocused-opacity"><option value="">Use TV base opacity</option></select></label>
+        </div>
+        <p class="hint">0% is transparent, 100% is solid. Text, artwork and focus outlines remain visible. These overrides apply across Glass, Glass Dark and Calm.</p>
+      </details>
+      <section class="settings-block" aria-label="Video library">
+      <div class="section-heading"><h2>Video library</h2><span class="hint">Up to 50</span></div>
+      <p class="hint">Add a direct MP4 or WebM link, then include it in a playlist. Open a video to edit its name, URL and screen choices.</p>
+      <ol id="video-list"></ol>
+      <form id="video-add" class="controls">
+        <label>Name <input id="video-title" maxlength="160" required></label>
+        <label>Direct video URL <input id="video-url" type="url" maxlength="4096" placeholder="https://example.com/background.mp4" required></label>
+        <button id="video-add-button" type="submit">Add video</button>
+      </form>
+      </section>
+      <div class="controls save-row"><button id="video-save" class="primary" disabled>Save backgrounds &amp; appearance</button></div>
+    </fieldset>
+    <button id="video-reload" type="button">Reload saved settings</button>
+    <p id="video-status" role="status"></p>
+    <details class="help-disclosure"><summary>Formats, privacy &amp; Android activation</summary>
+      <p class="hint">Use direct HTTP(S) video files supported by your TV. Playback is muted. Webpage links, HLS/DASH and DRM are not supported. Unplayable videos fall back to artwork. URLs may contain private query tokens and are fetched by the TV.</p>
+      <p class="hint">Select HAL Artwork in Android TV’s screensaver settings. Android controls activation and sleep. Background settings save separately from dashboard drafts and are not included in settings-file exports.</p>
+    </details>
+  </details>
+  <details id="artwork-library">
+    <summary>Slideshow artwork</summary>
+    <p class="hint">On the TV, open HAL settings → Background and enable Artwork slideshow and Use local artwork. JPEG, PNG, or WebP, up to 8 MB each.</p>
+    <div class="controls">
+      <label>Images <input id="artwork-files" type="file" accept="image/jpeg,image/png,image/webp" multiple></label>
+      <button id="artwork-upload" disabled>Upload</button>
+    </div>
+    <p id="artwork-status" role="status"></p>
+    <ul id="artwork-list"></ul>
+  </details>
+  </section>
+  <section id="settings-panel" data-workspace-panel="settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
   <details id="settings-transfer" inert>
     <summary>Import / export settings</summary>
     <p class="hint">Export saved TV settings, or choose parts of a HAL settings JSON file to import. Browser drafts are not exported. Uploaded artwork and appearance settings are not included.</p>
@@ -36,60 +110,30 @@
     </fieldset>
     <p id="settings-result" role="status"></p>
   </details>
-  <details id="artwork-library">
-    <summary>Slideshow artwork</summary>
-    <p class="hint">On the TV, open HAL settings → Background and enable Artwork slideshow and Use local artwork. JPEG, PNG, or WebP, up to 8 MB each.</p>
-    <div class="controls">
-      <label>Images <input id="artwork-files" type="file" accept="image/jpeg,image/png,image/webp" multiple></label>
-      <button id="artwork-upload" disabled>Upload</button>
-    </div>
-    <p id="artwork-status" role="status"></p>
-    <ul id="artwork-list"></ul>
-  </details>
-  <details id="video-library">
-    <summary>Backgrounds &amp; screensaver</summary>
-    <p class="hint">Maintain up to 50 direct HTTP(S) video links, such as MP4 or WebM files. Webpage links and adaptive playlists are not supported. Playback is muted. The TV must support the video's codec. Unplayable videos fall back to artwork.</p>
-    <p class="hint">Choose dashboard/screensaver use and random starts for each video. These settings save separately from dashboard drafts and are not included in settings-file exports. Links are fetched by the TV and can contain private query tokens; use trusted sources.</p>
-    <fieldset id="video-fields" disabled>
-      <div class="controls">
-        <label><input id="video-shuffle" type="checkbox"> Shuffle videos</label>
-        <label>Switch video after (seconds)<input id="video-switch" type="number" min="0" max="86400" step="1"></label>
-        <label>Dashboard background dimming (%)<input id="dashboard-dim" type="number" min="0" max="100" step="1"></label>
-        <label>Screensaver background dimming (%)<input id="screensaver-dim" type="number" min="0" max="100" step="1"></label>
-      </div>
-      <p class="hint">Switch interval: 0 plays to the end; otherwise use 10–86400 seconds. Shorter videos advance at their end. Only videos enabled for the current surface participate, in saved order or shuffled. A single video repeats. Random starts apply once its seekable duration is known; live or non-seekable files start normally.</p>
-      <p class="hint">Select HAL Artwork in Android TV’s screensaver settings. Android controls activation timing and sleep across apps; HAL has no separate idle timeout. Dimming affects images and videos, with 0% clear and 100% black; controls and the moving widget stay readable. Artwork remains the fallback when no eligible video can play.</p>
-      <ol id="video-list"></ol>
-      <form id="video-add" class="controls">
-        <label>Name <input id="video-title" maxlength="160" required></label>
-        <label>Direct video URL <input id="video-url" type="url" maxlength="4096" placeholder="https://example.com/background.mp4" required></label>
-        <button id="video-add-button" type="submit">Add video</button>
-      </form>
-      <div class="controls"><button id="video-save" disabled>Save background settings</button></div>
-    </fieldset>
-    <button id="video-reload" type="button">Reload saved settings</button>
-    <p id="video-status" role="status"></p>
-  </details>
+  </section>
+  <section id="dashboard-panel" data-workspace-panel="dashboard" role="tabpanel" aria-labelledby="tab-dashboard">
   <main id="workspace" hidden>
     <section class="preview" aria-label="Dashboard preview">
       <div class="controls">
-        <label>Surface <select id="surface"><option value="home">Home panel</option></select></label>
+        <label class="surface-field">Surface <select id="surface"><option value="home">Home panel</option></select></label>
         <label>View <select id="page"></select></label>
         <button id="add-page">Add view</button>
         <button id="remove-page">Remove view</button>
+        <button id="add-card">Add card</button>
+        <button id="add-apps" hidden>Add Apps card</button>
       </div>
+      <details id="view-settings" class="view-settings"><summary>View layout &amp; template</summary>
       <div class="controls">
         <label>View title <input id="page-title" maxlength="160"></label>
         <label>Total columns <input id="columns" type="number" min="1" max="24"></label>
         <label>Columns on screen <select id="columns-per-screen"></select></label>
         <label id="dock-label"><input id="dock" type="checkbox"> Show Frigate previews</label>
-        <button id="add-card">Add card</button>
-        <button id="add-apps" hidden>Add Apps card</button>
       </div>
       <div class="controls">
         <label>Home Assistant template <select id="template"></select></label>
         <button id="use-template" disabled>Use template</button>
       </div>
+      </details>
       <div class="screen">
         <div id="camera" hidden>Camera</div>
         <div id="grid-viewport" aria-label="Dashboard viewport" tabindex="0">
@@ -160,5 +204,6 @@
       </div>
     </aside>
   </main>
+  </section>
 </body>
 </html>

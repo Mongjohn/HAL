@@ -356,7 +356,8 @@ fun SensorReading(
     val state = entity?.state
     val cue = haStateCue(domain, entity?.deviceClass, state)
     val defaultIcon = defaultHaIcon(domain, entity?.deviceClass, state.orEmpty())
-    val color = if (iconColor != Color.Unspecified) iconColor else
+    val color = if (domain == "light" && state == "on") reportedLightColor(entity) ?: HaStateTone.Active.color(textColor)
+        else if (iconColor != Color.Unspecified) iconColor else
         (cue?.tone ?: HaStateTone.Neutral).color(textColor)
     val iconOnly = cue?.iconOnly == true
     val reading = if (iconOnly) {
@@ -381,7 +382,7 @@ fun SensorReading(
             color = textColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).then(if (domain == "light") Modifier.cycleUiColors() else Modifier),
         )
         if (reading == null) return@Row
         // No unit in a reading that's only a dash

@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
@@ -152,7 +154,7 @@ internal fun DashboardAppsCard(
                         clipRect { translate(top = offset) { this@drawWithContent.drawContent() } }
                     }
                 }
-                .dashboardCard(MaterialTheme.colorScheme.surfaceVariant, shape, cyclePaints = true)
+                .dashboardCard(MaterialTheme.colorScheme.surfaceVariant, shape, cyclePaints = true, focused = focusedApp != null || emptyFocused)
                 .then(if (first == null) Modifier.focusRequester(target).focusRequester(homeTarget)
                     .onFocusChanged { if (it.isFocused || currentVisible.isEmpty()) emptyFocused = it.isFocused }
                     .focusProperties {
@@ -232,10 +234,11 @@ internal fun DashboardAppsCard(
                     }
                     if (singleRowViewport && focusedRow >= 0) {
                         val indicators = appsRowIndicators(rows, hidden, focusedRow)
-                        if (indicators.first) MdiIcon("chevron-up", Modifier.align(Alignment.TopEnd).cycleUiColors()
-                            .semantics { hideFromAccessibility() }, size = 14.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (indicators.second) MdiIcon("chevron-down", Modifier.align(Alignment.BottomEnd).cycleUiColors()
-                            .semantics { hideFromAccessibility() }, size = 14.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val hintColor = cycleUiColor(MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.85f)
+                        if (indicators.first) Box(Modifier.align(Alignment.TopCenter).offset(y = -appsRowHintOutset(10f, 2f, 2f).dp).width(32.dp).height(2.dp)
+                            .background(hintColor, RoundedCornerShape(50)).semantics { hideFromAccessibility() })
+                        if (indicators.second) Box(Modifier.align(Alignment.BottomCenter).offset(y = appsRowHintOutset(10f, 2f, 2f).dp).width(32.dp).height(2.dp)
+                            .background(hintColor, RoundedCornerShape(50)).semantics { hideFromAccessibility() })
                     }
                 }
             }
@@ -287,3 +290,7 @@ internal fun neighboringCard(card: DashboardCard, cards: List<DashboardCard>, di
 private val AppsRowOwnsScroll = object : BringIntoViewSpec {
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = 0f
 }
+
+/** Moves a hint from the padded viewport edge to the midpoint of the existing icon/rim gap. */
+internal fun appsRowHintOutset(cardInset: Float, tileInset: Float, lineHeight: Float): Float =
+    (cardInset - tileInset + lineHeight) / 2f

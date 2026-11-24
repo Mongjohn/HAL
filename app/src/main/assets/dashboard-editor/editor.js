@@ -1333,3 +1333,21 @@ artworkUpload.addEventListener("click", () => changeArtwork(async () => {
   }
   return listing;
 }));
+
+// Keep dashboard drafts and independent background drafts alive while switching workspaces.
+(() => {
+  const tabs = [...document.querySelectorAll('[data-workspace]')];
+  function select(tab) {
+    for (const item of tabs) { const selected = item === tab; item.setAttribute('aria-selected', selected); item.tabIndex = selected ? 0 : -1; }
+    for (const panel of document.querySelectorAll('[data-workspace-panel]')) panel.hidden = panel.dataset.workspacePanel !== tab.dataset.workspace;
+    for (const action of ['undo', 'restore', 'apply']) document.getElementById(action).hidden = tab.dataset.workspace !== 'dashboard';
+    if (tab.dataset.workspace === 'backgrounds') document.getElementById('video-library').open = true;
+  }
+  tabs.forEach((tab, index) => {
+    tab.onclick = () => select(tab);
+    tab.onkeydown = event => {
+      const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
+      if (next < 0) return; event.preventDefault(); select(tabs[next]); tabs[next].focus();
+    };
+  });
+})();
