@@ -979,7 +979,6 @@ private fun AssistantCard(
                 scaleX = scale
                 scaleY = scale
             }
-            .then(if (mediaOnly) Modifier else Modifier.cycleUiColors())
             .onFocusChanged { onCardFocusChanged(it.hasFocus) }
             .focusGroup()
             .onPreviewKeyEvent { event ->
@@ -1049,14 +1048,14 @@ private fun AssistantCard(
             .then(
                 when {
                     mediaOnly -> Modifier
-                    focused -> Modifier.border(DashboardFocusStroke, shape)
-                    entered -> Modifier.border(1.dp, DashboardPanelOutline, shape)
+                    focused -> Modifier.border(BorderStroke(2.dp, cycleUiColor(DashboardFocusColor)), shape)
+                    entered -> Modifier.border(1.dp, cycleUiColor(DashboardPanelOutline), shape)
                     else -> Modifier
                 },
             )
             .heightIn(min = minHeight ?: Dp.Unspecified, max = maxHeight ?: Dp.Unspecified)
             .then(if (mediaOnly) Modifier else Modifier
-                .dashboardCard(if (entered) RaisedSurface else colors.surfaceVariant, shape)
+                .dashboardCard(if (entered) RaisedSurface else colors.surfaceVariant, shape, cyclePaints = true, focused = focused || entered)
                 .padding(horizontal = CardSidePadding, vertical = if (maxHeight != null) 0.dp else 12.dp)),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1179,7 +1178,10 @@ private fun CardContent(
                     layout(item.width, item.height) {}
                 }) { Entity(position) }
             } else {
-                Entity(position, headings, footer)
+                val id = card.ids[position]
+                val light = id.startsWith("light.") && id !in card.gauges && id !in card.graphs
+                if (card.isMediaOnly) Entity(position, headings, footer)
+                else Box(if (light) Modifier else Modifier.cycleUiColors()) { Entity(position, headings, footer) }
             }
         }
     }
@@ -1209,12 +1211,12 @@ private fun CardContent(
         }
         return
     }
-    if (card.title.isNotEmpty()) CardHeading(card.title)
+    if (card.title.isNotEmpty()) CardHeading(card.title, Modifier.cycleUiColors())
     var nextHeading = 0
     for (row in rows) {
         val first = row.first()
         for (index in nextHeading..first) {
-            card.subtitles[index]?.let { CardHeading(it, Modifier.padding(top = 8.dp)) }
+            card.subtitles[index]?.let { CardHeading(it, Modifier.padding(top = 8.dp).cycleUiColors()) }
         }
         nextHeading = row.last() + 1
         if (row.size == 1 && first in halfWidthItems && !card.isFullWidth(card.ids[first])) {
@@ -1224,9 +1226,9 @@ private fun CardContent(
         }
     }
     for (index in nextHeading until card.ids.size) {
-        card.subtitles[index]?.let { CardHeading(it, Modifier.padding(top = 8.dp)) }
+        card.subtitles[index]?.let { CardHeading(it, Modifier.padding(top = 8.dp).cycleUiColors()) }
     }
-    card.subtitles[card.ids.size]?.let { CardHeading(it) }
+    card.subtitles[card.ids.size]?.let { CardHeading(it, Modifier.cycleUiColors()) }
 }
 
 @Composable
@@ -1307,21 +1309,24 @@ private fun StatefulControlRow(
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
     val ready = connection.session != null
-    val focusBorder = if (showMedia) Border(BorderStroke(2.dp, cycleUiColor(DashboardFocusColor))) else DashboardFocusBorder
+    val light = id.startsWith("light.")
+    var rowFocused by remember { mutableStateOf(false) }
+    val focusBorder = if (showMedia || light) Border(BorderStroke(2.dp, cycleUiColor(DashboardFocusColor))) else DashboardFocusBorder
     val border = when {
         groupFocused && showMedia -> focusBorder
         showMedia -> Border(BorderStroke(1.dp, cycleUiColor(DashboardPanelOutline)))
         else -> Border.None
     }
     val container = if (showMedia) cycleUiColor(darkenCycleSurface(colors.surfaceVariant))
-        .copy(alpha = LocalDashboardCardOpacity.current / 100f)
+        .copy(alpha = (if (groupFocused || rowFocused) LocalFocusedCardOpacity.current else LocalDashboardCardOpacity.current) / 100f)
         else Color.Transparent
     val secondary = if (showMedia) cycleUiColor(colors.onSurfaceVariant) else colors.onSurfaceVariant
-    val focusedBackground = if (showMedia) cycleUiColor(darkenCycleSurface(HigherSurface)) else HigherSurface
+    val focusedBackground = if (showMedia) cycleUiColor(darkenCycleSurface(HigherSurface)).copy(alpha = LocalFocusedCardOpacity.current / 100f)
+        else if (light) cycleUiColor(HigherSurface) else HigherSurface
     val focusedText = if (showMedia) cycleUiColor(colors.onSurface) else colors.onSurface
     Surface(
         onClick = { connection.control(id, scope, context) },
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().onFocusChanged { rowFocused = it.hasFocus },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(if (showMedia) 12.dp else 8.dp)),
         border = ClickableSurfaceDefaults.border(border = border, focusedBorder = focusBorder),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -53,12 +55,17 @@ internal fun screensaverWeather(preferred: List<String>, entities: Map<String, H
 @Composable
 internal fun ArtworkScreensaverContent(
     frame: ArtworkFrame?, weather: HaEntity?, players: List<ScreensaverMediaPlayer>,
-    connection: HaConnection, video: BackgroundVideoController, dimPercent: Int,
+    connection: HaConnection, video: BackgroundVideoController, dimPercent: Int, caption: ArtworkLabel? = null,
 ) {
     val motion = remember { ScreensaverBubbleMotion() }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         ArtworkBackground(frame, dimPercent, screensaver = true, draw = { !video.hasFrame })
         VideoBackground(video, dimPercent, screensaver = true)
+        if (!video.hasFrame && caption != null) {
+            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant) {
+                ArtworkCaption(caption, Modifier.align(Alignment.TopEnd).padding(EdgePadding).width(300.dp).cycleUiColors())
+            }
+        }
         DriftingClock(weather, players, connection, motion)
     }
 }
@@ -100,6 +107,11 @@ private fun DriftingClock(weather: HaEntity?, players: List<ScreensaverMediaPlay
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     } else Text("Weather unavailable", color = secondary, fontSize = 14.sp)
                 }
+            }
+            if (available != null && connection.status == HaStatus.Connected) {
+                ExtendedWeatherForecast(connection.hourly[available.id], connection.daily[available.id],
+                    LocalScreensaverForecast.current, compact = true,
+                    precipitationUnit = available.attributes.optString("precipitation_unit", "mm"))
             }
         }
     }

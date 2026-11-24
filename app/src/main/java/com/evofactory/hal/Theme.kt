@@ -68,17 +68,27 @@ internal val LocalLauncherTheme = staticCompositionLocalOf { LauncherTheme.Glass
 
 internal const val DefaultCardOpacity = 50
 internal val LocalDashboardCardOpacity = staticCompositionLocalOf { DefaultCardOpacity }
+internal val LocalFocusedCardOpacity = staticCompositionLocalOf { DefaultCardOpacity }
+internal val LocalDashboardForecast = staticCompositionLocalOf { ForecastDisplay.Off }
+internal val LocalScreensaverForecast = staticCompositionLocalOf { ForecastDisplay.Off }
 
 @Composable
 internal fun HalTheme(
     cardOpacity: Int = DefaultCardOpacity,
     uiColorCycle: State<UiColorCycle?>? = null,
     theme: LauncherTheme = LauncherTheme.Glass,
+    focusedCardOpacity: Int? = null,
+    unfocusedCardOpacity: Int? = null,
+    dashboardForecast: ForecastDisplay = ForecastDisplay.Off,
+    screensaverForecast: ForecastDisplay = ForecastDisplay.Off,
     content: @Composable () -> Unit,
 ) {
     CompositionLocalProvider(
         LocalLauncherTheme provides theme,
-        LocalDashboardCardOpacity provides cardOpacity,
+        LocalDashboardCardOpacity provides (unfocusedCardOpacity ?: cardOpacity),
+        LocalFocusedCardOpacity provides (focusedCardOpacity ?: cardOpacity),
+        LocalDashboardForecast provides dashboardForecast,
+        LocalScreensaverForecast provides screensaverForecast,
         LocalUiColorCycle provides uiColorCycle,
     ) {
         val colors = when {
@@ -92,8 +102,8 @@ internal fun HalTheme(
 }
 
 @Composable
-internal fun Modifier.dashboardCard(color: Color, shape: Shape, cyclePaints: Boolean = false): Modifier {
-    val alpha = LocalDashboardCardOpacity.current / 100f
+internal fun Modifier.dashboardCard(color: Color, shape: Shape, cyclePaints: Boolean = false, focused: Boolean = false): Modifier {
+    val alpha = (if (focused) LocalFocusedCardOpacity.current else LocalDashboardCardOpacity.current) / 100f
     if (LocalLauncherTheme.current == LauncherTheme.Calm) {
         val fill = Color(0xFF101719).copy(alpha = alpha)
         val rim = Color(0xFFB8C6BF).copy(alpha = 0.13f)

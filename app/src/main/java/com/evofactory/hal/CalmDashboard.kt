@@ -105,7 +105,9 @@ internal fun CalmDashboard(
                         reading?.let { it.currentTemperature ?: it.temperature?.let { t -> "${t.toInt()}°" } ?: it.reading }
                             ?: calmSummary(visible),
                         reading?.let { if (it.domain == "weather") weatherLabel(it.state) ?: it.reading else names[it.id] ?: it.name },
-                        Modifier.fillMaxSize(), weatherIcon = reading?.takeIf { it.domain == "weather" }?.let { weatherIcon(it.state) })
+                        Modifier.fillMaxSize(), weatherIcon = reading?.takeIf { it.domain == "weather" }?.let { weatherIcon(it.state) },
+                        hourlyForecast = reading?.takeIf { it.domain == "weather" && connection.status == HaStatus.Connected }?.let { connection.hourly[it.id] },
+                        forecast = reading?.takeIf { it.domain == "weather" && connection.status == HaStatus.Connected }?.let { connection.daily[it.id] })
                 } else {
                     CalmOverview("", "HAL", "Make yourself at home", Modifier.fillMaxSize())
                 }
@@ -123,6 +125,9 @@ internal fun CalmDashboard(
                         val entity = visible.firstOrNull()
                         val cue = entity?.let { haStateCue(it.domain, it.deviceClass, it.state) }
                         val lockState = calmLockState(card, options[card.key], entities)
+                        val lights = visible.filter { it.domain == "light" }
+                        val lightColor = summaryLightColor(lights, HaStateTone.Active.color(MaterialTheme.colorScheme.onSurfaceVariant))
+                        val lightState = if (lightColor != null) "on" else if (lights.all { it.state == "off" }) "off" else "unknown"
                         Surface(
                             onClick = { onOpen(card.key) },
                             modifier = Modifier.width(186.dp).height(68.dp)
@@ -160,20 +165,20 @@ internal fun CalmDashboard(
                             scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
                             border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(2.dp, cycleUiColor(DashboardFocusColor)))),
                             colors = ClickableSurfaceDefaults.colors(
-                                containerColor = cycleUiColor(Color(0xFF101719).copy(alpha = opacity)), focusedContainerColor = cycleUiColor(RaisedSurface),
+                                containerColor = cycleUiColor(Color(0xFF101719).copy(alpha = opacity)), focusedContainerColor = cycleUiColor(RaisedSurface).copy(alpha = LocalFocusedCardOpacity.current / 100f),
                                 contentColor = MaterialTheme.colorScheme.onSurface,
                                 focusedContentColor = MaterialTheme.colorScheme.onSurface),
                         ) {
                             Box(Modifier.fillMaxSize()) {
-                                Row(Modifier.fillMaxSize().cycleUiColors().padding(12.dp).padding(end = if (lockState != null) 18.dp else 0.dp), verticalAlignment = Alignment.CenterVertically,
+                                Row(Modifier.fillMaxSize().padding(12.dp).padding(end = if (lockState != null) 18.dp else 0.dp), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Box(Modifier.size(30.dp).background(Color(0x263C4C40), RoundedCornerShape(8.dp)),
+                                    Box(Modifier.size(30.dp).background(cycleUiColor(Color(0x263C4C40)), RoundedCornerShape(8.dp)),
                                         contentAlignment = Alignment.Center) {
-                                        MdiIcon(if (entity?.domain == "weather") entity.icon else cue?.icon ?: entity?.icon ?: "view-dashboard-outline", size = 19.dp,
-                                            color = cue?.tone?.color(MaterialTheme.colorScheme.onSurfaceVariant)
-                                                ?: MaterialTheme.colorScheme.onSurfaceVariant)
+                                        MdiIcon(if (lights.isNotEmpty()) haStateCue("light", null, lightState)!!.icon else if (entity?.domain == "weather") entity.icon else cue?.icon ?: entity?.icon ?: "view-dashboard-outline", size = 19.dp,
+                                            color = if (lights.isNotEmpty()) lightColor ?: MaterialTheme.colorScheme.onSurfaceVariant
+                                                else cycleUiColor(cue?.tone?.color(MaterialTheme.colorScheme.onSurfaceVariant) ?: MaterialTheme.colorScheme.onSurfaceVariant))
                                     }
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Column(Modifier.weight(1f).cycleUiColors(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                         Text(calmTitle(card, visible, names), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Text(calmSummary(visible), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1, overflow = TextOverflow.Ellipsis)

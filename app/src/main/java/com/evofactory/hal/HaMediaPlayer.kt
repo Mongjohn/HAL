@@ -65,6 +65,7 @@ internal fun MediaPlayerReading(
 ) {
     val colors = MaterialTheme.colorScheme
     val accent = cycleUiColor(colors.primary)
+    val primaryText = cycleUiColor(colors.onSurface)
     val secondaryText = cycleUiColor(colors.onSurfaceVariant)
     val attributes = entity?.attributes
     fun attribute(key: String): String? = (attributes?.opt(key) as? String)?.trim()?.takeIf(String::isNotEmpty)
@@ -103,12 +104,13 @@ internal fun MediaPlayerReading(
                 primary,
                 style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
+                color = primaryText,
                 maxLines = if (compact) 1 else 2,
                 overflow = TextOverflow.Ellipsis,
             )
             val secondary = if (compact) subtitle.joinToString(" · ").takeIf(String::isNotEmpty)?.let(::listOf).orEmpty() else subtitle
             for (line in secondary) {
-                Text(line, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(line, style = MaterialTheme.typography.bodySmall, color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(status, style = MaterialTheme.typography.labelSmall, color = secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!compact && details != null) {
@@ -191,9 +193,24 @@ private fun MediaProgress(playback: MediaPlayback) {
     val secondaryText = cycleUiColor(colors.onSurfaceVariant)
     val accent = cycleUiColor(colors.primary)
     Box(
-        Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50))
-            .background(secondaryText.copy(alpha = 0.25f))
-            .drawBehind { drawRect(accent, size = Size(size.width * (position.value / duration).toFloat(), size.height)) }
+        Modifier.fillMaxWidth().height(8.dp)
+            .drawBehind {
+                val radius = 2.dp.toPx()
+                val top = (size.height - radius * 2) / 2
+                val corner = androidx.compose.ui.geometry.CornerRadius(radius, radius)
+                drawRoundRect(secondaryText.copy(alpha = 0.18f), topLeft = androidx.compose.ui.geometry.Offset(0f, top),
+                    size = Size(size.width, radius * 2), cornerRadius = corner)
+                val fraction = (position.value / duration).toFloat().coerceIn(0f, 1f)
+                val width = size.width * fraction
+                if (width > 0f) {
+                    drawRoundRect(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.5f), accent)),
+                        topLeft = androidx.compose.ui.geometry.Offset(0f, top), size = Size(width, radius * 2), cornerRadius = corner)
+                    val head = androidx.compose.ui.geometry.Offset(width.coerceIn(radius, (size.width - radius).coerceAtLeast(radius)), size.height / 2)
+                    drawCircle(accent.copy(alpha = 0.15f), radius = 4.dp.toPx(), center = head)
+                    drawCircle(accent, radius = 2.5.dp.toPx(), center = head)
+                    drawCircle(Color.White.copy(alpha = 0.55f), radius = 1.dp.toPx(), center = head)
+                }
+            }
             .semantics { progressBarRangeInfo = ProgressBarRangeInfo((position.value / duration).toFloat(), 0f..1f) },
     )
     MediaProgressLabels(duration, position, secondaryText)

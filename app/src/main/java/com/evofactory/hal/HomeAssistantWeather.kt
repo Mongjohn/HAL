@@ -1,11 +1,16 @@
 package com.evofactory.hal
 
 import android.text.format.DateFormat
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -20,21 +25,20 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import kotlin.math.roundToInt
+import java.util.Locale
+
+internal enum class ForecastDisplay(val value: String, val label: String) {
+    Off("off", "Off"), Hourly("hourly", "Hourly"), Daily("daily", "5-day")
+}
 
 private const val HOURS_SHOWN = 6
 
-/**
- * A weather entity: the current conditions and temperature, today's high, low and rain (from the
- * daily forecast), then the next hours (from the hourly forecast). Each part is left out when
- * this weather service doesn't give it.
- */
+/** Current weather with an optional, separately divided forecast. */
 @Composable
 fun WeatherReading(entity: HaEntity?, hourly: List<HaForecast>?, daily: List<HaForecast>?) {
     val condition = entity?.state
     val today = daily?.firstOrNull { it.time?.toLocalDate() == LocalDate.now() }
-    // From the current hour on
-    val now = ZonedDateTime.now().truncatedTo(ChronoUnit.HOURS)
-    val hours = hourly.orEmpty().filter { it.time?.isBefore(now) == false }.take(HOURS_SHOWN)
+    val mode = LocalDashboardForecast.current
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val rainUnit = entity?.attributes?.optString("precipitation_unit").orEmpty().ifEmpty { "mm" }
 
@@ -55,7 +59,7 @@ fun WeatherReading(entity: HaEntity?, hourly: List<HaForecast>?, daily: List<HaF
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (today != null) {
+                if (today != null && mode != ForecastDisplay.Off) {
                     // e.g. "14° / 6° · rain 30 %" or "14° / 6° · no rain"; nothing about rain if the service doesn't say
                     val range = listOfNotNull(today.temperature, today.lowTemperature).joinToString(" / ", transform = ::degrees)
                     val rainToday = rain(today, rainUnit)?.let { "rain $it" }
@@ -70,22 +74,74 @@ fun WeatherReading(entity: HaEntity?, hourly: List<HaForecast>?, daily: List<HaF
                 }
             }
         }
-        if (hours.isNotEmpty()) {
-            val is24Hour = DateFormat.is24HourFormat(LocalContext.current)
-            val hourFormat = DateTimeFormatter.ofPattern(if (is24Hour) "HH:mm" else "ha")
-            // The rain line only when some hour has rain, so dry days take less room
-            val rains = hours.map { rain(it, rainUnit) }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                hours.forEachIndexed { index, hour ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                        Text(hour.time?.format(hourFormat).orEmpty(), style = MaterialTheme.typography.labelSmall, color = dim)
-                        MdiIcon(weatherIcon(hour.condition), size = 20.dp)
-                        Text(hour.temperature?.let(::degrees) ?: "—", style = MaterialTheme.typography.bodyMedium)
-                        if (rains.any { it != null }) {
-                            Text(rains[index].orEmpty(), style = MaterialTheme.typography.labelSmall, color = dim)
-                        }
-                    }
-                }
+        ExtendedWeatherForecast(hourly, daily, mode, precipitationUnit = rainUnit)
+    }
+}
+
+/** Five distinct local dates, starting today when supplied; never invent missing forecast days. */
+internal fun fiveDayForecast(daily: List<HaForecast>?, today: LocalDate): List<HaForecast> = daily.orEmpty()
+    .filter { it.time?.toLocalDate()?.let { date -> !date.isBefore(today) } == true }
+    .sortedBy { it.time }.distinctBy { it.time?.toLocalDate() }.take(5)
+
+internal fun hourlyForecast(hourly: List<HaForecast>?, now: ZonedDateTime): List<HaForecast> = hourly.orEmpty()
+    .filter { it.time?.isBefore(now.truncatedTo(ChronoUnit.HOURS)) == false }
+    .sortedBy { it.time }.distinctBy { it.time?.toInstant() }.take(HOURS_SHOWN)
+
+@Composable
+internal fun ExtendedWeatherForecast(hourly: List<HaForecast>?, daily: List<HaForecast>?,
+    mode: ForecastDisplay = LocalDashboardForecast.current, compact: Boolean = false, precipitationUnit: String = "mm") {
+    if (mode == ForecastDisplay.Off) return
+    val current by produceVisibleState(ZonedDateTime.now()) {
+        while (true) { value = ZonedDateTime.now(); kotlinx.coroutines.delay(60_000) }
+    }
+    val hours = hourlyForecast(hourly, current)
+    val days = fiveDayForecast(daily, current.toLocalDate())
+    if (if (mode == ForecastDisplay.Hourly) hours.isEmpty() else days.isEmpty()) return
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(color.copy(alpha = 0.25f)))
+        Text(if (mode == ForecastDisplay.Hourly) "Next hours" else "5-day forecast",
+            style = MaterialTheme.typography.labelSmall, color = color)
+        if (mode == ForecastDisplay.Daily) DailyForecastRow(days, current.toLocalDate(), compact)
+        else HourlyForecastRow(hours, compact, precipitationUnit)
+    }
+}
+
+@Composable
+private fun HourlyForecastRow(hours: List<HaForecast>, compact: Boolean, precipitationUnit: String) {
+    val format = DateTimeFormatter.ofPattern(if (DateFormat.is24HourFormat(LocalContext.current)) "HH:mm" else "ha")
+    val colors = MaterialTheme.colorScheme
+    val rains = hours.map { rain(it, precipitationUnit) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        hours.forEachIndexed { index, hour ->
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(hour.time?.format(format).orEmpty(), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant, maxLines = 1)
+                MdiIcon(weatherIcon(hour.condition), size = if (compact) 18.dp else 22.dp, color = colors.onSurfaceVariant)
+                Text(hour.temperature?.let(::degrees) ?: "—", style = MaterialTheme.typography.bodySmall, color = colors.onSurface)
+                if (rains.any { it != null }) Text(rains[index].orEmpty(), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DailyForecastRow(days: List<HaForecast>, now: LocalDate, compact: Boolean) {
+    val locale = LocalContext.current.resources.configuration.locales[0]
+    val format = DateTimeFormatter.ofPattern("EEE", locale ?: Locale.getDefault())
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp)) {
+        days.forEach { day ->
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(if (day.time?.toLocalDate() == now) "Today" else day.time?.format(format).orEmpty(),
+                    style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                MdiIcon(weatherIcon(day.condition), size = if (compact) 18.dp else 22.dp,
+                    color = color,
+                    modifier = Modifier.clearAndSetSemantics { contentDescription = weatherLabel(day.condition).orEmpty() })
+                Text(day.temperature?.let(::degrees) ?: "—", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                Text(day.lowTemperature?.let(::degrees) ?: "—", style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1)
             }
         }
     }

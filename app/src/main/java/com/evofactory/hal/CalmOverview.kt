@@ -3,6 +3,8 @@ package com.evofactory.hal
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -28,13 +30,13 @@ internal fun calmOverviewMode(available: Int, stacked: Int, horizontal: Int): Ca
 
 /** Measure the real labels before rearranging them; shrinking is the last resort. */
 @Composable
-internal fun CalmOverview(title: String, value: String, detail: String?, modifier: Modifier = Modifier, weatherIcon: String? = null) {
+internal fun CalmOverview(title: String, value: String, detail: String?, modifier: Modifier = Modifier, weatherIcon: String? = null, forecast: List<HaForecast>? = null, hourlyForecast: List<HaForecast>? = null) {
     SubcomposeLayout(modifier.cycleUiColors()) { constraints ->
         val natural = constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity)
-        val stacked = subcompose(CalmOverviewMode.Stacked) { CalmOverviewText(title, value, detail, false, weatherIcon) }
+        val stacked = subcompose(CalmOverviewMode.Stacked) { CalmOverviewText(title, value, detail, false, weatherIcon, forecast, hourlyForecast) }
             .single().measure(natural)
         val inline = if (stacked.height > constraints.maxHeight) {
-            subcompose(CalmOverviewMode.Horizontal) { CalmOverviewText(title, value, detail, true, weatherIcon) }.single().measure(natural)
+            subcompose(CalmOverviewMode.Horizontal) { CalmOverviewText(title, value, detail, true, weatherIcon, forecast, hourlyForecast) }.single().measure(natural)
         } else null
         val mode = calmOverviewMode(constraints.maxHeight, stacked.height, inline?.height ?: stacked.height)
         val chosen = when (mode) {
@@ -56,7 +58,7 @@ internal fun CalmOverview(title: String, value: String, detail: String?, modifie
 }
 
 @Composable
-private fun CalmOverviewText(title: String, value: String, detail: String?, horizontal: Boolean, weatherIcon: String?) {
+private fun CalmOverviewText(title: String, value: String, detail: String?, horizontal: Boolean, weatherIcon: String?, forecast: List<HaForecast>?, hourlyForecast: List<HaForecast>?) {
     val colors = MaterialTheme.colorScheme
     @Composable fun TitleAndDetail() {
         if (title.isNotBlank()) Text(title, fontSize = 22.sp, fontWeight = FontWeight.Light,
@@ -71,24 +73,27 @@ private fun CalmOverviewText(title: String, value: String, detail: String?, hori
                 overflow = TextOverflow.Clip, textAlign = TextAlign.Center)
         }
     }
-    if (horizontal) {
-        // Center the visible group, not an equal-width pair of columns with unused space.
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (title.isNotBlank() || !detail.isNullOrBlank()) {
-                Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(4.dp),
-                    horizontalAlignment = Alignment.End) { TitleAndDetail() }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (horizontal) {
+            // Center the visible group, not an equal-width pair of columns with unused space.
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (title.isNotBlank() || !detail.isNullOrBlank()) {
+                    Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalAlignment = Alignment.End) { TitleAndDetail() }
+                }
+                Column(Modifier.weight(1f, fill = false)) { Value() }
             }
-            Column(Modifier.weight(1f, fill = false)) { Value() }
+        } else {
+            Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (title.isNotBlank()) Text(title, fontSize = 22.sp, fontWeight = FontWeight.Light,
+                    color = colors.onSurfaceVariant, overflow = TextOverflow.Clip, textAlign = TextAlign.Center)
+                Value()
+                if (!detail.isNullOrBlank()) Text(detail, fontSize = 13.sp, color = colors.onSurfaceVariant,
+                    overflow = TextOverflow.Clip, textAlign = TextAlign.Center)
+            }
         }
-    } else {
-        Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (title.isNotBlank()) Text(title, fontSize = 22.sp, fontWeight = FontWeight.Light,
-                color = colors.onSurfaceVariant, overflow = TextOverflow.Clip, textAlign = TextAlign.Center)
-            Value()
-            if (!detail.isNullOrBlank()) Text(detail, fontSize = 13.sp, color = colors.onSurfaceVariant,
-                overflow = TextOverflow.Clip, textAlign = TextAlign.Center)
-        }
+        Box(Modifier.widthIn(max = 400.dp)) { ExtendedWeatherForecast(hourlyForecast, forecast) }
     }
 }

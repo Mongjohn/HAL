@@ -286,7 +286,7 @@ internal fun DashboardEditor(
                 val server = DashboardEditorServer(address, context.applicationContext) { path, body ->
                     when (path) {
                         "/api/videos" -> if (body == null) readVideos().toJson() else {
-                            require(body.optInt("schema") == 3) { "Reload the editor. Android TV now controls screensaver activation." }
+                            require(body.optInt("schema") == 4) { "Reload the editor to configure video playlists and card opacity." }
                             val next = videoBackgroundSettingsFromJson(body)
                             require(next.revision == readVideos().revision) { "The video library changed. Reload it before saving again." }
                             val saved = next.copy(revision = next.revision + 1)

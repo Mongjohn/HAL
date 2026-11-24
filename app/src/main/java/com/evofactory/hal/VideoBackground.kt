@@ -201,7 +201,7 @@ internal fun rememberBackgroundVideo(settings: VideoBackgroundSettings, screensa
     val owner = remember { Any() }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // Revision/target-only changes do not change the playlist or its playback position.
-    val playback = remember(settings.videos, settings.shuffle, screensaver) {
+    val playback = remember(settings.videos, settings.playlists, settings.shuffle, screensaver) {
         VideoBackgroundSettings(videos = settings.videosFor(screensaver).map { it.copy(background = false, screensaver = false) }, shuffle = settings.shuffle)
     }
     DisposableEffect(playback, active, lifecycle) {
