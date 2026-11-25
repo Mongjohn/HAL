@@ -1143,7 +1143,14 @@ function setCatalog(data) {
 }
 
 async function loadCatalog() {
-  setCatalog(await request("catalog"));
+  const deadline = Date.now() + 35_000;
+  let data = await request("catalog");
+  while (data.loading && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    data = await request("catalog");
+  }
+  if (data.loading) throw new Error("Home Assistant catalog is still loading.");
+  setCatalog(data);
 }
 
 start();
@@ -1338,6 +1345,8 @@ artworkUpload.addEventListener("click", () => changeArtwork(async () => {
 (() => {
   const tabs = [...document.querySelectorAll('[data-workspace]')];
   function select(tab) {
+    const changedSection = tab.getAttribute("aria-selected") !== "true";
+    if (changedSection && innerWidth > 760) window.scrollTo(0, 0);
     for (const item of tabs) { const selected = item === tab; item.setAttribute('aria-selected', selected); item.tabIndex = selected ? 0 : -1; }
     for (const panel of document.querySelectorAll('[data-workspace-panel]')) panel.hidden = panel.dataset.workspacePanel !== tab.dataset.workspace;
     for (const action of ['undo', 'restore', 'apply']) document.getElementById(action).hidden = tab.dataset.workspace !== 'dashboard';
@@ -1346,8 +1355,18 @@ artworkUpload.addEventListener("click", () => changeArtwork(async () => {
   tabs.forEach((tab, index) => {
     tab.onclick = () => select(tab);
     tab.onkeydown = event => {
-      const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
+      const next = ['ArrowRight', 'ArrowDown'].includes(event.key) ? (index + 1) % tabs.length : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
       if (next < 0) return; event.preventDefault(); select(tabs[next]); tabs[next].focus();
     };
   });
 })();
+
+// Refresh choices/metadata after integration or camera changes without replacing layout drafts.
+document.addEventListener("hal-configuration-saved", async event => {
+  if (["ha-login", "ha-logout"].includes(event.detail)) {
+    try { await loadCatalog(); render(); say(""); } catch (error) { say("Connection saved; catalog reload failed. " + error.message); }
+  }
+  if (event.detail === "cameras") {
+    try { const data = await request("state"); if (!data.loading) { camera = data.camera; render(); } } catch { say("Cameras saved; preview metadata could not be refreshed."); }
+  }
+});

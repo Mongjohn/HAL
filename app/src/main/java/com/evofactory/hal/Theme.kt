@@ -68,8 +68,10 @@ internal val LocalLauncherTheme = staticCompositionLocalOf { LauncherTheme.Glass
 
 internal const val DefaultCardOpacity = 50
 internal val LocalDashboardCardOpacity = staticCompositionLocalOf { DefaultCardOpacity }
+internal val LocalPopupCardOpacity = staticCompositionLocalOf { DefaultCardOpacity }
 internal val LocalFocusedCardOpacity = staticCompositionLocalOf { DefaultCardOpacity }
 internal val LocalDashboardForecast = staticCompositionLocalOf { ForecastDisplay.Off }
+internal val LocalCardForecast = staticCompositionLocalOf { ForecastDisplay.Off }
 internal val LocalScreensaverForecast = staticCompositionLocalOf { ForecastDisplay.Off }
 
 @Composable
@@ -81,14 +83,18 @@ internal fun HalTheme(
     unfocusedCardOpacity: Int? = null,
     dashboardForecast: ForecastDisplay = ForecastDisplay.Off,
     screensaverForecast: ForecastDisplay = ForecastDisplay.Off,
+    cardForecast: ForecastDisplay = dashboardForecast,
+    popupCardOpacity: Int? = focusedCardOpacity,
     content: @Composable () -> Unit,
 ) {
     CompositionLocalProvider(
         LocalLauncherTheme provides theme,
         LocalDashboardCardOpacity provides (unfocusedCardOpacity ?: cardOpacity),
         LocalFocusedCardOpacity provides (focusedCardOpacity ?: cardOpacity),
+        LocalPopupCardOpacity provides (popupCardOpacity ?: cardOpacity),
         LocalDashboardForecast provides dashboardForecast,
         LocalScreensaverForecast provides screensaverForecast,
+        LocalCardForecast provides cardForecast,
         LocalUiColorCycle provides uiColorCycle,
     ) {
         val colors = when {

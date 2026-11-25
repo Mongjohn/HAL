@@ -18,40 +18,31 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -63,7 +54,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,11 +61,9 @@ import androidx.media3.common.MimeTypes
 import androidx.tv.material3.Border
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
-import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -521,278 +509,6 @@ fun <T> TwoRowGrid(
     }
 }
 
-/**
- * The camera list: add, edit, reorder and delete cameras. Each camera opens a menu; deleting asks
- * first, since an address with its login takes a while to type with a remote. Moving a camera:
- * up and down move it, OK keeps the new order, Back cancels.
- */
-@Composable
-fun CamerasDialog(
-    cameras: List<Camera>,
-    onChange: (List<Camera>) -> Unit,
-    showHomeCamera: Boolean,
-    onShowHomeCameraChange: (Boolean) -> Unit,
-    playSubstreams: Boolean,
-    onPlaySubstreamsChange: (Boolean) -> Unit,
-    minimizeStreams: Boolean,
-    onMinimizeStreamsChange: (Boolean) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var tab by remember { mutableStateOf(CamerasTab.List) }
-    val advanced = tab == CamerasTab.Advanced
-    val advancedOption = remember { FocusRequester() }
-    val context = LocalContext.current
-    val prefs = remember { LauncherPrefs(context) }
-    var screensaverSeconds by remember { mutableIntStateOf(prefs.screensaverSeconds) }
-    var screensaverShowProgress by remember { mutableStateOf(prefs.screensaverShowProgress) }
-    var screensaverHidden by remember { mutableStateOf(prefs.screensaverHiddenCameras) }
-    val hasScreensaverSettings = remember { context.screensaverScreen() != null }
-    var editing by remember { mutableStateOf<Camera?>(null) }
-    var testing by remember { mutableStateOf<Camera?>(null) }
-    var menuFor by remember { mutableStateOf<String?>(null) }
-    var confirmDelete by remember { mutableStateOf<String?>(null) }
-    // Camera to select once the list has updated (after moving it, or adding it)
-    var focusOn by remember { mutableStateOf<String?>(null) }
-    val rows = remember { ListFocus() }
-    val addButton = remember { FocusRequester() }
-    val closeButton = remember { FocusRequester() }
-    val advancedItems = remember { ListFocus() }
-    val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
-    // While moving a camera the list shows this working copy
-    var moveOrder by remember { mutableStateOf<List<Camera>?>(null) }
-    var movingId by remember { mutableStateOf<String?>(null) }
-    // The camera last selected: the top row comes back to it
-    fun currentItem() = when (tab) {
-        CamerasTab.List -> rows.currentOrNull(cameras.map { it.id })
-        CamerasTab.Screensaver -> advancedItems.current(listOf("shorter", "longer") + cameras.map { "screensaver:${it.id}" } + "progress")
-        CamerasTab.Advanced -> advancedItems.current(listOf("home", "substreams", "minimize"))
-    }
 
-    LaunchedEffect(focusOn, cameras) {
-        withFrameNanos { } // let the list lay out first
-        // A camera further down the list isn't there to select until it's scrolled to
-        val index = cameras.indexOfFirst { it.id == focusOn }
-        if (index >= 0 && listState.layoutInfo.visibleItemsInfo.none { it.index == index }) {
-            listState.scrollToItem(index)
-            withFrameNanos { }
-        }
-        val target = focusOn?.let(rows::requester) ?: addButton
-        runCatching { target.requestFocus() }
-    }
-
-    fun shift(id: String, by: Int) {
-        val list = (moveOrder ?: return).toMutableList()
-        val from = list.indexOfFirst { it.id == id }
-        val to = from + by
-        if (to !in list.indices) return
-        list.add(to, list.removeAt(from))
-        moveOrder = list
-        scope.launch { listState.animateScrollToItem((to - 1).coerceAtLeast(0)) }
-    }
-
-    fun endMove(save: Boolean) {
-        if (save) moveOrder?.let(onChange)
-        focusOn = movingId
-        moveOrder = null
-        movingId = null
-    }
-
-    // Once the menu has closed
-    LaunchedEffect(movingId) {
-        val id = movingId ?: return@LaunchedEffect
-        withFrameNanos { }
-        runCatching { rows.requester(id).requestFocus() }
-    }
-
-    TopDialog(
-        title = "Cameras",
-        onDismiss = onDismiss,
-        tabs = listOf(
-            DialogTab("Cameras", selected = tab == CamerasTab.List) { tab = CamerasTab.List },
-            DialogTab("Screensaver", selected = tab == CamerasTab.Screensaver) { tab = CamerasTab.Screensaver },
-            DialogTab("Advanced", selected = advanced) { tab = CamerasTab.Advanced },
-        ),
-        buttons = listOfNotNull(
-            DialogButton("Add camera", primary = true, focus = addButton) { editing = Camera(name = "", url = "") }.takeIf { tab == CamerasTab.List },
-            // Without a screensaver screen to open, the TV's main settings open
-            DialogButton(if (hasScreensaverSettings) "TV screensaver settings" else "TV settings", onClick = context::openScreensaverSettings)
-                .takeIf { tab == CamerasTab.Screensaver },
-        ),
-        contentFocus = ::currentItem,
-        closeFocus = closeButton,
-    ) {
-        if (advanced) {
-            HomeOption(
-                title = "Show camera on Home",
-                description = "Turn off to give the Home dashboard the full width.",
-                checked = showHomeCamera,
-                onClick = { onShowHomeCameraChange(!showHomeCamera) },
-                modifier = advancedItems.row("home").ringToTop().padding(top = 8.dp),
-            )
-            CameraAdvancedSettings(
-                playSubstreams = playSubstreams,
-                onPlaySubstreamsChange = onPlaySubstreamsChange,
-                minimizeStreams = minimizeStreams,
-                onMinimizeStreamsChange = onMinimizeStreamsChange,
-                modifier = Modifier.focusRequester(advancedOption).then(advancedItems.row("substreams")).ringToTop(),
-                lastModifier = advancedItems.row("minimize").ringToTop(),
-            )
-            return@TopDialog
-        }
-        if (tab == CamerasTab.Screensaver) {
-            val firstScreensaverCamera = cameras.firstOrNull()?.let { advancedItems.requester("screensaver:${it.id}") }
-            ScreensaverSettings(
-                seconds = screensaverSeconds,
-                onSecondsChange = {
-                    screensaverSeconds = it
-                    prefs.screensaverSeconds = it
-                },
-                showProgress = screensaverShowProgress,
-                onShowProgressChange = {
-                    screensaverShowProgress = it
-                    prefs.screensaverShowProgress = it
-                },
-                // Down from the time goes to the first camera, on the left, not straight down past them
-                firstModifier = advancedItems.row("shorter").ringToTop(right = false).focusProperties { firstScreensaverCamera?.let { down = it } },
-                lastModifier = advancedItems.row("longer").ringToTop(left = false).focusProperties { firstScreensaverCamera?.let { down = it } },
-                progressModifier = advancedItems.row("progress").ringToTop(),
-                cameras = cameras,
-                hiddenCameras = screensaverHidden,
-                onHiddenCamerasChange = {
-                    screensaverHidden = it
-                    prefs.screensaverHiddenCameras = it
-                },
-                cameraModifier = { index ->
-                    advancedItems.row("screensaver:${cameras[index].id}").ringToTop(left = index == 0, right = index == cameras.lastIndex)
-                },
-            )
-            return@TopDialog
-        }
-        if (cameras.isEmpty()) {
-            Text("No camera yet", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
-        }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
-            contentPadding = PaddingValues(vertical = 8.dp),
-        ) {
-            itemsIndexed(moveOrder ?: cameras, key = { _, camera -> camera.id }) { index, camera ->
-                val moving = camera.id == movingId
-                Box {
-                    ListItem(
-                        selected = false,
-                        onClick = { menuFor = camera.id },
-                        headlineContent = { Text(camera.name) },
-                        leadingContent = if (moving) {
-                            { MdiIcon("mdi:arrow-up-down", size = 24.dp) }
-                        } else {
-                            null
-                        },
-                        supportingContent = {
-                            Text("${camera.host} · ${if (camera.useTcp) "TCP" else "UDP"}${if (camera.substreamUrl.isNotEmpty()) " · substream" else ""}")
-                        },
-                        modifier = rows.row(camera.id)
-                            .onPreviewKeyEvent { event ->
-                                if (!moving) return@onPreviewKeyEvent false
-                                val down = event.type == KeyEventType.KeyDown
-                                when (event.key) {
-                                    Key.DirectionUp -> { if (down) shift(camera.id, -1); true }
-                                    Key.DirectionDown -> { if (down) shift(camera.id, 1); true }
-                                    Key.DirectionLeft, Key.DirectionRight -> true
-                                    // On release, so the press doesn't also open the menu
-                                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { if (!down) endMove(save = true); true }
-                                    Key.Back -> { if (!down) endMove(save = false); true }
-                                    else -> false
-                                }
-                            }
-                            .ringToTop(),
-                    )
-                    if (menuFor == camera.id) {
-                        ContextMenu(
-                            title = camera.name,
-                            actions = listOfNotNull(
-                                MenuAction("Edit") { editing = camera },
-                                MenuAction("Test") { testing = camera },
-                                MenuAction("Move") {
-                                    moveOrder = cameras
-                                    movingId = camera.id
-                                }.takeIf { cameras.size > 1 },
-                                MenuAction("Delete") { confirmDelete = camera.id },
-                            ),
-                            onDismiss = { menuFor = null },
-                            placement = MenuPlacement.Below,
-                        )
-                    }
-                    if (confirmDelete == camera.id) {
-                        ContextMenu(
-                            title = "Delete ${camera.name}?",
-                            actions = listOf(
-                                MenuAction("Delete") {
-                                    onChange(cameras - camera)
-                                    focusOn = (cameras.getOrNull(index + 1) ?: cameras.getOrNull(index - 1))?.id
-                                },
-                                MenuAction("Cancel") { focusOn = camera.id },
-                            ),
-                            onDismiss = { confirmDelete = null },
-                            placement = MenuPlacement.Below,
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    testing?.let { camera ->
-        CameraTestDialog(camera.name, camera.url, camera.substreamUrl, camera.useAudio, camera.useSubstreamAudio, onDismiss = { testing = null })
-    }
-
-    editing?.let { camera ->
-        val isNew = cameras.none { it.id == camera.id }
-        CameraDialog(
-            camera = camera,
-            isNew = isNew,
-            onSave = { saved ->
-                onChange(if (isNew) cameras + saved else cameras.map { if (it.id == saved.id) saved else it })
-                focusOn = saved.id
-            },
-            onDismiss = { editing = null },
-        )
-    }
-}
-
-private enum class CamerasTab { List, Screensaver, Advanced }
-
-@Composable
-private fun CameraAdvancedSettings(
-    playSubstreams: Boolean,
-    onPlaySubstreamsChange: (Boolean) -> Unit,
-    minimizeStreams: Boolean,
-    onMinimizeStreamsChange: (Boolean) -> Unit,
-    modifier: Modifier,
-    lastModifier: Modifier,
-) {
-    val limits = remember {
-        listOf("H.265" to MimeTypes.VIDEO_H265, "H.264" to MimeTypes.VIDEO_H264)
-            .joinToString(" · ") { (label, type) -> "$label: ${maxDecoders(type) ?: "none"}" }
-    }
-    HomeOption(
-        title = "Show substreams on the Cameras tab",
-        description = "Plays them live, as many as this TV can decode at once. Off: still pictures only.",
-        checked = playSubstreams,
-        onClick = { onPlaySubstreamsChange(!playSubstreams) },
-        modifier = modifier.padding(top = 8.dp),
-    )
-    HomeOption(
-        title = "Minimize simultaneous video streams",
-        description = "For older TVs",
-        checked = minimizeStreams,
-        onClick = { onMinimizeStreamsChange(!minimizeStreams) },
-        modifier = lastModifier,
-    )
-    Text(
-        "Maximum decoders on this TV: $limits",
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.padding(12.dp),
-    )
-}
+internal fun cameraDecoderSummary(): String = listOf("H.265" to MimeTypes.VIDEO_H265, "H.264" to MimeTypes.VIDEO_H264)
+    .joinToString(" · ") { (label, type) -> "$label: ${maxDecoders(type) ?: "none"}" }

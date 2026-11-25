@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -28,7 +29,10 @@ import kotlin.math.roundToInt
 import java.util.Locale
 
 internal enum class ForecastDisplay(val value: String, val label: String) {
-    Off("off", "Off"), Hourly("hourly", "Hourly"), Daily("daily", "5-day")
+    Off("off", "Off"), Hourly("hourly", "Hourly"), Daily("daily", "5-day"), Both("both", "Hourly + 5-day");
+
+    val showsHourly get() = this == Hourly || this == Both
+    val showsDaily get() = this == Daily || this == Both
 }
 
 private const val HOURS_SHOWN = 6
@@ -96,14 +100,15 @@ internal fun ExtendedWeatherForecast(hourly: List<HaForecast>?, daily: List<HaFo
     }
     val hours = hourlyForecast(hourly, current)
     val days = fiveDayForecast(daily, current.toLocalDate())
-    if (if (mode == ForecastDisplay.Hourly) hours.isEmpty() else days.isEmpty()) return
+    val showHours = mode.showsHourly && hours.isNotEmpty()
+    val showDays = mode.showsDaily && days.isNotEmpty()
+    if (!showHours && !showDays) return
     val color = MaterialTheme.colorScheme.onSurfaceVariant
     Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(color.copy(alpha = 0.25f)))
-        Text(if (mode == ForecastDisplay.Hourly) "Next hours" else "5-day forecast",
-            style = MaterialTheme.typography.labelSmall, color = color)
-        if (mode == ForecastDisplay.Daily) DailyForecastRow(days, current.toLocalDate(), compact)
-        else HourlyForecastRow(hours, compact, precipitationUnit)
+        if (showHours) HourlyForecastRow(hours, compact, precipitationUnit)
+        if (showHours && showDays) Box(Modifier.fillMaxWidth().height(1.dp).background(color.copy(alpha = 0.12f)))
+        if (showDays) DailyForecastRow(days, current.toLocalDate(), compact)
     }
 }
 
@@ -112,7 +117,7 @@ private fun HourlyForecastRow(hours: List<HaForecast>, compact: Boolean, precipi
     val format = DateTimeFormatter.ofPattern(if (DateFormat.is24HourFormat(LocalContext.current)) "HH:mm" else "ha")
     val colors = MaterialTheme.colorScheme
     val rains = hours.map { rain(it, precipitationUnit) }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+    Row(Modifier.fillMaxWidth().semantics { contentDescription = "Hourly forecast" }, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         hours.forEachIndexed { index, hour ->
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -130,7 +135,7 @@ private fun DailyForecastRow(days: List<HaForecast>, now: LocalDate, compact: Bo
     val locale = LocalContext.current.resources.configuration.locales[0]
     val format = DateTimeFormatter.ofPattern("EEE", locale ?: Locale.getDefault())
     val color = MaterialTheme.colorScheme.onSurfaceVariant
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp)) {
+    Row(Modifier.fillMaxWidth().semantics { contentDescription = "Daily forecast" }, horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp)) {
         days.forEach { day ->
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(3.dp)) {

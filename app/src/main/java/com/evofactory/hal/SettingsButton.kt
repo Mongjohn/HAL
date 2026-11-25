@@ -37,10 +37,6 @@ internal val TopBarUtilityButtonOffset = (-7).dp
 /** Cog at the right of the top bar; opens the launcher's settings menu */
 @Composable
 fun SettingsButton(
-    onOpenCameras: () -> Unit,
-    onOpenHomeAssistant: () -> Unit,
-    onOpenFrigate: () -> Unit,
-    onOpenLauncherSettings: () -> Unit,
     webEditorEnabled: Boolean,
     onToggleWebEditor: () -> Unit,
     modifier: Modifier = Modifier,
@@ -63,10 +59,6 @@ fun SettingsButton(
                 // The cog says what it is
                 title = null,
                 actions = listOf(
-                    MenuAction("HAL", onOpenLauncherSettings),
-                    MenuAction("Home Assistant", onOpenHomeAssistant),
-                    MenuAction("Cameras", onOpenCameras),
-                    MenuAction("Frigate", onOpenFrigate),
                     MenuAction("Android TV") { context.openSystemSettings() },
                     MenuAction("Enable Web Editor", webEditorEnabled, onToggleWebEditor),
                 ),

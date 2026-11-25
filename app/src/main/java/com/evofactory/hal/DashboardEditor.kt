@@ -69,7 +69,7 @@ private fun EditorVisibleEffect(vararg keys: Any?, block: suspend CoroutineScope
 private class DashboardEditorServer(
     link: LinkAddress,
     private val context: Context,
-    private val api: (String, JSONObject?) -> JSONObject?,
+    private val api: suspend (String, JSONObject?) -> JSONObject?,
 ) : NanoHTTPD(link.address.hostAddress, EditorPort) {
     private val address = link.address.hostAddress
     private val localBytes = link.address.address
@@ -115,6 +115,7 @@ private class DashboardEditorServer(
         val asset = when (session.uri) {
             "/" -> "index.html" to "text/html"
             "/editor.js" -> "editor.js" to "application/javascript"
+            "/config.js" -> "config.js" to "application/javascript"
             "/videos.js" -> "videos.js" to "application/javascript"
             "/editor.css" -> "editor.css" to "text/css"
             else -> null
@@ -158,9 +159,9 @@ private class DashboardEditorServer(
                 error(Response.Status.INTERNAL_ERROR, "HAL could not update the artwork library.")
             }
         }
-        val read = session.method == Method.GET && session.uri in listOf("/api/state", "/api/catalog", "/api/settings/options", "/api/videos")
+        val read = session.method == Method.GET && session.uri in listOf("/api/state", "/api/catalog", "/api/settings/options", "/api/videos", "/api/config")
         val write = session.method == Method.POST && session.uri in listOf("/api/apply", "/api/restore",
-            "/api/settings/export", "/api/settings/preview", "/api/settings/import", "/api/videos")
+            "/api/settings/export", "/api/settings/preview", "/api/settings/import", "/api/videos", "/api/config")
         if (!read && !write) return error(Response.Status.NOT_FOUND, "Page not found.")
         val settingsRequest = session.uri.startsWith("/api/settings/")
 
@@ -184,14 +185,16 @@ private class DashboardEditorServer(
         } else null
         return try {
             val result = runBlocking {
-                withTimeoutOrNull(5000) {
+                withTimeoutOrNull(if (session.uri == "/api/config") 45_000 else 5000) {
                     withContext(Dispatchers.Main) { if (closed) null else api(session.uri, body) }
                 }
             }
             if (result == null) error(Response.Status.CONFLICT, "HAL could not confirm the request. Reload the editor to check the saved settings.")
             else reply(Response.Status.OK, result.toString())
         } catch (e: Exception) {
-            val message = if (session.uri == "/api/videos")
+            val message = if (session.uri == "/api/config")
+                (e as? IllegalArgumentException)?.message ?: "The integration could not be connected or the settings could not be confirmed. Check the connection and login, then reload this section."
+                else if (session.uri == "/api/videos")
                 (e as? IllegalArgumentException)?.message ?: "The video library could not be saved. Check the links and reload if another editor changed it."
                 else if (settingsRequest) "Check that the file contains valid HAL settings and that the selection is current."
                 else "The dashboard could not be saved. Check the card positions and sizes."
@@ -225,11 +228,16 @@ internal fun DashboardEditor(
     importSettings: (SettingsFile) -> Unit,
     videoBackgrounds: () -> VideoBackgroundSettings,
     saveVideos: (VideoBackgroundSettings) -> Unit,
+    configurationChanged: () -> Unit,
+    tvAction: (String, String) -> Unit,
     showInfo: Boolean,
     onDismissInfo: () -> Unit,
     onStartFailed: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val configChanged by rememberUpdatedState(configurationChanged)
+    val configAction by rememberUpdatedState(tvAction)
+    val configuration = remember { WebConfiguration(context, { configChanged() }, { name, id -> configAction(name, id) }) }
     val readVideos by rememberUpdatedState(videoBackgrounds)
     val currentSaveVideos by rememberUpdatedState(saveVideos)
     val apps by rememberUpdatedState(installedApps)
@@ -249,6 +257,7 @@ internal fun DashboardEditor(
     var templates by remember { mutableStateOf<List<Pair<HaDashboardInfo, HaDashboard>>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var catalogError by remember { mutableStateOf<String?>(null) }
+    var catalogRefresh by remember { mutableStateOf(0) }
     var catalogLoadedFor by remember { mutableStateOf<HaServer?>(null) }
 
     fun initial(home: Boolean): DashboardLayout {
@@ -285,6 +294,11 @@ internal fun DashboardEditor(
             else {
                 val server = DashboardEditorServer(address, context.applicationContext) { path, body ->
                     when (path) {
+                        "/api/config" -> configuration.request(body).also { result ->
+                            if (result.optBoolean("saved") && body?.optString("section") in listOf("ha-login", "ha-logout")) {
+                                loading = true; catalogLoadedFor = null; catalogRefresh++
+                            }
+                        }
                         "/api/videos" -> if (body == null) readVideos().toJson() else {
                             require(body.optInt("schema") == 4) { "Reload the editor to configure video playlists and card opacity." }
                             val next = videoBackgroundSettingsFromJson(body)
@@ -360,7 +374,7 @@ internal fun DashboardEditor(
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) { listener?.close() }
         }
     }
-    EditorVisibleEffect(editor, haServer) {
+    EditorVisibleEffect(editor, haServer, catalogRefresh) {
         if (editor == null || catalogLoadedFor == haServer) return@EditorVisibleEffect
         withTimeoutOrNull(250) { withFrameNanos { } }
         loading = true
@@ -379,7 +393,7 @@ internal fun DashboardEditor(
                 }
                 true
             } ?: run { catalogError = "Home Assistant did not finish responding." }
-            else catalogError = "Connect Home Assistant on the TV to browse entities."
+            else catalogError = "Connect Home Assistant in the Home Assistant section to browse entities."
         } catch (e: HaException) {
             catalogError = e.message ?: "Home Assistant is unavailable."
         } finally {

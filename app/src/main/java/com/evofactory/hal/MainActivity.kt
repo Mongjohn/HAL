@@ -38,7 +38,6 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
@@ -58,7 +57,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.Surface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -80,18 +78,17 @@ class MainActivity : ComponentActivity() {
     private var allAppsOpen by mutableStateOf(false)
     private var pingOpen by mutableStateOf(false)
     private var networkStatusOpen by mutableStateOf(false)
-    private var camerasOpen by mutableStateOf(false)
     private var cameras by mutableStateOf(emptyList<Camera>())
     private var cameraGridLive by mutableStateOf(true)
     private var showHomeCamera by mutableStateOf(true)
     private var minimizeVideoStreams by mutableStateOf(false)
+    private var webCameraTest by mutableStateOf<String?>(null)
     private var selectedCamera by mutableStateOf("")
     private var homeFocusRequest by mutableIntStateOf(0)
     private var tab by mutableStateOf(HomeTab.Home)
     private var dashboardEditorEnabled by mutableStateOf(false)
     private var dashboardEditorInfoOpen by mutableStateOf(false)
     private var dashboardLayouts by mutableStateOf(DashboardLayouts())
-    private var haDialogOpen by mutableStateOf(false)
     private var haServer by mutableStateOf(HaServer(""))
     // Everything on the Assistant tab in its order, and the actions also in the top bar
     private var haEntities by mutableStateOf(emptyList<String>())
@@ -99,12 +96,8 @@ class MainActivity : ComponentActivity() {
     // The Home Assistant dashboard the Assistant tab shows instead, if any
     private var haDisplay by mutableStateOf(HaDisplay())
     private var frigate by mutableStateOf(FrigateServer())
-    private var frigateOpen by mutableStateOf(false)
-    private var launcherSettingsOpen by mutableStateOf(false)
     private var stuckPlayersOpen by mutableStateOf(false)
     private var replaceHome by mutableStateOf(false)
-    private var catchHomeKey by mutableStateOf(false)
-    private var reopenAfterHome by mutableStateOf(false)
     private var showFreeMemory by mutableStateOf(false)
     private var watchNext by mutableStateOf(emptyList<WatchNextCard>())
     private var artworkSettings by mutableStateOf(ArtworkSettings())
@@ -204,7 +197,7 @@ class MainActivity : ComponentActivity() {
             val cardOpacity = cardOpacityOverride ?: DefaultCardOpacity
             HalTheme(cardOpacity, rememberUiColorCycle(cycleUiColors, resumed), theme = appearanceTheme,
                 focusedCardOpacity = videoBackgrounds.focusedCardOpacity, unfocusedCardOpacity = videoBackgrounds.unfocusedCardOpacity,
-                dashboardForecast = videoBackgrounds.dashboardForecast, screensaverForecast = videoBackgrounds.screensaverForecast) {
+                dashboardForecast = videoBackgrounds.dashboardForecast, screensaverForecast = videoBackgrounds.screensaverForecast, cardForecast = videoBackgrounds.cardForecast, popupCardOpacity = videoBackgrounds.popupCardOpacity) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val all = installed
                     val visible = remember(all, order, hidden) { all?.let { arrange(it, order, hidden) } }
@@ -256,8 +249,7 @@ class MainActivity : ComponentActivity() {
                     ).distinct()
                     val haConnection = rememberHaConnection(haServer, followed, legacyBoards, includeScreensaverWeather = true)
                     val openDashboardSetup: () -> Unit = {
-                        if (!haServer.isSet || haConnection.status == HaStatus.TokenRejected) haDialogOpen = true
-                        else openDashboardEditor()
+                        openDashboardEditor()
                     }
                     val legacyHomeBoard = haConnection.dashboard(haDisplay.homeDashboard)
                     val savedHome = dashboardLayouts.home
@@ -460,7 +452,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 HomeHelperWarning(
                                     replaceHome,
-                                    onClick = { launcherSettingsOpen = true },
+                                    onClick = ::openDashboardEditor,
                                     modifier = Modifier.weight(1f, fill = false),
                                 )
                                 if (haServer.isSet) HaActionButtons(haConnection, actions)
@@ -475,10 +467,6 @@ class MainActivity : ComponentActivity() {
                             },
                         ) {
                             SettingsButton(
-                                onOpenCameras = { camerasOpen = true },
-                                onOpenHomeAssistant = { haDialogOpen = true },
-                                onOpenFrigate = { frigateOpen = true },
-                                onOpenLauncherSettings = { launcherSettingsOpen = true },
                                 webEditorEnabled = dashboardEditorEnabled,
                                 onToggleWebEditor = {
                                     if (dashboardEditorEnabled) {
@@ -499,7 +487,7 @@ class MainActivity : ComponentActivity() {
                                 minimizeStreams = minimizeVideoStreams,
                                 spareDecoder = fullScreenCamera != null,
                                 onSelect = { fullScreenCamera = it },
-                                onSetUp = { camerasOpen = true },
+                                onSetUp = ::openDashboardEditor,
                                 selectCamera = gridCameraDue,
                                 onCameraSelected = { gridCameraDue = null },
                                 onCameraFocused = { gridFocusedCamera = it },
@@ -508,7 +496,7 @@ class MainActivity : ComponentActivity() {
                         } else if (tab == HomeTab.Alerts) {
                             FrigateAlertsGrid(
                                 feed = frigateFeed,
-                                onSetUp = { frigateOpen = true },
+                                onSetUp = ::openDashboardEditor,
                                 modifier = Modifier.weight(1f).fillMaxWidth().cycleUiColors().padding(top = EdgePadding),
                             )
                         } else {
@@ -628,50 +616,6 @@ class MainActivity : ComponentActivity() {
                             onClose = { fullScreenCamera = null },
                         )
                     }
-                    if (camerasOpen) {
-                        CamerasDialog(
-                            cameras = cameras,
-                            onChange = ::saveCameras,
-                            playSubstreams = cameraGridLive,
-                            showHomeCamera = showHomeCamera,
-                            onShowHomeCameraChange = {
-                                showHomeCamera = it
-                                prefs.showHomeCamera = it
-                            },
-                            onPlaySubstreamsChange = {
-                                cameraGridLive = it
-                                prefs.cameraGridLive = it
-                            },
-                            minimizeStreams = minimizeVideoStreams,
-                            onMinimizeStreamsChange = {
-                                minimizeVideoStreams = it
-                                prefs.minimizeVideoStreams = it
-                            },
-                            onDismiss = { camerasOpen = false },
-                        )
-                    }
-                    if (haDialogOpen) {
-                        HomeAssistantDialog(
-                            initialServer = haServer,
-                            initialUsername = remember { prefs.haUsername },
-                            onEditDashboard = ::openDashboardEditor,
-                            initialTopBar = haTopBar,
-                            loginRejected = haConnection.status == HaStatus.TokenRejected,
-                            onSave = { server, username, topBar ->
-                                // A replaced username-and-password login is ended in Home Assistant
-                                if (haServer.refreshToken != server.refreshToken) revokeHaLogin(haServer)
-                                haServer = server
-                                prefs.haUrl = server.url
-                                prefs.haToken = server.token
-                                prefs.haRefreshToken = server.refreshToken
-                                prefs.haUsername = username
-                                saveHaChoice(haEntities, topBar)
-                            },
-                            onLogOut = ::logOutOfHa,
-                            onDiscardLogin = ::revokeHaLogin,
-                            onDismiss = { haDialogOpen = false },
-                        )
-                    }
                     if (dashboardEditorEnabled) {
                         DashboardEditor(
                             haServer = haServer,
@@ -690,6 +634,16 @@ class MainActivity : ComponentActivity() {
                             importSettings = { applyImport(it, currentHomeLayout()) },
                             videoBackgrounds = { videoBackgrounds },
                             saveVideos = { next -> videoBackgrounds = next; prefs.videoBackgrounds = next },
+                            configurationChanged = ::reloadWebConfiguration,
+                            tvAction = { name, id ->
+                                window.decorView.postDelayed({ when (name) {
+                                    "accessibility" -> openSystemSettings(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                    "screensaver" -> openScreensaverSettings()
+                                    "watch-next" -> requestPermissions(arrayOf(READ_TV_LISTINGS), 0)
+                                    "camera-test" -> webCameraTest = id
+                                    "restart" -> restartApp()
+                                } }, 750)
+                            },
                             showInfo = dashboardEditorInfoOpen,
                             onDismissInfo = { dashboardEditorInfoOpen = false },
                             onStartFailed = { message ->
@@ -699,85 +653,12 @@ class MainActivity : ComponentActivity() {
                             },
                         )
                     }
-                    if (frigateOpen) {
-                        FrigateDialog(
-                            initial = frigate,
-                            onSave = ::saveFrigate,
-                            onDismiss = { frigateOpen = false },
-                        )
+                    cameras.firstOrNull { it.id == webCameraTest }?.let { test ->
+                        CameraTestDialog(test.name, test.url, test.substreamUrl, test.useAudio, test.useSubstreamAudio,
+                            onDismiss = { webCameraTest = null })
                     }
                     if (allAppsOpen) {
                         AllAppsDrawer(all.orEmpty(), onDismiss = { allAppsOpen = false })
-                    }
-                    if (launcherSettingsOpen) {
-                        LauncherSettingsDialog(
-                            onEditDashboard = {
-                                launcherSettingsOpen = false
-                                openDashboardEditor()
-                            },
-                            catchHomeKey = catchHomeKey,
-                            reopenAfterHome = reopenAfterHome,
-                            autoTurnedOff = remember { prefs.replaceHomeAutoOff },
-                            onCatchHomeKeyChange = { on ->
-                                prefs.catchHomeKey = on
-                                homeOverrideChanged()
-                            },
-                            onReopenAfterHomeChange = { on ->
-                                prefs.reopenAfterHome = on
-                                homeOverrideChanged()
-                            },
-                            showFreeMemory = showFreeMemory,
-                            artworkSettings = artworkSettings,
-                            cardOpacity = cardOpacity,
-                            appearanceTheme = appearanceTheme,
-                            onAppearanceThemeChanged = { theme ->
-                                appearanceTheme = theme
-                                prefs.appearanceTheme = theme
-                            },
-                            onCardOpacityChanged = { opacity ->
-                                cardOpacityOverride = opacity
-                                prefs.dashboardCardOpacity = opacity
-                            },
-                            appsCardCollapse = appsCardCollapse,
-                            onAppsCardCollapseChanged = { collapse ->
-                                appsCardCollapse = collapse
-                                prefs.appsCardCollapse = collapse
-                            },
-                            dashboardForecast = videoBackgrounds.dashboardForecast,
-                            screensaverForecast = videoBackgrounds.screensaverForecast,
-                            onForecastChanged = { dashboard, screensaver ->
-                                videoBackgrounds = videoBackgrounds.copy(revision = videoBackgrounds.revision + 1,
-                                    dashboardForecast = dashboard, screensaverForecast = screensaver)
-                                prefs.videoBackgrounds = videoBackgrounds
-                            },
-                            cycleUiColors = cycleUiColors,
-                            onCycleUiColorsChanged = { enabled ->
-                                cycleUiColors = enabled
-                                prefs.cycleUiColors = enabled
-                            },
-                            onArtworkEnabled = { enabled ->
-                                artworkSettings = artworkSettings.copy(enabled = enabled)
-                                prefs.artworkSettings = artworkSettings
-                                scheduleArtwork(this@MainActivity, artworkSettings)
-                            },
-                            onSaveArtworkCatalog = { region, services ->
-                                val updated = artworkSettings.copy(region = region, services = services)
-                                val changed = updated != artworkSettings
-                                artworkSettings = updated
-                                prefs.artworkSettings = updated
-                                scheduleArtwork(this@MainActivity, updated, settingsChanged = changed)
-                            },
-                            onArtworkSourceChanged = { useLocal ->
-                                artworkSettings = artworkSettings.copy(useLocal = useLocal)
-                                prefs.artworkSettings = artworkSettings
-                                scheduleArtwork(this@MainActivity, artworkSettings)
-                            },
-                            onShowFreeMemoryChange = { on ->
-                                prefs.showFreeMemory = on
-                                showFreeMemory = on
-                            },
-                            onDismiss = { launcherSettingsOpen = false },
-                        )
                     }
                     if (stuckPlayersOpen) {
                         StuckPlayersDialog(onDismiss = { stuckPlayersOpen = false })
@@ -803,16 +684,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Ends the login; the address, username and chosen entities stay for logging in again */
-    private fun logOutOfHa() {
-        revokeHaLogin(haServer)
-        haServer = HaServer(haServer.url)
-        prefs.haToken = ""
-        prefs.haRefreshToken = ""
-    }
-
     private fun revokeHaLogin(server: HaServer) {
         lifecycleScope.launch { haRevoke(server) }
+    }
+
+    private fun reloadWebConfiguration() {
+        val previousArtwork = artworkSettings
+        cameras = prefs.cameras
+        selectedCamera = prefs.selectedCamera
+        cameraGridLive = prefs.cameraGridLive
+        showHomeCamera = prefs.showHomeCamera
+        minimizeVideoStreams = prefs.minimizeVideoStreams
+        haServer = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
+        haTopBar = prefs.haTopBar
+        frigate = prefs.frigate
+        artworkSettings = prefs.artworkSettings
+        videoBackgrounds = prefs.videoBackgrounds
+        cardOpacityOverride = prefs.dashboardCardOpacity
+        appearanceTheme = prefs.appearanceTheme
+        appsCardCollapse = prefs.appsCardCollapse
+        cycleUiColors = prefs.cycleUiColors
+        showFreeMemory = prefs.showFreeMemory
+        updateReplaceHome()
+        if (previousArtwork != artworkSettings) scheduleArtwork(this, artworkSettings, settingsChanged = true)
     }
 
     private fun settingsForExport(entities: Map<String, HaEntity>, home: DashboardLayout) = SettingsFile(
@@ -916,15 +810,8 @@ class MainActivity : ComponentActivity() {
         pruneCameraSnapshots(this, value.flatMap { listOf(it.url, it.substreamUrl) })
     }
 
-    private fun homeOverrideChanged() {
-        prefs.replaceHomeAutoOff = false
-        updateReplaceHome()
-    }
-
     private fun updateReplaceHome() {
         replaceHome = prefs.replaceHome
-        catchHomeKey = prefs.catchHomeKey
-        reopenAfterHome = prefs.reopenAfterHome
         showFreeMemory = prefs.showFreeMemory
     }
 

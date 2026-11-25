@@ -3,8 +3,6 @@
   const el = id => document.getElementById(id);
   const panel = el("video-library"), fields = el("video-fields"), status = el("video-status");
   const numeric = [["video-switch", "switchSeconds"], ["dashboard-dim", "dashboardDim"], ["screensaver-dim", "screensaverDim"]];
-  const forecast = [["dashboard-forecast", "dashboardForecast"], ["screensaver-forecast", "screensaverForecast"]];
-  const opacity = [["card-focused-opacity", "focusedCardOpacity"], ["card-unfocused-opacity", "unfocusedCardOpacity"]];
   const openVideos = new Set(), openPlaylists = new Set();
   let draft = null, dirty = false, busy = false;
   const say = text => { status.textContent = text; };
@@ -46,8 +44,6 @@
   function validate(data) {
     if (!Number.isSafeInteger(data?.revision) || data.schema !== 4 || !Array.isArray(data.videos) || !Array.isArray(data.playlists) ||
         typeof data.shuffle !== "boolean" || numeric.some(([, key]) => !Number.isInteger(data[key])) ||
-        forecast.some(([, key]) => !["off", "hourly", "daily"].includes(data[key])) ||
-        opacity.some(([, key]) => data[key] !== null && (!Number.isInteger(data[key]) || data[key] < 0 || data[key] > 100)) ||
         data.videos.some(v => ["background", "screensaver", "randomStart"].some(k => typeof v[k] !== "boolean")) ||
         data.playlists.some(p => !Array.isArray(p.videoIds) || typeof p.enabled !== "boolean")) throw new Error("HAL did not return background settings. Reload the page after updating HAL.");
     return data;
@@ -97,16 +93,8 @@
     controls(); overview();
   }
   function render() {
-    for (const [id, key] of forecast) el(id).value = draft[key];
     el("video-shuffle").checked = draft.shuffle;
     for (const [key, value] of numeric) el(key).value = draft[value];
-    for (const [key, value] of opacity) {
-      const saved = draft[value];
-      if (saved !== null && ![...el(key).options].some(o => o.value === String(saved))) {
-        const option = document.createElement("option"); option.value = saved; option.textContent = saved + "%"; el(key).append(option);
-      }
-      el(key).value = saved ?? "";
-    }
     el("video-list").replaceChildren(...draft.videos.map((video, index) => {
       const row = document.createElement("li"); row.className = "video-entry";
       const targets = () => [video.background && "Dashboard", video.screensaver && "Screensaver", video.randomStart && "Random start"].filter(Boolean).join(" · ") || "Not used on either screen";
@@ -140,11 +128,6 @@
   panel.addEventListener("toggle", () => { if (panel.open && !draft && !busy) load(); });
   el("video-shuffle").onchange = () => { draft.shuffle = el("video-shuffle").checked; changed(); };
   for (const [key, value] of numeric) { el(key).required = true; el(key).oninput = () => { draft[value] = el(key).valueAsNumber; changed(); }; }
-  for (const [key, value] of opacity) {
-    for (let n = 0; n <= 100; n += 10) { const o = document.createElement("option"); o.value = n; o.textContent = `${n}%`; el(key).append(o); }
-    el(key).onchange = () => { draft[value] = el(key).value === "" ? null : Number(el(key).value); changed(); };
-  }
-  for (const [id, key] of forecast) el(id).onchange = () => { draft[key] = el(id).value; changed(); };
   el("playlist-add").onsubmit = event => {
     event.preventDefault(); const title = el("playlist-title").value.trim(); if (!title || draft.playlists.length >= 24) return;
     const p = { id: id(), title, enabled: false, videoIds: [] }; draft.playlists.push(p); openPlaylists.add(p.id);
