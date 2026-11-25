@@ -22,6 +22,7 @@
       ["focusedOpacity", "Focused card tile opacity", opacity, "The dashboard tile or panel under remote focus. The popup has its own setting below."],
       ["unfocusedOpacity", "Unfocused card tile opacity", opacity, "Dashboard tiles without remote focus. Text, artwork and outlines stay readable."],
       ["popupOpacity", "Card popup opacity", opacity, "The opened Calm card panel. Independent of the focused and unfocused tiles."],
+      ["popupColumns", "Card popup columns", [["1", "1 column (compact)"], ["2", "2 columns (wide)"]], "One column is half the previous width; two columns restore the wide popup. Full-width widgets keep their own row."],
       ["collapse", "Collapse Apps card", [["Off", "Off"], ["Up", "Up"], ["Down", "Down"]], "Up/Down collapses after 30 seconds idle. The next key expands the card."],
       ["cycleColors", "Cycle UI colors", "checkbox", "Slowly cycles interface colors, preserving artwork, video and light state colors."]
     ],
@@ -76,7 +77,7 @@
   function values(form, fields) {
     return Object.fromEntries(fields.map(([key, , kind]) => {
       const input = form.elements.namedItem(key);
-      return [key, kind === "checkbox" ? input.checked : kind === "number" ? Number(input.value) : key.endsWith("Opacity") ? input.value === "" ? null : Number(input.value) : input.value];
+      return [key, kind === "checkbox" ? input.checked : (kind === "number" || key === "popupColumns") ? Number(input.value) : key.endsWith("Opacity") ? input.value === "" ? null : Number(input.value) : input.value];
     }));
   }
   const stateKey = key => key === "ha-login" ? "homeassistant" : key;

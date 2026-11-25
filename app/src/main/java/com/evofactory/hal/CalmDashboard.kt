@@ -222,8 +222,9 @@ internal fun CalmDashboard(
                 }
                 .padding(40.dp), contentAlignment = Alignment.Center) {
                 val panelHeight = maxHeight * 0.85f
-                Box(Modifier.width(minOf(maxWidth, 760.dp)).heightIn(max = maxHeight)) {
+                Box(Modifier.width(minOf(maxWidth, calmPopupWidth(LocalPopupCardColumns.current).dp)).heightIn(max = maxHeight)) {
                     androidx.compose.runtime.CompositionLocalProvider(
+                        LocalInCardPopup provides true,
                         LocalDashboardForecast provides LocalCardForecast.current,
                         LocalFocusedCardOpacity provides LocalPopupCardOpacity.current,
                         LocalDashboardCardOpacity provides LocalPopupCardOpacity.current,

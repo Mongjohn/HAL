@@ -508,7 +508,13 @@ fun HaAssistantTab(
             ) {
                 // Selection's weather cards have the weather's name as title, which its reading says already
                 val weather = card.ids.firstOrNull()?.takeIf { card.isWeather && board == null && customLayout == null }
-                val rows = rowsByCard.getValue(card.key)
+                val savedRows = rowsByCard.getValue(card.key)
+                val inPopup = LocalInCardPopup.current
+                val popupColumns = LocalPopupCardColumns.current
+                val rows = if (inPopup) card.popupRows(savedRows.flatten(), popupColumns) else savedRows
+                val halfWidthItems = if (inPopup) {
+                    if (popupColumns == 2) rows.flatten().toSet() else emptySet()
+                } else cardOptions[card.key]?.halfWidthItems.orEmpty()
                 val hidden = hiddenItems.getValue(card.key)
                 val buttonRows = rows.flatMapIndexed { row, positions ->
                     positions.filter { it !in hidden && card.hasControl(card.ids[it]) }.map { it to row }
@@ -533,7 +539,7 @@ fun HaAssistantTab(
                     } else {
                         CardContent(card, rows, hidden.keys, buttonRows.keys.firstOrNull(), connection, names, aliases,
                             entered == card.key, raised, firstButton, onButtonFocused,
-                            cardOptions[card.key]?.halfWidthItems.orEmpty(),
+                            halfWidthItems,
                             compactMedia = maxHeight != null && maxHeight / rows.size.coerceAtLeast(1) < 120.dp,
                             mediaMinHeight = minHeight ?: 0.dp,
                             cardFocused = cardFocused)

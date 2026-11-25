@@ -197,7 +197,8 @@ class MainActivity : ComponentActivity() {
             val cardOpacity = cardOpacityOverride ?: DefaultCardOpacity
             HalTheme(cardOpacity, rememberUiColorCycle(cycleUiColors, resumed), theme = appearanceTheme,
                 focusedCardOpacity = videoBackgrounds.focusedCardOpacity, unfocusedCardOpacity = videoBackgrounds.unfocusedCardOpacity,
-                dashboardForecast = videoBackgrounds.dashboardForecast, screensaverForecast = videoBackgrounds.screensaverForecast, cardForecast = videoBackgrounds.cardForecast, popupCardOpacity = videoBackgrounds.popupCardOpacity) {
+                dashboardForecast = videoBackgrounds.dashboardForecast, screensaverForecast = videoBackgrounds.screensaverForecast, cardForecast = videoBackgrounds.cardForecast, popupCardOpacity = videoBackgrounds.popupCardOpacity,
+                popupCardColumns = videoBackgrounds.popupCardColumns) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val all = installed
                     val visible = remember(all, order, hidden) { all?.let { arrange(it, order, hidden) } }
