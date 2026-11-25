@@ -3,14 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HAL Dashboard Editor</title>
+  <title>HAL Settings</title>
   <link rel="stylesheet" href="/editor.css">
   <script src="/editor.js" defer></script>
   <script src="/videos.js" defer></script>
+  <script src="/config.js" defer></script>
 </head>
 <body>
   <header>
-    <h1>HAL Dashboard Editor</h1>
+    <h1><a class="brand" href="/" aria-label="HAL settings home">HAL <span>Settings</span></a></h1>
     <div class="controls header-actions">
       <a href="/api/logs" download="hal-logs.txt">Download HAL logs</a>
       <button id="undo" disabled>Undo</button>
@@ -18,15 +19,28 @@
       <button id="apply" class="primary" disabled>Apply to TV</button>
     </div>
   </header>
-  <nav class="workspace-tabs" role="tablist" aria-label="Editor workspace">
+  <aside class="settings-navigation" aria-label="Settings navigation">
+    <label class="settings-search">Find a setting<input id="settings-search" type="search" placeholder="Search settings…" autocomplete="off" aria-controls="settings-search-results"></label>
+    <div id="settings-search-results" hidden></div>
+  <nav class="workspace-tabs" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
     <button role="tab" id="tab-dashboard" data-workspace="dashboard" aria-controls="dashboard-panel" aria-selected="true">Dashboard</button>
-    <button role="tab" id="tab-backgrounds" data-workspace="backgrounds" aria-controls="backgrounds-panel" aria-selected="false" tabindex="-1">Backgrounds &amp; appearance</button>
+    <button role="tab" id="tab-backgrounds" data-workspace="backgrounds" aria-controls="backgrounds-panel" aria-selected="false" tabindex="-1">Backgrounds</button>
+    <button role="tab" id="tab-appearance" data-workspace="appearance" aria-controls="appearance-panel" aria-selected="false" tabindex="-1">Appearance<span class="draft-badge" hidden>Unsaved</span></button>
+    <button role="tab" id="tab-weather" data-workspace="weather" aria-controls="weather-panel" aria-selected="false" tabindex="-1">Weather<span class="draft-badge" hidden>Unsaved</span></button>
+    <button role="tab" id="tab-homeassistant" data-workspace="homeassistant" aria-controls="homeassistant-panel" aria-selected="false" tabindex="-1">Home Assistant<span class="draft-badge" hidden>Unsaved</span></button>
+    <button role="tab" id="tab-cameras" data-workspace="cameras" aria-controls="cameras-panel" aria-selected="false" tabindex="-1">Cameras<span class="draft-badge" hidden>Unsaved</span></button>
+    <button role="tab" id="tab-frigate" data-workspace="frigate" aria-controls="frigate-panel" aria-selected="false" tabindex="-1">Frigate<span class="draft-badge" hidden>Unsaved</span></button>
+    <button role="tab" id="tab-launcher" data-workspace="launcher" aria-controls="launcher-panel" aria-selected="false" tabindex="-1">Launcher & remote<span class="draft-badge" hidden>Unsaved</span></button>
+    <button role="tab" id="tab-maintenance" data-workspace="maintenance" aria-controls="maintenance-panel" aria-selected="false" tabindex="-1">Maintenance<span class="draft-badge" hidden>Unsaved</span></button>
     <button role="tab" id="tab-settings" data-workspace="settings" aria-controls="settings-panel" aria-selected="false" tabindex="-1">Settings transfer</button>
   </nav>
+    <p class="navigation-note">Configure this TV. Changes save within each section.</p>
+  </aside>
+  <div class="settings-content">
   <p id="apply-result" role="status" hidden></p>
   <p id="status" role="status">Loading dashboard…</p>
   <section id="backgrounds-panel" data-workspace-panel="backgrounds" role="tabpanel" aria-labelledby="tab-backgrounds" hidden>
-    <div class="section-heading"><div><h2>Backgrounds &amp; appearance</h2><p class="hint">Choose what plays and how it looks. Save these settings independently of your dashboard.</p></div></div>
+    <div class="section-heading"><div><h2>Backgrounds</h2><p class="hint">Choose what plays and how it looks. Save these settings independently of your dashboard.</p></div></div>
   <details id="video-library">
     <summary>Video backgrounds &amp; playlists</summary>
     <fieldset id="video-fields" disabled>
@@ -47,22 +61,6 @@
       </div>
       <p class="hint">0 plays to the end. Otherwise switch every 10–86400 seconds. Random starts need a known, seekable duration. Dimming changes images and videos, leaving text readable.</p>
       </details>
-      <details class="settings-block" id="weather-options">
-        <summary>Extended weather</summary>
-        <p class="hint">Choose one forecast for each surface. Off shows current conditions only. Availability depends on your Home Assistant weather provider.</p>
-        <div class="controls">
-          <label>Dashboard forecast<select id="dashboard-forecast"><option value="off">Off</option><option value="hourly">Hourly</option><option value="daily">5-day</option></select></label>
-          <label>Screensaver forecast<select id="screensaver-forecast"><option value="off">Off</option><option value="hourly">Hourly</option><option value="daily">5-day</option></select></label>
-        </div>
-      </details>
-      <details class="settings-block" id="card-opacity-options">
-        <summary>Dashboard card appearance</summary>
-        <div class="controls">
-          <label>Focused card opacity<select id="card-focused-opacity"><option value="">Use TV base opacity</option></select></label>
-          <label>Unfocused card opacity<select id="card-unfocused-opacity"><option value="">Use TV base opacity</option></select></label>
-        </div>
-        <p class="hint">0% is transparent, 100% is solid. Text, artwork and focus outlines remain visible. These overrides apply across Glass, Glass Dark and Calm.</p>
-      </details>
       <section class="settings-block" aria-label="Video library">
       <div class="section-heading"><h2>Video library</h2><span class="hint">Up to 50</span></div>
       <p class="hint">Add a direct MP4 or WebM link, then include it in a playlist. Open a video to edit its name, URL and screen choices.</p>
@@ -73,18 +71,19 @@
         <button id="video-add-button" type="submit">Add video</button>
       </form>
       </section>
-      <div class="controls save-row"><button id="video-save" class="primary" disabled>Save backgrounds &amp; appearance</button></div>
+      <div class="controls save-row"><button id="video-save" class="primary" disabled>Save backgrounds</button></div>
     </fieldset>
     <button id="video-reload" type="button">Reload saved settings</button>
     <p id="video-status" role="status"></p>
     <details class="help-disclosure"><summary>Formats, privacy &amp; Android activation</summary>
       <p class="hint">Use direct HTTP(S) video files supported by your TV. Playback is muted. Webpage links, HLS/DASH and DRM are not supported. Unplayable videos fall back to artwork. URLs may contain private query tokens and are fetched by the TV.</p>
-      <p class="hint">Select HAL Artwork in Android TV’s screensaver settings. Android controls activation and sleep. Background settings save separately from dashboard drafts and are not included in settings-file exports.</p>
+      <p class="hint">Select HAL Artwork in Android TV’s screensaver settings. Android controls activation and sleep. Video settings save separately from dashboard drafts and are not included in settings-file exports.</p>
     </details>
   </details>
   <details id="artwork-library">
     <summary>Slideshow artwork</summary>
-    <p class="hint">On the TV, open HAL settings → Background and enable Artwork slideshow and Use local artwork. JPEG, PNG, or WebP, up to 8 MB each.</p>
+    <div id="artwork-configuration" class="config-section" data-config="artwork"></div>
+    <p class="hint">Upload JPEG, PNG, or WebP, up to 8 MB each. Select Uploaded images as the slideshow source above.</p>
     <div class="controls">
       <label>Images <input id="artwork-files" type="file" accept="image/jpeg,image/png,image/webp" multiple></label>
       <button id="artwork-upload" disabled>Upload</button>
@@ -93,6 +92,13 @@
     <ul id="artwork-list"></ul>
   </details>
   </section>
+  <section id="appearance-panel" data-workspace-panel="appearance" role="tabpanel" aria-labelledby="tab-appearance" hidden><div class="config-section" data-config="appearance"></div></section>
+  <section id="weather-panel" data-workspace-panel="weather" role="tabpanel" aria-labelledby="tab-weather" hidden><div class="config-section" data-config="weather"></div></section>
+  <section id="homeassistant-panel" data-workspace-panel="homeassistant" role="tabpanel" aria-labelledby="tab-homeassistant" hidden><div class="config-section" data-config="ha-login"></div><div class="config-section" data-config="homeassistant"></div></section>
+  <section id="cameras-panel" data-workspace-panel="cameras" role="tabpanel" aria-labelledby="tab-cameras" hidden><div class="config-section" data-config="cameras"></div></section>
+  <section id="frigate-panel" data-workspace-panel="frigate" role="tabpanel" aria-labelledby="tab-frigate" hidden><div class="config-section" data-config="frigate"></div></section>
+  <section id="launcher-panel" data-workspace-panel="launcher" role="tabpanel" aria-labelledby="tab-launcher" hidden><div class="config-section" data-config="launcher"></div></section>
+  <section id="maintenance-panel" data-workspace-panel="maintenance" role="tabpanel" aria-labelledby="tab-maintenance" hidden><div class="config-section" data-config="maintenance"></div></section>
   <section id="settings-panel" data-workspace-panel="settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
   <details id="settings-transfer" inert>
     <summary>Import / export settings</summary>
@@ -205,5 +211,6 @@
     </aside>
   </main>
   </section>
+  </div>
 </body>
 </html>

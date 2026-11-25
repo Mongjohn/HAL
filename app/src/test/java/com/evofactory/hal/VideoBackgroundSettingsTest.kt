@@ -150,6 +150,31 @@ class VideoBackgroundSettingsTest {
         assertTrue(VideoBackgroundSettings(videos = migrated.videos).videosFor(false).isEmpty())
     }
 
+    @Test fun oldPopupForecastInheritsThePreviousDashboardChoiceThenBecomesIndependent() {
+        val json = VideoBackgroundSettings(dashboardForecast = ForecastDisplay.Daily).toJson().also { it.remove("cardForecast") }
+        val migrated = videoBackgroundSettingsFromJson(json)
+        assertEquals(ForecastDisplay.Daily, migrated.cardForecast)
+        val changed = migrated.copy(dashboardForecast = ForecastDisplay.Off, cardForecast = ForecastDisplay.Hourly)
+        assertEquals(changed, videoBackgroundSettingsFromJson(changed.toJson()))
+        assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(json.put("cardForecast", "weekly")) }
+    }
+
+    @Test fun bothForecastModeRoundTripsForEverySurface() {
+        val settings = VideoBackgroundSettings(dashboardForecast = ForecastDisplay.Both, cardForecast = ForecastDisplay.Both, screensaverForecast = ForecastDisplay.Both)
+        assertEquals(settings, videoBackgroundSettingsFromJson(settings.toJson()))
+    }
+
+    @Test fun popupOpacityMigratesFromTheOldFocusedValueAndThenChangesIndependently() {
+        val json = VideoBackgroundSettings(focusedCardOpacity = 80, unfocusedCardOpacity = 20).toJson().also { it.remove("popupCardOpacity") }
+        val old = videoBackgroundSettingsFromJson(json)
+        assertEquals(80, old.popupCardOpacity)
+        val changed = old.copy(focusedCardOpacity = 40, popupCardOpacity = 90)
+        assertEquals(changed, videoBackgroundSettingsFromJson(changed.toJson()))
+        assertEquals(null, videoBackgroundSettingsFromJson(changed.toJson().put("popupCardOpacity", JSONObject.NULL)).popupCardOpacity)
+        assertEquals(40, changed.focusedCardOpacity)
+        assertEquals(20, changed.unfocusedCardOpacity)
+    }
+
     @Test fun optionalForecastModesAreIndependentAndValidated() {
         val settings = VideoBackgroundSettings(dashboardForecast = ForecastDisplay.Hourly, screensaverForecast = ForecastDisplay.Daily)
         assertEquals(settings, videoBackgroundSettingsFromJson(settings.toJson()))
@@ -157,7 +182,7 @@ class VideoBackgroundSettingsTest {
         assertEquals(ForecastDisplay.Off, videoBackgroundSettingsFromJson(old).dashboardForecast)
         assertEquals(ForecastDisplay.Off, videoBackgroundSettingsFromJson(old).screensaverForecast)
         for (key in listOf("dashboardForecast", "screensaverForecast")) {
-            assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.toJson().put(key, "both")) }
+            assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.toJson().put(key, "weekly")) }
             assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.toJson().put(key, JSONObject.NULL)) }
         }
     }
@@ -171,7 +196,7 @@ class VideoBackgroundSettingsTest {
             assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.copy(
                 playlists = listOf(VideoPlaylist("one", "One", ids))).toJson()) }
         }
-        for (key in listOf("focusedCardOpacity", "unfocusedCardOpacity")) for (value in listOf(-1, 101, 50.5)) {
+        for (key in listOf("focusedCardOpacity", "unfocusedCardOpacity", "popupCardOpacity")) for (value in listOf(-1, 101, 50.5)) {
             assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.toJson().put(key, value)) }
         }
         assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(settings.copy(

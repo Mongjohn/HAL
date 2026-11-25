@@ -25,13 +25,16 @@ internal data class VideoBackgroundSettings(
     val unfocusedCardOpacity: Int? = null,
     val dashboardForecast: ForecastDisplay = ForecastDisplay.Off,
     val screensaverForecast: ForecastDisplay = ForecastDisplay.Off,
+    val cardForecast: ForecastDisplay = dashboardForecast,
+    val popupCardOpacity: Int? = focusedCardOpacity,
 ) {
     fun toJson(): JSONObject = JSONObject().put("revision", revision).put("schema", 4)
         .put("shuffle", shuffle).put("switchSeconds", switchSeconds)
         .put("dashboardDim", dashboardDim).put("screensaverDim", screensaverDim)
         .put("focusedCardOpacity", focusedCardOpacity ?: JSONObject.NULL)
         .put("unfocusedCardOpacity", unfocusedCardOpacity ?: JSONObject.NULL)
-        .put("dashboardForecast", dashboardForecast.value).put("screensaverForecast", screensaverForecast.value)
+        .put("popupCardOpacity", popupCardOpacity ?: JSONObject.NULL)
+        .put("dashboardForecast", dashboardForecast.value).put("screensaverForecast", screensaverForecast.value).put("cardForecast", cardForecast.value)
         .put("playlists", JSONArray(playlists.map {
             JSONObject().put("id", it.id).put("title", it.title).put("videoIds", JSONArray(it.videoIds)).put("enabled", it.enabled)
         }))
@@ -91,7 +94,8 @@ internal fun videoBackgroundSettingsFromJson(json: JSONObject): VideoBackgroundS
     return VideoBackgroundSettings(revision, videos, if (legacy) false else json.getBoolean("shuffle"),
         integer("switchSeconds", 0, 0..86400).also { require(it == 0 || it >= 10) { "Switch videos at least 10 seconds apart." } },
         integer("dashboardDim", 66, 0..100), integer("screensaverDim", 72, 0..100), playlists,
-        opacity("focusedCardOpacity"), opacity("unfocusedCardOpacity"), forecast("dashboardForecast"), forecast("screensaverForecast"))
+        opacity("focusedCardOpacity"), opacity("unfocusedCardOpacity"), forecast("dashboardForecast"), forecast("screensaverForecast"), if (json.has("cardForecast")) forecast("cardForecast") else forecast("dashboardForecast"),
+        if (json.has("popupCardOpacity")) opacity("popupCardOpacity") else opacity("focusedCardOpacity"))
 }
 
 internal fun VideoBackgroundSettings.videosFor(screensaver: Boolean): List<BackgroundVideo> {
