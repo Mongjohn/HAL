@@ -37,6 +37,7 @@ internal class WebConfiguration(
             .put("launcher", JSONObject().put("catchHomeKey", prefs.catchHomeKey).put("reopenAfterHome", prefs.reopenAfterHome))
             .put("appearance", JSONObject().put("theme", prefs.appearanceTheme.name)
                 .put("baseOpacity", prefs.dashboardCardOpacity ?: JSONObject.NULL)
+                .put("popupColumns", video.popupCardColumns)
                 .put("popupOpacity", video.popupCardOpacity ?: JSONObject.NULL)
                 .put("focusedOpacity", video.focusedCardOpacity ?: JSONObject.NULL).put("unfocusedOpacity", video.unfocusedCardOpacity ?: JSONObject.NULL)
                 .put("collapse", prefs.appsCardCollapse.name).put("cycleColors", prefs.cycleUiColors))
@@ -111,9 +112,10 @@ internal class WebConfiguration(
                 val collapse = enumValue<AppsCardCollapse>(value, "collapse")
                 val base = value.opacity("baseOpacity"); val focused = value.opacity("focusedOpacity"); val unfocused = value.opacity("unfocusedOpacity")
                 val popup = if (value.has("popupOpacity")) value.opacity("popupOpacity") else prefs.videoBackgrounds.popupCardOpacity
+                val popupColumns = if (value.has("popupColumns")) value.integer("popupColumns", 1..2) else prefs.videoBackgrounds.popupCardColumns
                 val cycle = value.getBoolean("cycleColors")
                 prefs.appearanceTheme = theme; prefs.appsCardCollapse = collapse; prefs.dashboardCardOpacity = base; prefs.cycleUiColors = cycle
-                prefs.videoBackgrounds = prefs.videoBackgrounds.let { it.copy(revision = it.revision + 1, focusedCardOpacity = focused, unfocusedCardOpacity = unfocused, popupCardOpacity = popup) }
+                prefs.videoBackgrounds = prefs.videoBackgrounds.let { it.copy(revision = it.revision + 1, focusedCardOpacity = focused, unfocusedCardOpacity = unfocused, popupCardOpacity = popup, popupCardColumns = popupColumns) }
             }
             "weather" -> {
                 val modes = listOf("dashboard", "screensaver", "card").map { key ->

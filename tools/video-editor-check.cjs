@@ -122,10 +122,11 @@ async function configurationChecks() {
   await wait(()=>form('weather').querySelector('.config-status').textContent==='Saved to this TV.');
   expect(form('appearance').elements.namedItem('unfocusedOpacity').value==='20','switch/save lost another section draft');
   expect(form('appearance').dataset.dirty==='true','another section draft was cleared');
-  input('appearance','focusedOpacity','60'); input('appearance','popupOpacity','80');
+  input('appearance','focusedOpacity','60'); input('appearance','popupOpacity','80'); input('appearance','popupColumns','2');
   await save('appearance');
   let saved=await (await fetch('/api/config')).json();
   expect(saved.sections.weather.card==='daily' && saved.sections.weather.dashboard==='both' && saved.sections.weather.screensaver==='hourly','three weather surfaces are not independent');
+  expect(saved.sections.appearance.popupColumns===2,'wide two-column popup was not saved');
   expect(saved.sections.appearance.unfocusedOpacity===20 && saved.sections.appearance.focusedOpacity===60 && saved.sections.appearance.popupOpacity===80,'tile and popup opacity are not independent');
   el('tab-appearance').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));
   expect(el('tab-weather').getAttribute('aria-selected')==='true','vertical sidebar keyboard navigation');
@@ -185,7 +186,7 @@ async function configurationChecks() {
 
 async function main() {
   let configuration = { revision: 'config-0', sections: {
-    appearance: {theme:'Glass',baseOpacity:null,focusedOpacity:null,unfocusedOpacity:null,popupOpacity:null,collapse:'Off',cycleColors:false},
+    appearance: {theme:'Glass',baseOpacity:null,focusedOpacity:null,unfocusedOpacity:null,popupOpacity:null,popupColumns:1,collapse:'Off',cycleColors:false},
     weather:{dashboard:'off',screensaver:'off',card:'off'}, artwork:{enabled:false,useLocal:false,region:'DK',services:['Netflix']},
     launcher:{catchHomeKey:false,reopenAfterHome:false}, maintenance:{logHours:12,showMemory:false},
     homeassistant:{url:'http://ha.local:8123',username:'existing',connected:true,method:'password',topBar:[]},

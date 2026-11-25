@@ -175,6 +175,16 @@ class VideoBackgroundSettingsTest {
         assertEquals(20, changed.unfocusedCardOpacity)
     }
 
+    @Test fun popupColumnsDefaultToCompactAndValidateAWholeOneOrTwoColumns() {
+        val old = VideoBackgroundSettings().toJson().also { it.remove("popupCardColumns") }
+        assertEquals(1, videoBackgroundSettingsFromJson(old).popupCardColumns)
+        val wide = VideoBackgroundSettings(popupCardColumns = 2)
+        assertEquals(wide, videoBackgroundSettingsFromJson(wide.toJson()))
+        for (invalid in listOf(0, 3, 1.5)) {
+            assertThrows(IllegalArgumentException::class.java) { videoBackgroundSettingsFromJson(wide.toJson().put("popupCardColumns", invalid)) }
+        }
+    }
+
     @Test fun optionalForecastModesAreIndependentAndValidated() {
         val settings = VideoBackgroundSettings(dashboardForecast = ForecastDisplay.Hourly, screensaverForecast = ForecastDisplay.Daily)
         assertEquals(settings, videoBackgroundSettingsFromJson(settings.toJson()))

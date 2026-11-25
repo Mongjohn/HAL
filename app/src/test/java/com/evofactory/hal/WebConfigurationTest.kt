@@ -135,13 +135,14 @@ class WebConfigurationTest {
     @Test fun appearanceChangesKeepTheVideoLibraryAndRejectFractionalOpacityBeforeWriting() {
         prefs.videoBackgrounds = VideoBackgroundSettings(videos = listOf(BackgroundVideo("v", "Film", "https://example.org/video.mp4")))
         val appearance = read().getJSONObject("sections").getJSONObject("appearance")
-        appearance.put("theme", "Calm").put("baseOpacity", 20).put("focusedOpacity", 90).put("unfocusedOpacity", 10).put("popupOpacity", 70)
+        appearance.put("theme", "Calm").put("baseOpacity", 20).put("focusedOpacity", 90).put("unfocusedOpacity", 10).put("popupOpacity", 70).put("popupColumns", 2)
         save("appearance", appearance)
         assertEquals(LauncherTheme.Calm, prefs.appearanceTheme)
         assertEquals(20, prefs.dashboardCardOpacity)
         assertEquals(90, prefs.videoBackgrounds.focusedCardOpacity)
         assertEquals(10, prefs.videoBackgrounds.unfocusedCardOpacity)
         assertEquals(70, prefs.videoBackgrounds.popupCardOpacity)
+        assertEquals(2, prefs.videoBackgrounds.popupCardColumns)
         assertEquals(1, prefs.videoBackgrounds.videos.size)
         val revision = prefs.videoBackgrounds.revision
         appearance.put("theme", "Glass").put("focusedOpacity", 42.5)
@@ -155,6 +156,15 @@ class WebConfigurationTest {
         assertEquals(ForecastDisplay.Both, prefs.videoBackgrounds.dashboardForecast)
         assertEquals(ForecastDisplay.Both, prefs.videoBackgrounds.cardForecast)
         assertEquals(ForecastDisplay.Hourly, prefs.videoBackgrounds.screensaverForecast)
+    }
+
+    @Test fun invalidPopupColumnCountDoesNotPartiallyWriteAppearance() {
+        val appearance = read().getJSONObject("sections").getJSONObject("appearance")
+        appearance.put("theme", "Calm").put("popupColumns", 3)
+        assertThrows(IllegalArgumentException::class.java) { save("appearance", appearance) }
+        assertEquals(LauncherTheme.Glass, prefs.appearanceTheme)
+        assertEquals(1, prefs.videoBackgrounds.popupCardColumns)
+        assertEquals(0, changes)
     }
 
     @Test fun homeHelperRequiresConsentAndDoesNotChangeAndroidPermissions() {

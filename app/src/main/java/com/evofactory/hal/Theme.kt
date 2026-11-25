@@ -68,6 +68,8 @@ internal val LocalLauncherTheme = staticCompositionLocalOf { LauncherTheme.Glass
 
 internal const val DefaultCardOpacity = 50
 internal val LocalDashboardCardOpacity = staticCompositionLocalOf { DefaultCardOpacity }
+internal val LocalPopupCardColumns = staticCompositionLocalOf { 1 }
+internal val LocalInCardPopup = staticCompositionLocalOf { false }
 internal val LocalPopupCardOpacity = staticCompositionLocalOf { DefaultCardOpacity }
 internal val LocalFocusedCardOpacity = staticCompositionLocalOf { DefaultCardOpacity }
 internal val LocalDashboardForecast = staticCompositionLocalOf { ForecastDisplay.Off }
@@ -85,6 +87,7 @@ internal fun HalTheme(
     screensaverForecast: ForecastDisplay = ForecastDisplay.Off,
     cardForecast: ForecastDisplay = dashboardForecast,
     popupCardOpacity: Int? = focusedCardOpacity,
+    popupCardColumns: Int = 1,
     content: @Composable () -> Unit,
 ) {
     CompositionLocalProvider(
@@ -92,6 +95,7 @@ internal fun HalTheme(
         LocalDashboardCardOpacity provides (unfocusedCardOpacity ?: cardOpacity),
         LocalFocusedCardOpacity provides (focusedCardOpacity ?: cardOpacity),
         LocalPopupCardOpacity provides (popupCardOpacity ?: cardOpacity),
+        LocalPopupCardColumns provides popupCardColumns,
         LocalDashboardForecast provides dashboardForecast,
         LocalScreensaverForecast provides screensaverForecast,
         LocalCardForecast provides cardForecast,
