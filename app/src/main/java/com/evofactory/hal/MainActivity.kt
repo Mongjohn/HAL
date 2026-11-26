@@ -1,15 +1,12 @@
 package com.evofactory.hal
 
-import android.database.ContentObserver
-import android.media.tv.TvContract
 import android.content.Intent
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -55,11 +52,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.Surface
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -99,7 +93,6 @@ class MainActivity : ComponentActivity() {
     private var stuckPlayersOpen by mutableStateOf(false)
     private var replaceHome by mutableStateOf(false)
     private var showFreeMemory by mutableStateOf(false)
-    private var watchNext by mutableStateOf(emptyList<WatchNextCard>())
     private var artworkSettings by mutableStateOf(ArtworkSettings())
     private var videoBackgrounds by mutableStateOf(VideoBackgroundSettings())
     private var cardOpacityOverride by mutableStateOf<Int?>(null)
@@ -107,7 +100,6 @@ class MainActivity : ComponentActivity() {
     private var appsCardCollapse by mutableStateOf(AppsCardCollapse.Off)
     private var cycleUiColors by mutableStateOf(false)
     private var resumed by mutableStateOf(false)
-    private var watchNextRefresh: Job? = null
 
     // Home override's crash guard: the launcher counts as started once it has stayed up a moment
     private val confirmStarted = Runnable {
@@ -115,9 +107,13 @@ class MainActivity : ComponentActivity() {
         if (prefs.overrideLaunches != 0) prefs.overrideLaunches = 0
     }
 
+    @android.annotation.SuppressLint("RestrictedApi") // Android window dispatch override must delegate unconsumed keys to ComponentActivity.
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (appsCardKeyHandler?.invoke(event) == true) return true
-        return super.dispatchKeyEvent(event)
+        android.os.Trace.beginSection("HAL.key.dispatch")
+        try {
+            if (appsCardKeyHandler?.invoke(event) == true) return true
+            return super.dispatchKeyEvent(event)
+        } finally { android.os.Trace.endSection() }
     }
 
     /** Explicit activity intent, also usable with adb shell am start. Does not persist across launches. */
@@ -159,13 +155,19 @@ class MainActivity : ComponentActivity() {
         // Android stops asking by itself after it's been refused. Answering comes back to onResume.
         if (!canReadWatchNext()) requestPermissions(arrayOf(READ_TV_LISTINGS), 0)
         setContent {
+            DisposableEffect(prefs) {
+                val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key -> reloadWebConfiguration(key) }
+                prefs.addChangeListener(listener)
+                onDispose { prefs.removeChangeListener(listener) }
+            }
+            val appCatalog = rememberApplicationCatalog(artworkSettings, installed = true, active = resumed)
+            // A first-run placeholder is never reported ready before discovery has completed.
+            ReportDrawnWhen { appCatalog.appsReady && installed == appCatalog.apps }
+            LaunchedEffect(appCatalog.apps, appCatalog.appsReady) { if (appCatalog.appsReady) installed = appCatalog.apps }
+            val watchNext = appCatalog.watchNext
             LaunchedEffect(resumed) {
                 if (!resumed) return@LaunchedEffect
                 withFrameNanos { }
-                refreshWatchNext()
-                val apps = withContext(Dispatchers.IO) { loadInstalledApps(this@MainActivity) }
-                if (apps != installed) prefs.installedApps = apps
-                installed = apps
                 val settings = prefs.artworkSettings
                 if (settings != artworkSettings) {
                     artworkSettings = settings
@@ -178,21 +180,6 @@ class MainActivity : ComponentActivity() {
                     withFrameNanos { }
                     scheduleArtwork(this@MainActivity, artworkSettings)
                 }
-            }
-            DisposableEffect(resumed, artworkSettings.enabled) {
-                if (!resumed || !artworkSettings.enabled || !canReadWatchNext()) {
-                    return@DisposableEffect onDispose {}
-                }
-                val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                    override fun onChange(selfChange: Boolean) = refreshWatchNext()
-                }
-                val registered = try {
-                    contentResolver.registerContentObserver(TvContract.WatchNextPrograms.CONTENT_URI, true, observer)
-                    true
-                } catch (_: SecurityException) {
-                    false
-                }
-                onDispose { if (registered) contentResolver.unregisterContentObserver(observer) }
             }
             val cardOpacity = cardOpacityOverride ?: DefaultCardOpacity
             HalTheme(cardOpacity, rememberUiColorCycle(cycleUiColors, resumed), theme = appearanceTheme,
@@ -248,7 +235,8 @@ class MainActivity : ComponentActivity() {
                         haDisplay.dashboard.takeIf { !prefs.assistantDashboardRetired && dashboardLayouts.assistant == null },
                         haDisplay.homeDashboard.takeIf { dashboardLayouts.home == null },
                     ).distinct()
-                    val haConnection = rememberHaConnection(haServer, followed, legacyBoards, includeScreensaverWeather = true)
+                    val haConnection = rememberHaConnection(haServer, followed, legacyBoards, includeScreensaverWeather = true,
+                        forecastDemand = forecastDemand(videoBackgrounds.dashboardForecast, videoBackgrounds.cardForecast, todaySummary = true))
                     val openDashboardSetup: () -> Unit = {
                         openDashboardEditor()
                     }
@@ -427,6 +415,7 @@ class MainActivity : ComponentActivity() {
                         onArtworkChanged = { currentArtwork = it },
                         dimPercent = videoBackgrounds.dashboardDim,
                         draw = { !video.hasFrame },
+                        inputsReady = !artworkSettings.enabled || artworkSettings.useLocal || !canReadWatchNext() || appCatalog.watchNextReady,
                     )
                     if (resumed && !ArtworkScreensaver.showing) VideoBackground(video, videoBackgrounds.dashboardDim)
                     Column(modifier = Modifier.fillMaxSize().onPreviewKeyEvent(::onRemoteButton)) {
@@ -627,15 +616,15 @@ class MainActivity : ComponentActivity() {
                             legacyDisplay = haDisplay,
                             legacyEntities = haEntities,
                             cameraVisible = camera != null,
-                            save = { next, previous, surface, restoring ->
-                                prefs.saveDashboardLayouts(next, previous, surface, restoring)
+                            save = { next, previous, surface, restoring, encoded ->
+                                prefs.saveDashboardLayouts(next, previous, surface, restoring, encoded)
                                 dashboardLayouts = next
                             },
                             exportSettings = { settingsForExport(haConnection.entities, currentHomeLayout()) },
                             importSettings = { applyImport(it, currentHomeLayout()) },
                             videoBackgrounds = { videoBackgrounds },
                             saveVideos = { next -> videoBackgrounds = next; prefs.videoBackgrounds = next },
-                            configurationChanged = ::reloadWebConfiguration,
+                            configurationChanged = {}, // Key-scoped preference observation owns the saved projection.
                             tvAction = { name, id ->
                                 window.decorView.postDelayed({ when (name) {
                                     "accessibility" -> openSystemSettings(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
@@ -689,24 +678,38 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch { haRevoke(server) }
     }
 
-    private fun reloadWebConfiguration() {
+    private fun reloadWebConfiguration(key: String?) {
         val previousArtwork = artworkSettings
-        cameras = prefs.cameras
-        selectedCamera = prefs.selectedCamera
-        cameraGridLive = prefs.cameraGridLive
-        showHomeCamera = prefs.showHomeCamera
-        minimizeVideoStreams = prefs.minimizeVideoStreams
-        haServer = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
-        haTopBar = prefs.haTopBar
-        frigate = prefs.frigate
-        artworkSettings = prefs.artworkSettings
-        videoBackgrounds = prefs.videoBackgrounds
-        cardOpacityOverride = prefs.dashboardCardOpacity
-        appearanceTheme = prefs.appearanceTheme
-        appsCardCollapse = prefs.appsCardCollapse
-        cycleUiColors = prefs.cycleUiColors
-        showFreeMemory = prefs.showFreeMemory
-        updateReplaceHome()
+        if (key == null || key in cameraPreferenceKeys) {
+            cameras = prefs.cameras
+            selectedCamera = prefs.selectedCamera
+            cameraGridLive = prefs.cameraGridLive
+            showHomeCamera = prefs.showHomeCamera
+            minimizeVideoStreams = prefs.minimizeVideoStreams
+        }
+        if (key == null || key.startsWith("ha_")) {
+            haServer = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
+            haTopBar = prefs.haTopBar
+            haEntities = prefs.haEntities
+            haDisplay = prefs.haDisplay
+        }
+        if (key == null || key == "dashboard_layouts") dashboardLayouts = prefs.dashboardLayouts
+        if (key == null || key.startsWith("frigate_")) frigate = prefs.frigate
+        if (key == null || key in artworkPreferenceKeys) artworkSettings = prefs.artworkSettings
+        if (key == null || key == "video_backgrounds") videoBackgrounds = prefs.videoBackgrounds
+        if (key == null || key in appearancePreferenceKeys) {
+            cardOpacityOverride = prefs.dashboardCardOpacity
+            appearanceTheme = prefs.appearanceTheme
+            appsCardCollapse = prefs.appsCardCollapse
+            cycleUiColors = prefs.cycleUiColors
+        }
+        if (key == null || key in launcherPreferenceKeys) {
+            showFreeMemory = prefs.showFreeMemory
+            updateReplaceHome()
+        }
+        if (key == null || key in appPreferenceKeys || key == "show_all_apps_tile") {
+            order = prefs.order; hidden = prefs.hidden; showAllAppsTile = prefs.showAllAppsTile
+        }
         if (previousArtwork != artworkSettings) scheduleArtwork(this, artworkSettings, settingsChanged = true)
     }
 
@@ -749,11 +752,9 @@ class MainActivity : ComponentActivity() {
         file.login?.let { server ->
             // A replaced username-and-password login is ended in Home Assistant
             if (haServer.refreshToken != server.refreshToken) revokeHaLogin(haServer)
+            if (haServer != server) clearMediaImages()
             haServer = server
-            prefs.haUrl = server.url
-            prefs.haToken = server.token
-            prefs.haRefreshToken = server.refreshToken
-            prefs.haUsername = file.username
+            prefs.saveHaLogin(server, file.username)
         }
         // Files from earlier versions: the sensors, then the actions, the first ones in the top bar
         val fileActions = file.actions.map { it.id }
@@ -843,22 +844,8 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
-    private fun refreshWatchNext() {
-        watchNextRefresh?.cancel()
-        if (!resumed) return
-        watchNextRefresh = if (canReadWatchNext()) {
-            lifecycleScope.launch {
-                watchNext = withContext(Dispatchers.IO) { loadWatchNext(this@MainActivity) }
-            }
-        } else {
-            watchNext = emptyList()
-            null
-        }
-    }
-
     override fun onPause() {
         resumed = false
-        watchNextRefresh?.cancel()
         super.onPause()
         window.decorView.removeCallbacks(confirmStarted)
     }

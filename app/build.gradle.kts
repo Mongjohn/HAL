@@ -39,8 +39,16 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             signingConfig = signingConfigs.findByName("release")
+        }
+        create("benchmark") {
+            initWith(getByName("release"))
+            // Same established local debug key for an explicitly authorized in-place profiling build.
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -51,6 +59,11 @@ android {
 }
 
 dependencies {
+    constraints {
+        implementation("com.google.guava:guava:33.7.2-android") {
+            because("GHSA-xxph-c9ww-hj94 fixes allocation during Java collection deserialization")
+        }
+    }
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")

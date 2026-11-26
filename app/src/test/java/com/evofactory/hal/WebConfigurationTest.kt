@@ -16,6 +16,84 @@ class WebConfigurationTest {
     private val api = WebConfiguration(prefs, { JSONObject() }, { changes++ }, { name, id -> actions += name to id })
 
     private fun read() = runBlocking { api.request(null) }
+
+    @Test fun preparingEncodedDashboardSaveIsReadOnlyAndRestoreStillConsumesItsCheckpoint() {
+        val old = DashboardLayouts(home = seedDashboardLayout(null, emptyList(), 1, false))
+        val next = old.copy(home = old.home!!.copy(names = mapOf("sensor.one" to "New name")))
+        val plan = prefs.snapshotDashboardSave(next, old, "home")
+        assertFalse(storage.containsKey("dashboard_layouts"))
+        prefs.saveDashboardLayouts(next, old, "home", encoded = plan.encode())
+        assertEquals(next, prefs.dashboardLayouts)
+        assertEquals(old.home, prefs.previousDashboardSurface("home"))
+        val restore = prefs.snapshotDashboardSave(old, next, "home", restoring = true)
+        prefs.saveDashboardLayouts(old, next, "home", restoring = true, encoded = restore.encode())
+        assertEquals(old, prefs.dashboardLayouts)
+        assertNull(prefs.previousDashboardSurface("home"))
+    }
+
+    @Test fun closingEditorDuringLoginVerificationDoesNotSaveAndRevokesNewLogin() = runBlocking {
+        var active = true
+        val revoked = mutableListOf<String>()
+        val integration = object : ConfigurationIntegrations() {
+            override suspend fun loginHa(url: String, username: String, password: String): HaLoginStep = HaLoginStep.LoggedIn("new-refresh")
+            override suspend fun verifyHa(server: HaServer) { active = false }
+            override suspend fun revokeHa(server: HaServer) { revoked += server.refreshToken }
+        }
+        val configuration = WebConfiguration(prefs, { JSONObject() }, { changes++ }, { _, _ -> }, integrations = integration)
+        val revision = configuration.request(null).getString("revision")
+        val body = JSONObject().put("revision", revision).put("section", "ha-login").put("values",
+            JSONObject().put("method", "password").put("url", "http://ha.example:8123").put("username", "user").put("password", "secret"))
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { configuration.request(body) { active } } }
+        assertEquals("", prefs.haRefreshToken)
+        assertEquals(listOf("new-refresh"), revoked)
+        assertEquals(0, changes)
+    }
+
+    @Test fun preferenceWrappersShareDecodesAndMarkerChangesDoNotReplaceConfiguration() {
+        val shared = preferences(storage)
+        val activity = LauncherPrefs(shared)
+        val dream = LauncherPrefs(shared)
+        activity.videoBackgrounds = VideoBackgroundSettings()
+        val initial = activity.videoBackgrounds
+        assertSame(initial, dream.videoBackgrounds)
+        activity.lastDashboardArtwork = "hal-artwork:example"
+        assertSame(initial, dream.videoBackgrounds)
+        activity.videoBackgrounds = initial.copy(revision = 7)
+        assertNotSame(initial, dream.videoBackgrounds)
+        assertSame(activity.videoBackgrounds, dream.videoBackgrounds)
+    }
+
+    @Test fun aConcurrentPreferenceChangeDuringOffThreadDeviceProbeCannotCommitAStaleSave() = runBlocking {
+        prefs.haToken = "old-token"
+        var interfere = false
+        val configuration = WebConfiguration(prefs, {
+            if (interfere) prefs.haToken = "other-editor-token"
+            JSONObject()
+        }, { changes++ }, { _, _ -> })
+        val revision = configuration.request(null).getString("revision")
+        interfere = true
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { configuration.request(JSONObject().put("revision", revision).put("section", "weather")
+                .put("values", JSONObject().put("dashboard", "daily").put("card", "daily").put("screensaver", "daily"))) }
+        }
+        assertEquals(ForecastDisplay.Off, prefs.videoBackgrounds.dashboardForecast)
+        assertEquals("other-editor-token", prefs.haToken)
+        assertEquals(0, changes)
+    }
+
+    @Test fun damagedCameraSettingsDoNotBlockConfigurationAndRemainAvailableForRepair() {
+        val damaged = "[{\"url\":\"rtsp://private-camera/main\"}]"
+        storage["cameras"] = damaged
+        prefs.haToken = "keep-token"
+        assertTrue(prefs.cameras.isEmpty())
+        assertTrue(read().getJSONObject("sections").getJSONObject("cameras").getBoolean("damaged"))
+        assertEquals(damaged, storage["cameras"])
+        prefs.cameras = listOf(Camera("fixed", "Camera", "rtsp://camera/main"))
+        assertFalse(prefs.cameraSettingsDamaged)
+        assertEquals(damaged, storage["cameras_invalid_previous"])
+        assertEquals("keep-token", prefs.haToken)
+        assertEquals("fixed", prefs.cameras.single().id)
+    }
     private fun save(section: String, value: JSONObject, revision: String = read().getString("revision")): JSONObject = runBlocking {
         api.request(JSONObject().put("revision", revision).put("section", section).put("values", value))
     }

@@ -189,7 +189,7 @@ private fun Context.wifiDetails(): List<Pair<String, String>> {
 }
 
 private fun gateway(link: LinkProperties): String? =
-    link.routes.filter { it.isDefaultRoute && it.hasGateway() }
+    link.routes.filter { it.isDefaultRoute && it.gateway?.isAnyLocalAddress == false }
         .let { routes -> routes.firstOrNull { it.gateway is Inet4Address } ?: routes.firstOrNull() }
         ?.gateway?.hostAddress
 

@@ -50,6 +50,7 @@ import java.util.UUID
 
 private const val EditorPort = 8765
 private const val EditorMaxBytes = 4 * 1024 * 1024
+private val editorWorker = Dispatchers.Default.limitedParallelism(2)
 
 /** Retain an enabled editor when Android covers HAL with its own artwork dream. */
 @OptIn(FlowPreview::class)
@@ -223,7 +224,7 @@ internal fun DashboardEditor(
     legacyEntities: List<String>,
     cameraVisible: Boolean,
     installedApps: List<InstalledApp>,
-    save: (DashboardLayouts, DashboardLayouts, String, Boolean) -> Unit,
+    save: (DashboardLayouts, DashboardLayouts, String, Boolean, Map<String, String>) -> Unit,
     exportSettings: () -> SettingsFile,
     importSettings: (SettingsFile) -> Unit,
     videoBackgrounds: () -> VideoBackgroundSettings,
@@ -238,6 +239,7 @@ internal fun DashboardEditor(
     val configChanged by rememberUpdatedState(configurationChanged)
     val configAction by rememberUpdatedState(tvAction)
     val configuration = remember { WebConfiguration(context, { configChanged() }, { name, id -> configAction(name, id) }) }
+    val storage = remember { LauncherPrefs(context) }
     val readVideos by rememberUpdatedState(videoBackgrounds)
     val currentSaveVideos by rememberUpdatedState(saveVideos)
     val apps by rememberUpdatedState(installedApps)
@@ -278,30 +280,41 @@ internal fun DashboardEditor(
     }
     fun restoreState() = JSONObject().put("home", readPrevious("home") != null)
         .put("assistant", false)
-    fun state() = JSONObject().put("revision", revision).put("canRestore", restoreState())
-        .put("camera", currentCameraVisible)
-        .put("apps", JSONArray(apps.map { JSONObject().put("id", it.key).put("name", it.label) }))
-        .put("assistant", seedDashboardLayout(null, emptyList(), 1, false).toJson())
-        .put("home", (readLayouts().home ?: initial(true)).toJson())
+    suspend fun state(): JSONObject {
+        val version = revision
+        val restore = restoreState()
+        val camera = currentCameraVisible
+        val appSnapshot = apps.toList()
+        val layout = readLayouts().home ?: initial(true)
+        return withContext(editorWorker) {
+            JSONObject().put("revision", version).put("canRestore", restore).put("camera", camera)
+                .put("apps", JSONArray(appSnapshot.map { JSONObject().put("id", it.key).put("name", it.label) }))
+                .put("assistant", seedDashboardLayout(null, emptyList(), 1, false).toJson())
+                .put("home", layout.toJson())
+        }
+    }
 
     EditorVisibleEffect(Unit) {
         // Binding the optional editor must not get ahead of Home's first retained frame.
         withTimeoutOrNull(250) { withFrameNanos { } }
         val address = editorAddress(context)
         var listener: DashboardEditorServer? = null
+        var serving = true
+        fun serverClosed() = !serving
         try {
             if (address == null) onStartFailed("Connect this TV to Wi-Fi or Ethernet, then try again.")
             else {
                 val server = DashboardEditorServer(address, context.applicationContext) { path, body ->
                     when (path) {
-                        "/api/config" -> configuration.request(body).also { result ->
+                        "/api/config" -> configuration.request(body) { !serverClosed() }.also { result ->
                             if (result.optBoolean("saved") && body?.optString("section") in listOf("ha-login", "ha-logout")) {
                                 loading = true; catalogLoadedFor = null; catalogRefresh++
                             }
                         }
                         "/api/videos" -> if (body == null) readVideos().toJson() else {
                             require(body.optInt("schema") == 4) { "Reload the editor to configure video playlists and card opacity." }
-                            val next = videoBackgroundSettingsFromJson(body)
+                            val next = withContext(editorWorker) { videoBackgroundSettingsFromJson(body) }
+                            check(!serverClosed()) { "Editor session ended while validating." }
                             require(next.revision == readVideos().revision) { "The video library changed. Reload it before saving again." }
                             val saved = next.copy(revision = next.revision + 1)
                             currentSaveVideos(saved)
@@ -309,31 +322,47 @@ internal fun DashboardEditor(
                             JSONObject().put("saved", true).put("settings", saved.toJson())
                         }
                         "/api/state" -> if (loading) JSONObject().put("loading", true) else state()
-                        "/api/settings/options" -> JSONObject().put("choices", settingsChoices(currentExport()))
-                        "/api/catalog" -> JSONObject().put("loading", loading).put("notice", catalogError)
-                            .put("entities", JSONArray(catalog.map { entity ->
+                        "/api/settings/options" -> {
+                            val saved = currentExport()
+                            withContext(editorWorker) { JSONObject().put("choices", settingsChoices(saved)) }
+                        }
+                        "/api/catalog" -> {
+                            val entitySnapshot = catalog.toList()
+                            val templateSnapshot = templates.toList()
+                            val busy = loading
+                            val notice = catalogError
+                            withContext(editorWorker) {
+                            JSONObject().put("loading", busy).put("notice", notice)
+                            .put("entities", JSONArray(entitySnapshot.map { entity ->
                                 JSONObject().put("id", entity.id).put("name", entity.name)
                                     .put("area", entity.area).put("domain", entity.domain)
                             }))
-                            .put("templates", JSONArray(templates.map { (info, board) ->
+                            .put("templates", JSONArray(templateSnapshot.map { (info, board) ->
                                 JSONObject().put("title", info.title)
                                     .put("layout", seedDashboardLayout(board, emptyList(), 3, false).toJson())
                                     .put("skipped", JSONArray(board.skipped))
                             }))
+                            }
+                        }
                         else -> {
                             if (body == null || body.optString("revision") != revision) null else {
                                 when (path) {
-                                    "/api/settings/export" -> JSONObject().put("settings",
-                                        selectedSettings(currentExport(), body.getJSONArray("keys")).toJson())
+                                    "/api/settings/export" -> {
+                                        val saved = currentExport()
+                                        withContext(editorWorker) { JSONObject().put("settings", selectedSettings(saved, body.getJSONArray("keys")).toJson()) }
+                                    }
                                     "/api/settings/preview" -> {
-                                        val file = settingsFromJson(body.getJSONObject("settings"))
+                                        val file = withContext(editorWorker) { settingsFromJson(body.getJSONObject("settings")) }
                                             ?: throw IllegalArgumentException("Invalid settings file")
-                                        JSONObject().put("choices", settingsChoices(file))
+                                        withContext(editorWorker) { JSONObject().put("choices", settingsChoices(file)) }
                                     }
                                     "/api/settings/import" -> {
-                                        val file = settingsFromJson(body.getJSONObject("settings"))
-                                            ?: throw IllegalArgumentException("Invalid settings file")
-                                        val selected = selectedSettings(file, body.getJSONArray("keys"))
+                                        val expected = revision
+                                        val selected = withContext(editorWorker) {
+                                            val file = settingsFromJson(body.getJSONObject("settings")) ?: throw IllegalArgumentException("Invalid settings file")
+                                            selectedSettings(file, body.getJSONArray("keys"))
+                                        }
+                                        check(revision == expected && !serverClosed()) { "Settings changed while validating. Reload before importing." }
                                         currentImport(selected)
                                         if (selected.login != null && selected.login != currentHaServer) loading = true
                                         revision = UUID.randomUUID().toString()
@@ -344,16 +373,24 @@ internal fun DashboardEditor(
                                         val surface = body.getString("surface")
                                         require(surface == "home") { "Assistant has been retired. Reload the Home editor." }
                                         val previous = effectiveLayouts()
+                                        val expected = revision
+                                        val saved = readSavedLayouts()
                                         val restoring = path == "/api/restore"
                                         val layout = if (restoring) requireNotNull(readPrevious(surface))
-                                            else dashboardLayoutFromJson(body.getJSONObject("layout"))
-                                        val next = readSavedLayouts().withSurface(surface, layout)
-                                        currentSave(next, previous, surface, restoring)
+                                            else withContext(editorWorker) { dashboardLayoutFromJson(body.getJSONObject("layout")) }
+                                        check(revision == expected && readSavedLayouts() == saved && !serverClosed()) { "Layout changed while validating. Reload before saving." }
+                                        val next = saved.withSurface(surface, layout)
+                                        val plan = storage.snapshotDashboardSave(next, previous, surface, restoring)
+                                        val encoded = withContext(editorWorker) { plan.encode() }
+                                        check(revision == expected && readSavedLayouts() == saved && !serverClosed()) { "Layout changed while preparing the save. Reload before saving." }
+                                        currentSave(next, previous, surface, restoring, encoded)
                                         revision = UUID.randomUUID().toString()
-                                        JSONObject().put("revision", revision).put("applied", path == "/api/apply")
+                                        val confirmedRevision = revision
+                                        val confirmedRestore = restoreState()
+                                        withContext(editorWorker) { JSONObject().put("revision", confirmedRevision).put("applied", path == "/api/apply")
                                             .put("restored", path == "/api/restore").put("surface", surface)
                                             .put("layout", next.surface(surface)!!.toJson())
-                                            .put("canRestore", restoreState())
+                                            .put("canRestore", confirmedRestore) }
                                     }
                                 }
                             }
@@ -371,6 +408,7 @@ internal fun DashboardEditor(
             }
             awaitCancellation()
         } finally {
+            serving = false
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) { listener?.close() }
         }
     }

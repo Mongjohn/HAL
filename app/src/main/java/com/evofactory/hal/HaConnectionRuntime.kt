@@ -13,6 +13,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
 
 private const val HA_RETRY_MS = 5_000L
 private val haVisibleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -24,13 +26,15 @@ private data class HaSubscription(
 /** One live connection across an activity/dream transfer, with bounded hidden teardown. */
 private class VisibleHaConnection(private val config: HaSubscription) {
     val connection = HaConnection()
-    private val owners = mutableSetOf<Any>()
+    private val owners = mutableMapOf<Any, ForecastDemand>()
+    private val forecast = MutableStateFlow(ForecastDemand())
     private var runner: Job? = null
     private var stopping: Job? = null
 
-    fun visible(owner: Any, visible: Boolean) {
+    fun visible(owner: Any, visible: Boolean, demand: ForecastDemand = ForecastDemand()) {
         if (visible) {
-            owners.add(owner)
+            owners[owner] = demand
+            forecast.value = owners.values.fold(ForecastDemand()) { a, b -> a + b }
             stopping?.cancel()
             stopping = null
             if (runner == null && connection.status != HaStatus.TokenRejected) {
@@ -39,7 +43,9 @@ private class VisibleHaConnection(private val config: HaSubscription) {
                 connection.status = HaStatus.Connecting
                 runner = haVisibleScope.launch { follow() }
             }
-        } else if (owners.remove(owner) && owners.isEmpty()) {
+        } else if (owners.remove(owner) != null) {
+            forecast.value = owners.values.fold(ForecastDemand()) { a, b -> a + b }
+            if (owners.isNotEmpty()) return
             stopping = haVisibleScope.launch {
                 delay(750)
                 runner?.cancel()
@@ -64,20 +70,31 @@ private class VisibleHaConnection(private val config: HaSubscription) {
                     val weather = if (config.weather) weatherEntityIds() else emptyList()
                     // Includes visibility-only references; followEntities reconciles the first snapshot.
                     followEntities((configured + weather).distinct(), connection.entities)
-                    for (id in (configured.filter(::isHaWeather) + weather).distinct()) {
-                        followForecast(id, "hourly") { connection.hourly[id] = it }
-                    }
-                    for (id in (configured.filter(::isHaWeather) + weather).distinct()) {
-                        followForecast(id, "daily") { connection.daily[id] = it }
-                    }
                     connection.session = this
                     connection.status = HaStatus.Connected
                     connection.connectedAt = System.currentTimeMillis()
                     connection.problem = null
                     connection.failedConnections = 0
                     try {
-                        saved.await()
-                        reload = true
+                        coroutineScope {
+                            val session = this@haSession
+                            val subscriptions = mutableMapOf<Pair<String, String>, Int?>()
+                            val forecastJob = launch {
+                                forecast.collect { demand ->
+                                    val wanted = (configured.filter(::isHaWeather) + weather).distinct()
+                                        .flatMap { id -> demand.types.map { id to it } }.toSet()
+                                    for (key in subscriptions.keys.toList() - wanted) {
+                                        subscriptions.remove(key)?.let { session.unsubscribe(it) }
+                                    }
+                                    for (key in wanted - subscriptions.keys) {
+                                        subscriptions[key] = session.forecastSubscription(key.first, key.second) {
+                                            if (key.second == "hourly") connection.hourly[key.first] = it else connection.daily[key.first] = it
+                                        }
+                                    }
+                                }
+                            }
+                            try { saved.await(); reload = true } finally { forecastJob.cancel() }
+                        }
                     } finally {
                         // A new visible lease can start while an old cancelled socket is closing.
                         if (connection.session === this) {
@@ -111,17 +128,18 @@ private object SharedHaConnection {
 
 /** Lifecycle leases leave data/focus intact and do not start a second socket for the dream. */
 @Composable
-fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboards: List<String>, includeScreensaverWeather: Boolean = false): HaConnection {
+internal fun rememberHaConnection(server: HaServer, entityIds: List<String>, dashboards: List<String>, includeScreensaverWeather: Boolean = false,
+    forecastDemand: ForecastDemand = ForecastDemand()): HaConnection {
     val config = remember(server, entityIds, dashboards, includeScreensaverWeather) {
         HaSubscription(server, entityIds.distinct().sorted(), dashboards.distinct().sorted(), includeScreensaverWeather)
     }
     val host = remember(config) { SharedHaConnection.forConfig(config) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(host, lifecycle) {
+    DisposableEffect(host, lifecycle, forecastDemand) {
         val owner = Any()
-        val observer = LifecycleEventObserver { _, _ -> host.visible(owner, lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
+        val observer = LifecycleEventObserver { _, _ -> host.visible(owner, lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED), forecastDemand) }
         lifecycle.addObserver(observer)
-        host.visible(owner, lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+        host.visible(owner, lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED), forecastDemand)
         onDispose { lifecycle.removeObserver(observer); host.visible(owner, false) }
     }
     return host.connection

@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
@@ -125,8 +126,10 @@ internal fun AppTile(
     fitCard: Boolean = false,
 ) {
     val context = LocalContext.current
-    val image by produceState(initialValue = cachedTileImage(app), app.key) {
-        if (value == null) value = withContext(Dispatchers.IO) { loadTileImage(context, app) }
+    val image by androidx.compose.runtime.key(app.component, app.imageVersion) {
+        produceState(initialValue = cachedTileImage(app), app.component, app.imageVersion) {
+            if (value == null) value = withContext(Dispatchers.IO) { loadTileImage(context, app) }
+        }
     }
     val backing = cycleUiColor(darkenCycleSurface(MaterialTheme.colorScheme.surfaceVariant))
     val calm = LocalLauncherTheme.current == LauncherTheme.Calm
@@ -137,7 +140,12 @@ internal fun AppTile(
             onLongClick = onLongClick,
             border = CardDefaults.border(focusedBorder = Border(BorderStroke(2.dp, cycleUiColor(DashboardFocusColor)))),
             scale = if (fitCard) CardDefaults.scale(focusedScale = 1f, pressedScale = 1f) else CardDefaults.scale(),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().onFocusChanged {
+                if (it.isFocused && HalPerformance.launchableFocusedAt.compareAndSet(0, android.os.SystemClock.uptimeMillis())) {
+                    android.os.Trace.beginSection("HAL.apps.firstFocus")
+                    android.os.Trace.endSection()
+                }
+            },
         ) {
             val content = Modifier.fillMaxSize()
             val tile = image

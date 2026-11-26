@@ -3,6 +3,8 @@ package com.evofactory.hal
 import android.content.Context
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -24,6 +26,7 @@ internal class WebConfiguration(
                 .put("version", BuildConfig.VERSION_NAME).put("buildCode", BuildConfig.VERSION_CODE).put("builtAt", BuildConfig.BUILD_TIME)
                 .put("decoders", runCatching { cameraDecoderSummary() }.getOrDefault("Unavailable")).put("screensaver", context.webScreensaverStatus())
                 .put("logBytes", AppLog.sizeBytes())
+                .put("performance", HalPerformance.snapshot())
         }, changed, action, { cameras -> pruneCameraSnapshots(context, cameras.flatMap { listOf(it.url, it.substreamUrl) }) })
     private val lock = Mutex()
     private var revision = UUID.randomUUID().toString()
@@ -55,6 +58,7 @@ internal class WebConfiguration(
         val ids = cameras.map { it.id }.toSet()
         val frigate = prefs.frigate
         return sections().put("cameras", JSONObject()
+            .put("damaged", prefs.cameraSettingsDamaged)
             .put("items", JSONArray(cameras.map { c -> JSONObject()
                 .put("id", c.id).put("name", c.name).put("tcp", c.useTcp)
                 .put("audio", c.useAudio).put("subAudio", c.useSubstreamAudio)
@@ -84,19 +88,23 @@ internal class WebConfiguration(
         require(revision == expected) { "Settings changed while connecting. Reload this section before saving." }
     }
 
-    private fun read(): JSONObject {
+    private suspend fun read(): JSONObject {
         val sections = publicSections()
         updateRevision(sections)
-        return JSONObject().put("revision", revision).put("sections", sections)
+        val version = revision
+        val status = withContext(Dispatchers.IO) { deviceStatus() }
+        return JSONObject().put("revision", version).put("sections", sections)
             .put("choices", JSONObject().put("services", JSONArray(streamingServices.map { it.name }))
                 .put("cameraSeconds", JSONArray(SCREENSAVER_SECONDS)).put("maxActions", MAX_HA_ACTIONS))
-            .put("status", deviceStatus().put("homeAutoOff", prefs.replaceHomeAutoOff))
+            .put("status", status.put("homeAutoOff", prefs.replaceHomeAutoOff))
     }
 
-    suspend fun request(body: JSONObject?): JSONObject = lock.withLock {
+    suspend fun request(body: JSONObject?, canCommit: () -> Boolean = { true }): JSONObject = lock.withLock {
         val before = read()
         if (body == null) return@withLock before
         require(body.getString("revision") == before.getString("revision")) { "Settings changed on the TV or in another browser. Reload this section before saving." }
+        requireCurrent(body.getString("revision"))
+        require(canCommit()) { "The editor session ended. Reopen it before saving." }
         val section = body.getString("section")
         val value = body.getJSONObject("values")
         when (section) {
@@ -114,8 +122,9 @@ internal class WebConfiguration(
                 val popup = if (value.has("popupOpacity")) value.opacity("popupOpacity") else prefs.videoBackgrounds.popupCardOpacity
                 val popupColumns = if (value.has("popupColumns")) value.integer("popupColumns", 1..2) else prefs.videoBackgrounds.popupCardColumns
                 val cycle = value.getBoolean("cycleColors")
-                prefs.appearanceTheme = theme; prefs.appsCardCollapse = collapse; prefs.dashboardCardOpacity = base; prefs.cycleUiColors = cycle
-                prefs.videoBackgrounds = prefs.videoBackgrounds.let { it.copy(revision = it.revision + 1, focusedCardOpacity = focused, unfocusedCardOpacity = unfocused, popupCardOpacity = popup, popupCardColumns = popupColumns) }
+                prefs.saveAppearance(theme, collapse, base, cycle, prefs.videoBackgrounds.let {
+                    it.copy(revision = it.revision + 1, focusedCardOpacity = focused, unfocusedCardOpacity = unfocused, popupCardOpacity = popup, popupCardColumns = popupColumns)
+                })
             }
             "weather" -> {
                 val modes = listOf("dashboard", "screensaver", "card").map { key ->
@@ -138,14 +147,15 @@ internal class WebConfiguration(
                 require(actions.size <= MAX_HA_ACTIONS && actions.distinct() == actions && actions.all { isHaAction(it) && it.matches(Regex("[a-z_]+\\.[a-z0-9_]+")) }) { "Choose distinct supported header actions within the limit." }
                 prefs.saveHaChoice(prefs.haEntities, actions)
             }
-            "ha-login" -> return@withLock login(value, before.getString("revision"))
+            "ha-login" -> return@withLock login(value, before.getString("revision"), canCommit)
             "ha-logout" -> {
+                clearMediaImages()
                 val old = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
-                prefs.haToken = ""; prefs.haRefreshToken = ""
+                prefs.saveHaLogin(old.copy(token = "", refreshToken = ""))
                 changed()
                 integrations.revokeHa(old)
             }
-            "frigate" -> saveFrigate(value, before.getString("revision"))
+            "frigate" -> saveFrigate(value, before.getString("revision"), canCommit)
             "maintenance" -> {
                 val hours = value.integer("logHours", LOG_HOURS_MIN..LOG_HOURS_MAX)
                 val memory = value.getBoolean("showMemory")
@@ -192,7 +202,7 @@ internal class WebConfiguration(
         prune(cameras)
     }
 
-    private suspend fun login(value: JSONObject, expectedRevision: String): JSONObject {
+    private suspend fun login(value: JSONObject, expectedRevision: String, canCommit: () -> Boolean): JSONObject {
         val typedUrl = requireNotNull(normalizeHaUrl(value.getString("url"))) { "Enter a valid Home Assistant address." }
         val username = value.optString("username").trim()
         val old = HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken)
@@ -229,7 +239,9 @@ internal class WebConfiguration(
         try {
             integrations.verifyHa(server)
             requireCurrent(expectedRevision)
-            prefs.haUrl = server.url; prefs.haToken = server.token; prefs.haRefreshToken = server.refreshToken; prefs.haUsername = username
+            require(canCommit()) { "The editor session ended while connecting. Reopen it before saving." }
+            if (server != old) clearMediaImages()
+            prefs.saveHaLogin(server, username)
             changed()
         } catch (failure: Exception) {
             created?.let { fresh -> kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { integrations.revokeHa(fresh) } }
@@ -239,7 +251,7 @@ internal class WebConfiguration(
         return JSONObject().put("saved", true).put("configuration", read())
     }
 
-    private suspend fun saveFrigate(value: JSONObject, expectedRevision: String) {
+    private suspend fun saveFrigate(value: JSONObject, expectedRevision: String, canCommit: () -> Boolean) {
         if (value.optBoolean("remove")) { prefs.frigate = FrigateServer(); return }
         val old = prefs.frigate
         val typedUrl = requireNotNull(normalizeFrigateUrl(value.getString("url"))) { "Enter a valid Frigate address." }
@@ -252,6 +264,7 @@ internal class WebConfiguration(
         val server = FrigateServer(url, username, password, if (!trust && url == old.url) old.certPin else "")
         val pin = integrations.verifyFrigate(server)
         requireCurrent(expectedRevision)
+        require(canCommit()) { "The editor session ended while connecting. Reopen it before saving." }
         prefs.frigate = server.copy(certPin = pin.ifEmpty { server.certPin })
     }
 }

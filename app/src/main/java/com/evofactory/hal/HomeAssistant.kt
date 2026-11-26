@@ -365,12 +365,24 @@ suspend fun <T> haSession(server: HaServer, block: suspend HaSession.() -> T): T
     val baseUrl = server.url
     val token = server.accessToken()
     val incoming = Channel<JSONObject>(Channel.UNLIMITED)
+    val inboxLock = Any()
+    var pendingMessages = 0L
+    var inboxClosed = false
+    fun consumed() = synchronized(inboxLock) {
+        if (pendingMessages > 0) { pendingMessages--; HalPerformance.queueDepth.decrementAndGet() }
+    }
     val request = Request.Builder().url("$baseUrl/api/websocket").build()
     val socket = httpClient.newWebSocket(request, object : WebSocketListener() {
         override fun onMessage(webSocket: WebSocket, text: String) {
             // Parsed here, off the main thread: the full entity list can be large
             try {
-                incoming.trySend(JSONObject(text))
+                val message = JSONObject(text)
+                synchronized(inboxLock) {
+                    if (!inboxClosed && incoming.trySend(message).isSuccess) {
+                        pendingMessages++
+                        HalPerformance.queued()
+                    }
+                }
             } catch (_: JSONException) {
                 incoming.close(HaException("Unexpected reply from Home Assistant"))
                 webSocket.cancel()
@@ -387,25 +399,35 @@ suspend fun <T> haSession(server: HaServer, block: suspend HaSession.() -> T): T
         }
     })
     try {
-        logIn(socket, incoming, token)
+        logIn(socket, incoming, token, ::consumed)
         return coroutineScope {
-            val session = HaSession(socket, baseUrl, token)
+            val session = HaSession(socket, baseUrl, token, server.refreshToken.ifBlank { server.token })
             // A dropped connection ends this loop with an HaException, which cancels the block
-            val reader = launch { for (message in incoming) session.dispatch(message) }
+            val reader = launch { for (message in incoming) {
+                consumed()
+                session.dispatch(message)
+            } }
             block(session).also { reader.cancel() }
         }
     } finally {
+        // Callbacks may race teardown; cancel the queue before accounting abandoned messages.
+        synchronized(inboxLock) {
+            inboxClosed = true
+            incoming.cancel()
+            HalPerformance.queueDepth.addAndGet(-pendingMessages)
+            pendingMessages = 0
+        }
         // Politely if still connected
         if (!socket.close(1000, null)) socket.cancel()
     }
 }
 
-private suspend fun logIn(socket: WebSocket, incoming: ReceiveChannel<JSONObject>, token: String) {
+private suspend fun logIn(socket: WebSocket, incoming: ReceiveChannel<JSONObject>, token: String, consumed: () -> Unit) {
     val reply = withTimeoutOrNull(LOGIN_TIMEOUT_MS) {
-        var message = incoming.receive()
+        var message = incoming.receive().also { consumed() }
         if (message.optString("type") == "auth_required") {
             socket.send(JSONObject().put("type", "auth").put("access_token", token).toString())
-            message = incoming.receive()
+            message = incoming.receive().also { consumed() }
         }
         message
     } ?: throw HaException(NO_ANSWER)
@@ -429,7 +451,17 @@ class HaSession internal constructor(
     private val socket: WebSocket,
     private val baseUrl: String,
     private val token: String,
+    private val artworkAccount: String = token,
 ) {
+    internal val mediaAccount get() = baseUrl to artworkAccount
+    internal suspend fun mediaImage(reference: String, target: Int, content: List<String?>): androidx.compose.ui.graphics.ImageBitmap? {
+        val request = mediaArtworkRequest(baseUrl, reference, token) ?: return null
+        val key = MediaImageKey(baseUrl, artworkAccount, request.url.toString(), target, content)
+        return mediaImageCache.get(key) {
+            val bytes = mediaArtwork(reference) ?: return@get null
+            withContext(Dispatchers.Default) { decodeBoundedImage(bytes, target) }
+        }
+    }
     private var lastId = 0
     private val results = mutableMapOf<Int, CompletableDeferred<Any>>()
     private val subscriptions = mutableMapOf<Int, (JSONObject) -> Unit>()
@@ -450,16 +482,22 @@ class HaSession internal constructor(
     suspend fun command(type: String, fields: JSONObject.() -> Unit = {}): Any = send(++lastId, type, fields)
 
     /** Starts a subscription: [onEvent] gets each of its events for as long as the session lasts */
-    suspend fun subscribe(type: String, fields: JSONObject.() -> Unit = {}, onEvent: (JSONObject) -> Unit) {
+    suspend fun subscribe(type: String, fields: JSONObject.() -> Unit = {}, onEvent: (JSONObject) -> Unit): Int {
         val id = ++lastId
         // Registered first: the first event can follow the result immediately
         subscriptions[id] = onEvent
         try {
             send(id, type, fields)
+            return id
         } catch (e: HaException) {
             subscriptions.remove(id)
             throw e
         }
+    }
+
+    internal suspend fun unsubscribe(id: Int) {
+        command("unsubscribe_events") { put("subscription", id) }
+        subscriptions.remove(id)
     }
 
     /** All entities with their current state */
@@ -544,19 +582,18 @@ class HaSession internal constructor(
 
     /**
      * Keeps [onForecast] up to date with a weather entity's forecast of [type]: "hourly" or
-     * "daily". Home Assistant sends it again whenever it's updated. False if this weather has no
+     * "daily". Home Assistant sends it again whenever it's updated. Null if this weather has no
      * forecast of that type (each weather service offers its own).
      */
-    suspend fun followForecast(entityId: String, type: String, onForecast: (List<HaForecast>) -> Unit): Boolean = try {
+    internal suspend fun forecastSubscription(entityId: String, type: String, onForecast: (List<HaForecast>) -> Unit): Int? = try {
         subscribe("weather/subscribe_forecast", {
             put("entity_id", entityId)
             put("forecast_type", type)
         }) { event ->
             onForecast(event.optJSONArray("forecast").objects().map(::HaForecast))
         }
-        true
     } catch (_: HaException) {
-        false
+        null
     }
 
     /** The default dashboard route, followed by explicitly named dashboards. */

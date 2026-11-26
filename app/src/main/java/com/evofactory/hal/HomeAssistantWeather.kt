@@ -132,8 +132,8 @@ private fun HourlyForecastRow(hours: List<HaForecast>, compact: Boolean, precipi
 
 @Composable
 private fun DailyForecastRow(days: List<HaForecast>, now: LocalDate, compact: Boolean) {
-    val locale = LocalContext.current.resources.configuration.locales[0]
-    val format = DateTimeFormatter.ofPattern("EEE", locale ?: Locale.getDefault())
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0] ?: Locale.ROOT
+    val format = DateTimeFormatter.ofPattern("EEE", locale)
     val color = MaterialTheme.colorScheme.onSurfaceVariant
     Row(Modifier.fillMaxWidth().semantics { contentDescription = "Daily forecast" }, horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp)) {
         days.forEach { day ->

@@ -1,6 +1,5 @@
 package com.evofactory.hal
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -27,7 +26,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
@@ -42,9 +40,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 internal fun isHaMediaPlayer(id: String) = id.startsWith("media_player.")
@@ -98,7 +94,7 @@ internal fun MediaPlayerReading(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MediaArtwork(session, artwork, entity?.icon ?: "mdi:cast", compact)
+        MediaArtwork(session, artwork, listOf(attribute("media_content_id"), title, series, artist, album), entity?.icon ?: "mdi:cast", compact)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
                 primary,
@@ -131,18 +127,17 @@ internal fun MediaPlayerReading(
 }
 
 @Composable
-private fun MediaArtwork(session: HaSession?, artwork: String?, fallbackIcon: String, compact: Boolean) {
+private fun MediaArtwork(session: HaSession?, artwork: String?, content: List<String?>, fallbackIcon: String, compact: Boolean) {
     val colors = MaterialTheme.colorScheme
     val accent = cycleUiColor(colors.primary)
     val surface = cycleUiColor(darkenCycleSurface(colors.surface))
     val backing = remember(accent, surface) { Brush.linearGradient(listOf(accent.copy(alpha = 0.32f), surface)) }
     var decodeSize by remember { mutableIntStateOf(0) }
     val target = decodeSize
-    val image = key(artwork) {
+    val image = key(artwork, content, session?.mediaAccount) {
         val loaded by produceVisibleState<ImageBitmap?>(null, target, session, once = true) {
             if (session == null || artwork == null || target == 0) return@produceVisibleState
-            val bytes = session.mediaArtwork(artwork) ?: return@produceVisibleState
-            value = withContext(Dispatchers.Default) { decodeMediaArtwork(bytes, target) }
+            value = session.mediaImage(artwork, target, content)
         }
         loaded
     }
@@ -279,16 +274,6 @@ private fun mediaTime(seconds: Long): String {
     val tail = (seconds % 60).toString().padStart(2, '0')
     return if (minutes < 60) "$minutes:$tail"
     else "${minutes / 60}:${(minutes % 60).toString().padStart(2, '0')}:$tail"
-}
-
-private fun decodeMediaArtwork(bytes: ByteArray, target: Int): ImageBitmap? {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-    val options = BitmapFactory.Options().apply {
-        inSampleSize = mediaArtworkSampleSize(bounds.outWidth, bounds.outHeight, target)
-    }
-    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
 }
 
 internal fun mediaArtworkSampleSize(width: Int, height: Int, target: Int): Int {
