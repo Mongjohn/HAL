@@ -139,7 +139,7 @@ $summary = [ordered]@{
     crashBufferLines = @($crash -split "`n" | Where-Object { $_.Trim() -and $_ -notmatch '^---' }).Count
     helperEnabledBefore = $helperBefore
     helperEnabledAfter = (Invoke-HalDevice shell settings get secure enabled_accessibility_services).Contains('com.evofactory.hal/')
-    limits = 'Live saved fixture; no data/OS page-cache clearing. Cold is process-cold after one unmeasured warm-up. Activity intent timings are not physical Home latency; retained return uses explicit intent after YouTube. Graphics are a short mixed rendering sample. Trace firstFocus marks a focused real app tile, not artwork completion. Restore the everyday debug APK in the campaign orchestrator even after failure.'
+    limits = 'Live saved fixture; no data/OS page-cache clearing. Cold is process-cold after one unmeasured warm-up. Activity intent timings are not physical Home latency; retained return uses explicit intent after YouTube. Graphics are a short mixed rendering sample. Trace firstFocus marks a focused real app tile, not artwork completion. Restore the non-debuggable everyday release APK in the campaign orchestrator even after failure.'
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $halOutput 'summary.json') -Encoding utf8
 if ($helperBefore -and -not $summary.helperEnabledAfter) { Write-Warning 'Android disabled the existing HAL Helper. After restoring the everyday APK, restore its original choice through Android Settings > Device Preferences > Accessibility, then verify a real Home event. Do not write secure settings directly.' }
