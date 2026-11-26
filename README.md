@@ -188,15 +188,15 @@ To update HAL, install a newer APK with the same signing key. Your settings stay
 
 For architecture-consolidation progress and remaining device verification, see the [implementation status](docs/review/IMPLEMENTATION_STATUS.md). Contributors can collect a non-interrupting office-SHIELD diagnostic snapshot with `powershell -File tools/Measure-Hal.ps1 -Mode Snapshot`; results stay under the ignored `build/performance/` directory. Controlled timing modes require `-AllowInterruption` and a dedicated test session. The optional `benchmark` build type uses release optimization with the local debug key and shell profiling; APK assembly/installation still needs an explicit request. Do not infer speed improvements from unit tests or historical frame counters.
 
-Open this folder in Android Studio, or use the Gradle wrapper with the required Java 25 toolchain and Android SDK (compile SDK 37). To build a debug APK:
+Open this folder in Android Studio, or use the Gradle wrapper with the required Java 25 toolchain and Android SDK (compile SDK 37). Everyday TV installations use a non-debuggable, optimized **release** APK. On this checkout, reuse the established update certificate explicitly:
 
 ```bash
-./gradlew assembleDebug
+./gradlew -PlocalSigning assembleRelease
 ```
 
-The APK is in `app/build/outputs/apk/debug/`. Android accepts in-place updates only with the original signing key; a self-signed build cannot update a release signed with another key. For an existing HAL TV, recover the matching key rather than uninstalling HAL or clearing its data to work around a signing mismatch.
+The APK is `app/build/outputs/apk/release/app-release.apk`. `localSigning` uses the existing local debug **certificate** for update compatibility; the release APK has debugging disabled and does not opt into shell profiling. Certificate type and runtime debugging are independent. Keep `ANDROID_USER_HOME` pointed at the established keystore directory described in the handoff. Android accepts in-place updates only with the original signing key; recover the matching key rather than uninstalling HAL or clearing its data to work around a mismatch.
 
-The release build looks for its signing key outside this repo, and comes out unsigned if it isn't there. When a release key exists, the current signing configuration retrieves its password through macOS Keychain.
+Without `localSigning`, the release build uses the external signing key and macOS Keychain configuration, or remains unsigned when that key is absent. `-PpublicRelease` selects the public-distribution key and cannot be combined with `localSigning`. Use `assembleDebug` only when debugging; the separate `benchmark` variant is for profiling sessions.
 
 For contributor setup, the existing Windows toolchain, test commands, source map, verification limits, and cross-chat documentation workflow, read [the development handoff](docs/DEVELOPMENT.md). [Behavior and decisions](docs/DECISIONS.md) explains the reasons behind the dashboard, remote, editor, visibility, artwork, and persistence behavior. Agents should build an APK only when explicitly asked.
 

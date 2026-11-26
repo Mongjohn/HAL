@@ -4,6 +4,8 @@ This is the behavior contract and rationale for ongoing development. Read it wit
 
 ## Native launcher and configuration ownership
 
+For everyday use the user requires a non-debuggable APK. Release explicitly sets `isDebuggable=false`, enables R8/resource shrinking and has no benchmark shell-profiling opt-in. The explicit `-PlocalSigning` build property reuses this checkout's established signing certificate for in-place office updates without changing the Android application ID, saved configuration or external/public release-key policy. The certificate happens to be a debug certificate; that does not enable runtime debugging. Debug APKs are for actual debugging and benchmark APKs for arranged profiling. Conflicting `localSigning`/`publicRelease` requests fail before a build. This follow-up supersedes the audit's everyday-debug recommendation without reopening the closed audit.
+
 HAL is a native Kotlin/Compose Android TV launcher, not a website displayed on a TV. Its Android package is `com.evofactory.hal`. Home Assistant, RTSP cameras, and Frigate are optional. Home remains useful as an app launcher without them.
 
 The bundled browser editor owns dashboard layout, content, names, visibility, integration setup, top-bar actions, launcher behavior, appearance, artwork source and settings import/export. The TV cog only opens Android TV settings or toggles the web editor. Android still owns permissions and screensaver selection. This supersedes the former native HAL configuration dialogs and keeps configuration/file handling accessible from a phone or computer without a hosted editor service.
