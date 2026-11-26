@@ -41,8 +41,9 @@ import kotlin.random.Random
 internal class BackgroundVideoController(private val context: Context) {
     var player by mutableStateOf<ExoPlayer?>(null)
         private set
-    var hasFrame by mutableStateOf(false)
-        private set
+    private val frames = VideoFrameState()
+    val hasFrame get() = frames.displayed
+    val itemHasFrame get() = frames.currentItemReady
     var current by mutableStateOf<BackgroundVideo?>(null)
         private set
     var epoch by mutableIntStateOf(0)
@@ -79,6 +80,7 @@ internal class BackgroundVideoController(private val context: Context) {
                 if (player !== created) return
                 current = settings.videos.firstOrNull { it.id == mediaItem?.mediaId }
                 pendingRandom = current?.randomStart == true
+                frames.nextItem()
                 epoch++
                 itemGeneration++
             }
@@ -97,7 +99,9 @@ internal class BackgroundVideoController(private val context: Context) {
                 if (!tracks.isEmpty && !tracks.isTypeSelected(C.TRACK_TYPE_VIDEO)) failCurrent()
             }
 
-            override fun onRenderedFirstFrame() { if (player === created) hasFrame = true }
+            override fun onRenderedFirstFrame() {
+                if (player === created) frames.rendered()
+            }
             override fun onPlayerError(error: PlaybackException) {
                 if (player !== created) return
                 // Signed URLs may carry credentials; never log the URL or exception payload.
@@ -115,7 +119,7 @@ internal class BackgroundVideoController(private val context: Context) {
     fun failCurrent() {
         val active = player ?: return
         if (retryNeeded) return
-        hasFrame = false
+        frames.reset()
         if (active.mediaItemCount > 1) {
             active.removeMediaItem(active.currentMediaItemIndex.coerceAtLeast(0))
             active.prepare()
@@ -141,7 +145,7 @@ internal class BackgroundVideoController(private val context: Context) {
     fun bind(view: PlayerView) {
         if (target === view) return
         val active = player ?: return
-        hasFrame = false
+        frames.reset()
         epoch++
         PlayerView.switchTargetView(active, target, view)
         target = view
@@ -156,7 +160,7 @@ internal class BackgroundVideoController(private val context: Context) {
     fun release() {
         target?.player = null
         target = null
-        hasFrame = false
+        frames.reset()
         current = null
         player = null
         watch?.release()
@@ -217,15 +221,15 @@ internal fun rememberBackgroundVideo(settings: VideoBackgroundSettings, screensa
     VisibleEffect(controller.retryGeneration, playback, active, minimumState = Lifecycle.State.RESUMED) {
         if (active && controller.retryNeeded) { delay(60_000); controller.retry() }
     }
-    VisibleEffect(controller.player, controller.epoch, controller.hasFrame, active, minimumState = Lifecycle.State.RESUMED) {
-        if (controller.player != null && active && !controller.hasFrame) {
+    VisibleEffect(controller.player, controller.epoch, controller.itemHasFrame, active, minimumState = Lifecycle.State.RESUMED) {
+        if (controller.player != null && active && !controller.itemHasFrame) {
             delay(20_000)
-            if (!controller.hasFrame) controller.failCurrent()
+            if (!controller.itemHasFrame) controller.failCurrent()
         }
     }
-    VisibleEffect(controller.player, controller.itemGeneration, controller.hasFrame, settings.switchSeconds, active, minimumState = Lifecycle.State.RESUMED) {
+    VisibleEffect(controller.player, controller.itemGeneration, controller.itemHasFrame, settings.switchSeconds, active, minimumState = Lifecycle.State.RESUMED) {
         // Do not rotate away from an opening source before its first-frame watchdog can run.
-        if (active && controller.player != null && controller.hasFrame && settings.switchSeconds > 0) {
+        if (active && controller.player != null && controller.itemHasFrame && settings.switchSeconds > 0) {
             while (true) { delay(settings.switchSeconds * 1_000L); controller.advance() }
         }
     }

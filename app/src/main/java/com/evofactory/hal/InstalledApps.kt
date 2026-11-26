@@ -7,7 +7,6 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.ResolveInfo
 import android.net.Uri
 import android.provider.Settings
-import android.util.LruCache
 import android.widget.Toast
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -19,6 +18,7 @@ data class InstalledApp(
     val label: String,
     val component: ComponentName,
     val isTvApp: Boolean,
+    val imageVersion: Long = 0,
 ) {
     /** Package name: stable across app updates, and there's one tile per package */
     val key: String get() = component.packageName
@@ -27,7 +27,7 @@ data class InstalledApp(
 fun installedAppsToJson(apps: List<InstalledApp>): String = JSONArray(
     apps.map {
         JSONObject().put("label", it.label).put("package", it.component.packageName)
-            .put("activity", it.component.className).put("tv", it.isTvApp)
+            .put("activity", it.component.className).put("tv", it.isTvApp).put("imageVersion", it.imageVersion)
     },
 ).toString()
 
@@ -36,7 +36,7 @@ fun installedAppsFromJson(json: String): List<InstalledApp> {
     val array = JSONArray(json)
     return List(array.length()) { i ->
         array.getJSONObject(i).let {
-            InstalledApp(it.getString("label"), ComponentName(it.getString("package"), it.getString("activity")), it.getBoolean("tv"))
+            InstalledApp(it.getString("label"), ComponentName(it.getString("package"), it.getString("activity")), it.getBoolean("tv"), it.optLong("imageVersion"))
         }
     }
 }
@@ -50,6 +50,7 @@ class TileImage(val bitmap: ImageBitmap, val isBanner: Boolean)
  * Only labels are read here; images are loaded per tile by [loadTileImage].
  */
 fun loadInstalledApps(context: Context): List<InstalledApp> {
+    HalPerformance.appQueries.incrementAndGet()
     val pm = context.packageManager
 
     fun query(category: String): List<ResolveInfo> =
@@ -75,21 +76,24 @@ fun loadInstalledApps(context: Context): List<InstalledApp> {
 }
 
 // Decoded tile images survive list refreshes, so returning to the launcher is instant
-private val tileImageCache = LruCache<String, TileImage>(100)
+private val tileImageCache = SharedRequestCache<String, TileImage>(24L * 1024 * 1024) { it.bitmap.width.toLong() * it.bitmap.height * 4 }
+private fun tileImageKey(app: InstalledApp) = "${app.component.flattenToString()}:${app.imageVersion}"
+internal fun invalidateTileImages(pkg: String?) = tileImageCache.invalidate { pkg == null || it.startsWith("$pkg/") }
 
-fun cachedTileImage(app: InstalledApp): TileImage? = tileImageCache[app.key]
+fun cachedTileImage(app: InstalledApp): TileImage? = tileImageCache.peek(tileImageKey(app))
 
 /** Slow (decodes resources from the other app's APK): call off the main thread. */
-fun loadTileImage(context: Context, app: InstalledApp): TileImage? {
-    cachedTileImage(app)?.let { return it }
+suspend fun loadTileImage(context: Context, app: InstalledApp): TileImage? = tileImageCache.get(tileImageKey(app)) {
     val pm = context.packageManager
-    val activity = runCatching { pm.getActivityInfo(app.component, 0) }.getOrNull() ?: return null
+    val activity = runCatching { pm.getActivityInfo(app.component, 0) }.getOrNull() ?: return@get null
     // ComponentInfo.loadBanner falls back to the application's banner
-    val image = activity.loadBanner(pm)
+    try { activity.loadBanner(pm)
         ?.let { TileImage(it.toBitmap(width = 320, height = 180).asImageBitmap(), isBanner = true) }
         ?: TileImage(activity.loadIcon(pm).toBitmap(width = 160, height = 160).asImageBitmap(), isBanner = false)
-    tileImageCache.put(app.key, image)
-    return image
+    } catch (e: RuntimeException) {
+        AppLog.w("Apps", "Could not decode app tile", e)
+        null
+    }
 }
 
 fun Context.launch(app: InstalledApp) {
@@ -101,6 +105,8 @@ fun Context.launch(app: InstalledApp) {
                 .setComponent(app.component)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
+        android.os.Trace.beginSection("HAL.app.launch.dispatched")
+        android.os.Trace.endSection()
     } catch (e: RuntimeException) {
         AppLog.w("InstalledApps", "Couldn't open ${app.key}", e)
         // e.g. being updated or just removed: the row hasn't caught up yet

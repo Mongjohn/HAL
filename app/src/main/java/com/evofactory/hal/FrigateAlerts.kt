@@ -356,7 +356,7 @@ fun FrigateAlertsRow(
                 horizontalArrangement = Arrangement.spacedBy(TileSpacing),
             ) {
                 itemsIndexed(items, key = { _, alert -> alert.id }) { index, alert ->
-                    val requester = requesters.getOrPut(alert.id) { FocusRequester() }
+                    val requester = remember(alert.id) { requesters.getOrPut(alert.id) { FocusRequester() } }
                     Card(
                         onClick = { feed.playing = alert },
                         modifier = Modifier

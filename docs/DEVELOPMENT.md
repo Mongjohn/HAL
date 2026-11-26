@@ -12,6 +12,14 @@ The handoff is the starting point for a new chat; it is not a claim that every p
 
 ## Review baseline and superseded behavior
 
+**Audit COMPLETE — closed 2026-11-26 at the user's direction.** The scoped consolidation and recorded verification are delivered in `e016621` on `codex/architecture-consolidation`. [Audit closure](review/AUDIT_CLOSURE.md) is the final status record and groups residual risks into F1–F4 follow-ups. Existing backup policy is retained. Do not automatically reopen the audit, continue its unchecked scenarios or expand scope. Closure does not establish unverified behavior, an overall speedup or full release acceptance.
+
+**Everyday installation direction:** the user requires non-debuggable builds outside actual debugging. Use optimized `release` with explicit `-PlocalSigning` for this Windows checkout's existing TV update certificate; it does not opt into shell profiling. Debug and benchmark APKs are not the everyday installation choice. The audit's debug-APK restoration records below are historical test checkpoints, superseded by this deployment preference. This build/signing follow-up does not reopen the audit or change backup policy.
+
+**Current checkpoint (2026-11-26):** `codex/architecture-consolidation` contains the implementation, review and reusable verification tools. [Optimized validation](review/12_OPTIMIZED_VALIDATION.md) records mixed AOT measurements: first-app-focus p50 essentially unchanged, wider candidate startup/focus tails, lower visible PSS snapshots and similar hidden PSS. No overall speedup is established. Targeted runtime/build dependency fixes pass 160 JVM tests, zero-error lint and debug/optimized assembly; a schema-valid 225-module runtime/build inventory has zero OSV matches at query time. Final installed debug 1.2.0/code 17 updated at device time 18:03:14, SHA-256 5668A9C32329F1504DB2D4AF964017937086B31F642234769F7EE50AD86017D7. Saved configuration/layout/videos/power/screensaver choices match the pre-campaign hashes. HAL Helper was restored through Android settings after the campaign disabled it, and Home handling was verified. Deterministic tail isolation, physical repeat/CEC, absent integration fixtures, native/notices and backup policy remain open.
+
+The earlier [functional checkpoint](review/11_DEVICE_VALIDATION.md) verified ADB-input navigation/popup/collapse/app return, live forecasts, editor suspension/rebind, dream video/motion and normal five-minute idle activation with video/editor enabled. The dated source/build entries below remain historical evidence. Use [implementation status](review/IMPLEMENTATION_STATUS.md), the latest report and Git state before continuing or cleaning up.
+
 The documentation review on 2026-11-16 used code at `0fa2ee2`, recent merge history, tests, and the relevant HAL conversation messages. It covered the dashboard/editor, visibility, media, artwork, launcher, network status, persistence, and integration boundaries. It was a source/documentation review, not a physical-TV certification or a fresh comprehensive security audit.
 
 | Earlier behavior or proposal | Current direction | Useful history |
@@ -36,10 +44,20 @@ The user's default SHIELD is the **office** TV at `10.1.0.130:5555`. The **livin
 
 ## Source map
 
+Scoped architecture consolidation was delivered in `e016621` on `codex/architecture-consolidation`, and the audit is closed. The [roadmap](review/07_IMPLEMENTATION_ROADMAP.md) remains planning history; [implementation status](review/IMPLEMENTATION_STATUS.md) records delivered source/tests and separately deferred acceptance items. Use [audit closure](review/AUDIT_CLOSURE.md) to scope any newly requested follow-up. Original review reports describe baseline `a006420`; their line anchors are historical, not current implementation locations.
+
+For continued feature work, apply the [ownership/performance guardrails](review/08_DEVELOPMENT_GUARDRAILS.md): discover/reuse capabilities before adding infrastructure, document owner/lifecycle/invalidation/bounds, preserve distinct trust and focus policies, contain optional failures, remove replaced producers after migration and measure significant performance changes on the reference device. Saved-format compatibility and the detailed behavior contract remain authoritative. The local instructions contain the same scoped rules but are not transported by Git.
+
 Kotlin sources live in `app/src/main/java/com/evofactory/hal/`, JVM tests in `app/src/test/java/com/evofactory/hal/`.
 
 | Area | Start here | Relevant tests/checks |
 | --- | --- | --- |
+| Shared app/provider ownership | `ApplicationCatalog.kt`, `InstalledApps.kt`, `AppRow.kt`, `WatchNext.kt` | Package event/hidden-return and overlapping-host checks on device; cache concurrency tests |
+| Shared decoded settings / observation | `PreferenceValue.kt`, `PreferenceObservation.kt`, `LauncherPrefs.kt`, Activity/dream observers | `RuntimeOwnershipTest.kt`, `WebConfigurationTest.kt`; migration and live editor checks |
+| Shared bounded images | `SharedRequestCache.kt`, `BoundedImages.kt`, `HaMediaPlayer.kt`, `Frigate.kt` | `SharedRequestCacheTest.kt`; hardware image quality and account/logout checks |
+| Snapshot persistence / logging / item readiness | `SnapshotPersistence.kt`, `LogSanitizer.kt`, `VideoFrameState.kt` and their existing consumers | `RuntimeOwnershipTest.kt`; camera/video hardware regression checks |
+| Forecast demand and benchmark diagnostics | `ForecastDemand.kt`, `HaConnectionRuntime.kt`, `HalPerformance.kt`, `tools/Measure-Hal.ps1`, `tools/Measure-HalJourney.ps1`, `app/src/benchmark/AndroidManifest.xml` | `ForecastSubscriptionTest.kt`, demand tests; bounded AOT campaign recorded in review/12, physical/expanded fixture/profile gates remain |
+| Dependency provenance | Root/app Gradle constraints, `tools/Export-HalDependencies.init.gradle`, `tools/Export-HalSbom.ps1` | Runtime/build graph and hashes, parent-POM declarations, optional public-coordinate OSV scan, external CycloneDX validation; embedded native/distributed notices remain separate |
 | Activity, settings, migration, persistence | `MainActivity.kt`, `LauncherPrefs.kt`, `DashboardLayout.kt` | `HaCardLayoutTest.kt`, `DashboardEditingTest.kt`; separate restore points and paired snapshot migration |
 | Assistant retirement | `DashboardLayout.kt` (`retireAssistant`), `MainActivity.kt` (one-time migration and legacy file normalization), `LauncherPrefs.kt` (retirement marker), `DashboardEditor.kt` and editor HTML (Home-only editing) | `CalmDashboardTest.kt`: collision-safe migration, preserved rules/names/focus, 64-view reload; device migration and old-file import |
 | Layout and D-pad focus | `MainActivity.kt`, `HomeAssistantTab.kt`, `DashboardAppsCard.kt`, `AppRow.kt` | `HaCardLayoutTest.kt`, `DockTileKeysTest.kt`, `DashboardEditingTest.kt`; device navigation |
@@ -63,6 +81,12 @@ Kotlin sources live in `app/src/main/java/com/evofactory/hal/`, JVM tests in `ap
 
 ## Build and verification workflow
 
+### Architecture-consolidation verification (2026-11-25)
+
+The approved roadmap's source phase passed **160 JVM tests / 29 suites**, debug lint with **0 errors / 25 warnings / 2 hints**, benchmark Kotlin compilation/manifest processing, and the local mock-API browser suite at **1920, 1280 and 420 px** (video, configuration, mouse/touch layout gestures). JavaScript syntax and diff/link checks passed.
+
+The user initially limited work to source, then explicitly requested the debug APK build/install. `:app:assembleDebug` succeeded with the established local debug key; ADB reverified office SHIELD `10.1.0.130:5555` / `darcy`, and `install -r` succeeded. Android confirmed HAL 1.2.0/code 17, device lastUpdateTime **2026-11-25 22:07:49**. MainActivity launched and remained resumed with the same live process and no PID-specific crash-buffer entries. This verifies debug build/install/basic launch only. Controlled release-equivalent startup/input/memory, package events, live HA/Frigate/camera/video/dream checks and profile/SBOM/backup decisions remain open. See [implementation status](review/IMPLEMENTATION_STATUS.md); do not claim a measured improvement.
+
 Build an APK **only when explicitly requested**. For ordinary implementation work, run relevant tests/source checks. Documentation-only edits need content/link/source checks, not an APK. Do not claim a test was run when only its source was reviewed.
 
 On the current Windows checkout, use the existing local toolchain and cached test dependencies. The Gradle daemon criteria require Java 25; an arbitrary bundled Android Studio JDK may not satisfy that. From the repository root:
@@ -76,15 +100,36 @@ $env:GRADLE_USER_HOME = Join-Path $halRoot 'build/tooling/gradle-home'
 & (Join-Path $halRoot 'build/hal-toolchain/gradle-9.8.2/bin/gradle.bat') --offline :app:testDebugUnitTest
 ```
 
-Check those directories first; they are local tooling, not repository contents. If dependencies are missing, report the specific failure rather than silently treating it as a test pass. Use `:app:assembleDebug` only for an authorized APK build. The APK is `app/build/outputs/apk/debug/app-debug.apk`.
+Check those directories first; they are local tooling, not repository contents. If dependencies are missing, report the specific failure rather than silently treating it as a test pass. For an authorized everyday build use `--offline -PlocalSigning :app:assembleRelease`, producing `app/build/outputs/apk/release/app-release.apk`. Release explicitly disables debugging and retains R8/resource shrinking. `:app:assembleDebug` is reserved for actual debugging; `benchmark` additionally opts into shell profiling for arranged measurement sessions.
 
-Keep `ANDROID_USER_HOME` pointed at the existing directory for SHIELD updates: it contains the established debug signing key. An earlier build accidentally used another debug key and Android rejected the update. Do not uninstall HAL to work around a signing mismatch; recover the correct signing setup. The release signing configuration separately expects a key under the user's `.hal` directory and macOS Keychain access when that key exists.
+Keep `ANDROID_USER_HOME` pointed at the existing directory for SHIELD updates: it contains the established debug signing certificate/key. `-PlocalSigning` reuses that certificate for a **non-debuggable release** and skips irrelevant external-key/Keychain reads. An earlier build accidentally used another key and Android rejected the update. Do not uninstall HAL to work around a signing mismatch. Without that flag, release retains its external `.hal` key/macOS Keychain behavior; `localSigning` and `publicRelease` are mutually exclusive. Verify actual APK/installed debuggability rather than inferring it from a filename or certificate label.
 
 For an authorized install, inspect `adb devices -l` and the selected target's model first. The reference target is an NVIDIA SHIELD TV driving an LG OLED. A historical address is not a permanent identity. Use `adb -s <verified-target> install -r <apk>` and verify the package version/update time for `com.evofactory.hal`. Installation success is not a visual or remote-navigation test.
 
 Before committing directly to `main` or merging into `main`, review the full incoming diff against the project handoff. Update affected documentation first and include the tracked updates in the same direct commit or pull request. If the documentation is already accurate, proceed without a documentation edit.
 
 When asked to merge and clean up, verify the feature commits are present on `origin/main` before deleting refs. Fast-forward local main and verify both local and remote feature refs are gone. Preserve unmerged work.
+
+### Reproducing optimized and dependency checks
+
+Use the toolchain environment above. Build/install benchmarks only for an explicitly arranged test session. The optimized `benchmark` build inherits R8/resource shrinking, uses the existing debug key and is shell-profileable, with no debuggable flag. `Measure-HalJourney.ps1` checks HAL APK identity/debuggability before install, verifies the office device, installs in place, forces `speed` compilation, collects cold/retained-intent timing, memory and a Perfetto trace. It does not restore the everyday APK itself; the campaign caller must do that even after failure.
+
+Force-stop and package replacement **can disable the existing HAL Helper Android Accessibility choice**. Record its original state and restore that same choice through Android Settings → Device Preferences → Accessibility → HAL Helper after reinstalling the everyday APK, then verify Home and the helper's enabled/running status. Do not enable a previously disabled helper, write secure settings directly or claim APK restoration alone restored Home behavior. Screen-off/sleep/screensaver/default-launcher settings remain untouched. Generic accessibility intents can be unavailable on SHIELD; navigate the Android settings UI when necessary.
+
+```powershell
+# After an authorized optimized APK build, in an arranged device session:
+& tools/Measure-HalJourney.ps1 -Apk app/build/outputs/apk/benchmark/app-benchmark.apk -Label candidate -Iterations 10 -Serial '10.1.0.130:5555' -AllowInterruption
+
+# Dependency inspection does not assemble an APK:
+& build/hal-toolchain/gradle-9.8.2/bin/gradle.bat --offline -I tools/Export-HalDependencies.init.gradle :app:halReviewInventory
+& tools/Export-HalSbom.ps1
+# Explicit optional network check: sends public Maven coordinates/versions to OSV.
+& tools/Export-HalSbom.ps1 -CheckAdvisories
+```
+
+Inventory outputs are ignored under `build/dependency-review/`. Set `-PhalInventoryConfiguration=debugRuntimeClasspath` to inspect debug instead of release and `-PhalInventoryOutput=...` for another graph destination. The PowerShell exporter accepts `-Inventory` and `-GradleUserHome`; it derives HAL's version from the app build file. It reports missing declarations and fails incomplete OSV responses/pagination rather than treating them as clean. Artifact/POM inventories exclude embedded/shaded native provenance and Gradle/JDK/SDK executables; declarations are not a complete notice/compliance review.
+
+Validate the JSON with the official [CycloneDX CLI](https://github.com/CycloneDX/cyclonedx-cli/releases): `cyclonedx validate --input-file build/dependency-review/hal-review.cdx.json --input-version v1_6 --fail-on-errors`. The measured campaign used CLI 0.33.1 and Perfetto 59.1, with publisher-matching hashes. Its ABBA block order, compilation limitations, adapted historical baseline, exact APK hashes, quantile method and excluded pilot/truncated data are in [review/12](review/12_OPTIMIZED_VALIDATION.md). Keep these distinctions when reproducing results; intent timing and a focus marker are not physical input-to-panel latency.
 
 ### Verification for browser settings and Restore
 

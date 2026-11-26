@@ -50,6 +50,7 @@ const val READ_TV_LISTINGS = "android.permission.READ_TV_LISTINGS"
  * Android reserves SQL selections for callers with privileged TV provider access.
  */
 fun loadWatchNext(context: Context): List<WatchNextCard> {
+    HalPerformance.watchNextQueries.incrementAndGet()
     return try {
         readWatchNext(context)
     } catch (e: RuntimeException) {

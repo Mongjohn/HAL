@@ -1,0 +1,32 @@
+import groovy.json.JsonOutput
+import java.security.MessageDigest
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+allprojects { p ->
+ p.afterEvaluate {
+  if (p.path == ':app') {
+   p.tasks.register('halReviewInventory') {
+    doLast {
+     def scopes = [runtime: p.configurations.getByName(p.findProperty('halInventoryConfiguration') ?: 'releaseRuntimeClasspath'), buildTools: rootProject.buildscript.configurations.getByName('classpath')]
+     def output = scopes.collectEntries { name, cfg ->
+      def artifacts = cfg.resolvedConfiguration.resolvedArtifacts.collect { a ->
+       [group:a.moduleVersion.id.group, name:a.moduleVersion.id.name, version:a.moduleVersion.id.version, type:a.type, classifier:a.classifier,
+        sha256:MessageDigest.getInstance('SHA-256').digest(a.file.bytes).encodeHex().toString()]
+      }
+      def nodes = cfg.incoming.resolutionResult.allComponents.findAll { it.id instanceof ModuleComponentIdentifier }.collect { c ->
+       [group:c.moduleVersion.group, name:c.moduleVersion.name, version:c.moduleVersion.version,
+        dependsOn:c.dependencies.findAll { it instanceof ResolvedDependencyResult && it.selected.id instanceof ModuleComponentIdentifier }.collect { d ->
+         "pkg:maven/${d.selected.moduleVersion.group}/${d.selected.moduleVersion.name}@${d.selected.moduleVersion.version}".toString()
+        }.unique().sort()]
+      }
+      [(name):[artifacts:artifacts,nodes:nodes,roots:cfg.resolvedConfiguration.firstLevelModuleDependencies.collect { d -> "pkg:maven/${d.moduleGroup}/${d.moduleName}@${d.moduleVersion}".toString() }.unique().sort()]]
+     }
+     def out = new File(rootProject.projectDir, rootProject.findProperty('halInventoryOutput') ?: 'build/dependency-review/dependency-graph.json')
+     out.parentFile.mkdirs()
+     out.text = JsonOutput.prettyPrint(JsonOutput.toJson(output))
+     output.each { name, data -> println("${name}: ${data.artifacts.size()} artifacts / ${data.nodes.size()} graph nodes") }
+    }
+   }
+  }
+ }
+}

@@ -56,6 +56,8 @@ Saved passwords, tokens and camera stream addresses are not returned in the ordi
 
 **Open on TV** / **Test streams on TV** actions are available in the relevant sections. Android Accessibility permission, Watch Next permission and screensaver selection still require the TV remote. Opening Android settings can suspend the web listener until HAL returns; your browser drafts remain. Save camera streams before running a TV playback test. **Restart HAL on TV** warns before disconnecting; enable the web UI again from the gear menu or ADB after restart. HAL never writes Android screensaver/power settings or grants permissions automatically.
 
+If HAL cannot read damaged saved camera settings, the launcher remains available and the web **Cameras** section explains how to repair them. The original data stays on the TV; saving repaired cameras preserves a private recovery copy and leaves other settings unchanged.
+
 ## Video backgrounds
 
 Enable the web editor, open its URL, and open **Backgrounds**. In **Video library**, add a name and direct HTTP(S) file URL (MP4 or WebM), then open the video to choose **Dashboard background**, **Screensaver background**, and **Start at a random timestamp**. New flags start off. Create a named playlist under **Active playlists**, open it to select videos, and enable it. HAL uses the union of enabled playlists without duplicates, then applies each video’s screen flags. Playlist membership does not set playback order. With no enabled playlists or eligible members, HAL falls back to image artwork or black. Existing video libraries migrate into an enabled **Existing videos** playlist so their playback choices are preserved. New videos must be added to a playlist explicitly.
@@ -102,6 +104,8 @@ On the TV, open the Settings cog and turn on **Enable Web Editor**. Scan the QR 
 - **Contents:** choose entities using search, Room and Type filters, or manual IDs. Expand **Friendly name & row settings** to rename an entity throughout Home or add a subheading. Clear headings to hide them. Adjacent ordinary items marked **Half width** share a row; weather, gauges, graphs, and dedicated media panels stay full width.
 - **Visibility:** use the card's top-level section for the whole card, or an item's own disclosure for a row or app tile. Enter raw HA states such as `on` or `playing`, without quotes. Combine **Is any of** and **Is none of** with nested groups. Hidden items can release their space or leave an empty slot. Hidden whole cards keep their grid positions. Conditional items remain editable in the browser preview.
 - **Apps:** select and order apps in the Home-only Apps card and set tiles per row. **All apps** opens the app drawer. Under Layout, **Focus on Home press** can designate one card across all Home views.
+
+HAL refreshes the app list when apps are installed, updated, removed or enabled/disabled. Your saved selection and order stay separate from the installed-app list; returning Home reuses an unchanged catalog.
 
 **Apply to TV** saves Home and records its previous layout. **Restore previous Home layout** consumes that restore point and replaces the open draft. Browser Undo still edits the draft. If HAL’s confirmation is lost, the draft stays open and the TV may already have received the change.
 
@@ -182,17 +186,25 @@ To update HAL, install a newer APK with the same signing key. Your settings stay
 
 ## Build from source
 
-Open this folder in Android Studio, or use the Gradle wrapper with the required Java 25 toolchain and Android SDK (compile SDK 37). To build a debug APK:
+For architecture-consolidation progress and remaining device verification, see the [implementation status](docs/review/IMPLEMENTATION_STATUS.md). Contributors can collect a non-interrupting office-SHIELD diagnostic snapshot with `powershell -File tools/Measure-Hal.ps1 -Mode Snapshot`; results stay under the ignored `build/performance/` directory. Controlled timing modes require `-AllowInterruption` and a dedicated test session. The optional `benchmark` build type uses release optimization with the local debug key and shell profiling; APK assembly/installation still needs an explicit request. Do not infer speed improvements from unit tests or historical frame counters.
+
+Open this folder in Android Studio, or use the Gradle wrapper with the required Java 25 toolchain and Android SDK (compile SDK 37). Everyday TV installations use a non-debuggable, optimized **release** APK. On this checkout, reuse the established update certificate explicitly:
 
 ```bash
-./gradlew assembleDebug
+./gradlew -PlocalSigning assembleRelease
 ```
 
-The APK is in `app/build/outputs/apk/debug/`. A build you sign yourself can't update one from the releases page, or the other way round: Android only accepts updates signed with the same key, so you'd need to uninstall first and set up HAL again.
+The APK is `app/build/outputs/apk/release/app-release.apk`. `localSigning` uses the existing local debug **certificate** for update compatibility; the release APK has debugging disabled and does not opt into shell profiling. Certificate type and runtime debugging are independent. Keep `ANDROID_USER_HOME` pointed at the established keystore directory described in the handoff. Android accepts in-place updates only with the original signing key; recover the matching key rather than uninstalling HAL or clearing its data to work around a mismatch.
 
-The release build looks for its signing key outside this repo, and comes out unsigned if it isn't there. When a release key exists, the current signing configuration retrieves its password through macOS Keychain.
+Without `localSigning`, the release build uses the external signing key and macOS Keychain configuration, or remains unsigned when that key is absent. `-PpublicRelease` selects the public-distribution key and cannot be combined with `localSigning`. Use `assembleDebug` only when debugging; the separate `benchmark` variant is for profiling sessions.
 
 For contributor setup, the existing Windows toolchain, test commands, source map, verification limits, and cross-chat documentation workflow, read [the development handoff](docs/DEVELOPMENT.md). [Behavior and decisions](docs/DECISIONS.md) explains the reasons behind the dashboard, remote, editor, visibility, artwork, and persistence behavior. Agents should build an APK only when explicitly asked.
+
+Runtime dependencies include a targeted Guava security constraint; keep its advisory rationale when updating Media3. The [dependency follow-up](docs/review/10_VALIDATION_FOLLOWUP.md) and [device validation](docs/review/11_DEVICE_VALIDATION.md) record its source checks, patched installation and remaining device/distribution checks.
+
+The architecture/code audit is **complete**, closed on 2026-11-26. [Audit closure](docs/review/AUDIT_CLOSURE.md) records the delivered work and separately deferred risks; it is not full release certification. Existing backup policy is unchanged, and further validation needs a separately requested follow-up.
+
+The [optimized validation](docs/review/12_OPTIMIZED_VALIDATION.md) records the newer installed build, mixed startup/focus/memory measurements and targeted build-tool dependency fixes. Reusable inventory and device-test commands are in the development handoff. After force-stop or benchmark/package-replacement tests, verify HAL Helper in Android Accessibility: Android can turn it off, and restoring the APK alone may not restore Home handling. Restore only its previous choice through Android settings.
 
 Start each new HAL chat by reading the project instructions and handoff. Before committing or merging changes into `main`, review the affected documentation and include any needed updates with the changes. Follow the [development handoff](docs/DEVELOPMENT.md#keeping-work-understandable-across-chats) for the full workflow.
 

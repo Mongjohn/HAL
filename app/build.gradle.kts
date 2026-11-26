@@ -5,7 +5,11 @@ plugins {
 
 // Signing keys stay outside the repo and their passwords in the Mac keychain. Builds for our own TVs use the everyday
 // key; public builds (-PpublicRelease) use the release key, whose keychain item asks before every read.
-// Without the key the release build comes out unsigned
+// -PlocalSigning explicitly reuses this checkout's established debug certificate for in-place TV updates.
+// Signing certificate and runtime debuggability are independent: local-signed release stays non-debuggable.
+val localSigning = hasProperty("localSigning")
+require(!localSigning || !hasProperty("publicRelease")) { "localSigning and publicRelease are mutually exclusive" }
+// Without the external key, a release build is unsigned unless localSigning is explicitly requested.
 val signingName = if (hasProperty("publicRelease")) "hal-release" else "hal-everyday"
 val signingKey = file("${System.getProperty("user.home")}/.hal/$signingName.jks")
 
@@ -23,7 +27,7 @@ android {
     }
 
     signingConfigs {
-        if (signingKey.exists()) {
+        if (!localSigning && signingKey.exists()) {
             val password = providers.exec {
                 commandLine("security", "find-generic-password", "-a", "hal", "-s", signingName, "-w")
             }.standardOutput.asText.get().trim()
@@ -38,9 +42,18 @@ android {
 
     buildTypes {
         release {
+            isDebuggable = false
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.findByName("release")
+            signingConfig = if (localSigning) signingConfigs.getByName("debug") else signingConfigs.findByName("release")
+        }
+        create("benchmark") {
+            initWith(getByName("release"))
+            // Same established local debug key for an explicitly authorized in-place profiling build.
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -51,6 +64,11 @@ android {
 }
 
 dependencies {
+    constraints {
+        implementation("com.google.guava:guava:33.7.2-android") {
+            because("GHSA-xxph-c9ww-hj94 fixes allocation during Java collection deserialization")
+        }
+    }
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")

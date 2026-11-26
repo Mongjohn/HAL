@@ -1,20 +1,13 @@
 package com.evofactory.hal
 
 import android.content.Context
-import android.content.SharedPreferences
-import android.database.ContentObserver
-import android.media.tv.TvContract
-import android.os.Handler
-import android.os.Looper
 import android.service.dreams.DreamService
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -28,8 +21,6 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /** Android owns activation, wake and sleep; this service owns only its visible presentation. */
 class ArtworkScreensaver : DreamService(), LifecycleOwner, SavedStateRegistryOwner {
@@ -118,58 +109,37 @@ class ArtworkScreensaver : DreamService(), LifecycleOwner, SavedStateRegistryOwn
 @Composable
 private fun SystemArtworkScreensaver(context: Context) {
     val prefs = remember { LauncherPrefs(context) }
-    var revision by remember { mutableIntStateOf(0) }
-    DisposableEffect(context) {
-        val storage = context.getSharedPreferences("launcher", Context.MODE_PRIVATE)
-        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> revision++ }
-        storage.registerOnSharedPreferenceChangeListener(listener)
-        onDispose { storage.unregisterOnSharedPreferenceChangeListener(listener) }
-    }
     // Preferences also change through an already enabled web editor while this dream is visible.
-    val settings = remember(revision) { prefs.videoBackgrounds }
-    val artwork = remember(revision) { prefs.artworkSettings }
-    val layout = remember(revision) { prefs.dashboardLayouts.home }
-    val display = remember(revision) { prefs.haDisplay }
-    val selected = remember(revision) { prefs.haEntities }
-    val server = remember(revision) { HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken) }
+    val settings = rememberPreferenceSection(prefs, setOf("video_backgrounds")) { prefs.videoBackgrounds }
+    val artwork = rememberPreferenceSection(prefs, artworkPreferenceKeys) { prefs.artworkSettings }
+    val layout = rememberPreferenceSection(prefs, setOf("dashboard_layouts")) { prefs.dashboardLayouts.home }
+    val display = rememberPreferenceSection(prefs, haDisplayPreferenceKeys) { prefs.haDisplay }
+    val selected = rememberPreferenceSection(prefs, haSelectionPreferenceKeys) { prefs.haEntities }
+    val server = rememberPreferenceSection(prefs, setOf("ha_url", "ha_token", "ha_refresh_token")) { HaServer(prefs.haUrl, prefs.haToken, prefs.haRefreshToken) }
     val template = display.homeDashboard.takeIf { layout == null }
-    val topBar = remember(revision) { prefs.haTopBar }
+    val topBar = rememberPreferenceSection(prefs, haSelectionPreferenceKeys) { prefs.haTopBar }
     val followed = remember(layout, selected, topBar) { (topBar + (layout?.entityIds ?: selected)).distinct() }
-    val connection = rememberHaConnection(server, followed, listOfNotNull(template), includeScreensaverWeather = true)
+    val connection = rememberHaConnection(server, followed, listOfNotNull(template), includeScreensaverWeather = true,
+        forecastDemand = forecastDemand(settings.screensaverForecast))
     val board = connection.dashboard(template)
-    val view = remember(revision) { prefs.screensaverHomeView }
+    val view = rememberPreferenceSection(prefs, setOf("screensaver_home_view")) { prefs.screensaverHomeView }
     val players = screensaverViewPlayers(layout, board, display.homeLayout,
         selected.takeIf { template == null }.orEmpty(), view, connection.entities)
     val weather = screensaverWeather(followed, connection.entities).takeIf { connection.status == HaStatus.Connected }
-    val apps = remember(revision) { arrange(prefs.installedApps, prefs.order, prefs.hidden).associate { it.key to it.label } }
-    var watchNext by remember { mutableStateOf(emptyList<WatchNextCard>()) }
-    var watchNextReady by remember(artwork) {
-        mutableStateOf(!artwork.enabled || artwork.useLocal || !context.canReadWatchNext())
-    }
-    var feedRevision by remember { mutableIntStateOf(0) }
-    DisposableEffect(artwork.enabled, artwork.useLocal) {
-        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) { feedRevision++ }
-        }
-        val registered = artwork.enabled && !artwork.useLocal && context.canReadWatchNext() && runCatching {
-            context.contentResolver.registerContentObserver(TvContract.WatchNextPrograms.CONTENT_URI, true, observer)
-            true
-        }.getOrDefault(false)
-        onDispose { if (registered) context.contentResolver.unregisterContentObserver(observer) }
-    }
-    LaunchedEffect(artwork, feedRevision) {
-        watchNext = if (artwork.enabled && !artwork.useLocal && context.canReadWatchNext())
-            withContext(Dispatchers.IO) { loadWatchNext(context) } else emptyList()
-        watchNextReady = true
-        scheduleArtwork(context, artwork)
-    }
-    val native = remember(watchNext, revision) { watchNextByApp(watchNext, prefs.hiddenWatchNext) }
+    val apps = rememberPreferenceSection(prefs, appPreferenceKeys) { arrange(prefs.installedApps, prefs.order, prefs.hidden).associate { it.key to it.label } }
+    val catalog = rememberApplicationCatalog(artwork, installed = false)
+    val watchNext = catalog.watchNext
+    val watchNextReady = !artwork.enabled || artwork.useLocal || !context.canReadWatchNext() || catalog.watchNextReady
+    LaunchedEffect(artwork) { scheduleArtwork(context, artwork) }
+    val hiddenWatchNext = rememberPreferenceSection(prefs, setOf("hidden_watching")) { prefs.hiddenWatchNext }
+    val native = remember(watchNext, hiddenWatchNext) { watchNextByApp(watchNext, hiddenWatchNext) }
     val video = rememberBackgroundVideo(settings, true, true)
     var caption by remember { mutableStateOf<ArtworkLabel?>(null) }
     var frame by remember(artwork) { mutableStateOf<ArtworkFrame?>(SharedArtworkRotation.forSettings(artwork).frame) }
-    val theme = remember(revision) { prefs.appearanceTheme }
-    val cycling = remember(revision) { prefs.cycleUiColors }
-    HalTheme(prefs.dashboardCardOpacity ?: DefaultCardOpacity, rememberUiColorCycle(cycling, true), theme = theme,
+    val theme = rememberPreferenceSection(prefs, setOf("appearance_theme")) { prefs.appearanceTheme }
+    val cycling = rememberPreferenceSection(prefs, setOf("cycle_ui_colors")) { prefs.cycleUiColors }
+    val opacity = rememberPreferenceSection(prefs, setOf("dashboard_card_opacity")) { prefs.dashboardCardOpacity }
+    HalTheme(opacity ?: DefaultCardOpacity, rememberUiColorCycle(cycling, true), theme = theme,
         focusedCardOpacity = settings.focusedCardOpacity, unfocusedCardOpacity = settings.unfocusedCardOpacity,
         dashboardForecast = settings.dashboardForecast, screensaverForecast = settings.screensaverForecast) {
         Box(Modifier.fillMaxSize()) {

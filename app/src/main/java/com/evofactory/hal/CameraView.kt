@@ -98,7 +98,6 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.Executors
 import javax.net.SocketFactory
-import kotlin.concurrent.thread
 import kotlin.math.abs
 
 // Logcat tag for connection events (losses, retries, recoveries); never logs the address
@@ -256,6 +255,7 @@ fun NotLiveMark(modifier: Modifier = Modifier, size: Dp = 24.dp) {
  * [showProgress] off leaves out the status while it's only connecting: it shows once something fails.
  */
 @Composable
+@OptIn(UnstableApi::class)
 fun CameraView(
     url: String,
     useTcp: Boolean,
@@ -904,6 +904,7 @@ private fun describeMissingFormat(tracks: List<SdpTrack>?, useAudio: Boolean): S
 private val CAMERA_AUDIO = AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build()
 
 /** The camera's RTSP answer, e.g. "SETUP 401", in plain words */
+@OptIn(UnstableApi::class)
 private fun describeRtsp(causes: List<Throwable>): String? {
     val message = causes.firstOrNull { it is RtspMediaSource.RtspPlaybackException }?.message ?: return null
     return when (Regex("""\b\d{3}\b""").find(message)?.value) {
@@ -966,6 +967,10 @@ private val latestSnapshots = mutableStateMapOf<String, Snapshot>()
 // Named after the address, so a camera never shows another one's picture (the address itself isn't stored)
 private fun snapshotFile(dir: File, url: String) = File(dir, "camera_${Integer.toHexString(url.hashCode())}.jpg")
 
+private val snapshotPersistence = SnapshotPersistence(
+    Executors.newSingleThreadExecutor { task -> Thread(task, "camera-snapshot").apply { isDaemon = true } },
+) { AppLog.w("CameraSnapshot", "Could not persist a camera snapshot", it) }
+
 /** A camera's last picture, from memory or else from the app's files; null if it never had one */
 @Composable
 fun cameraSnapshot(url: String): Snapshot? {
@@ -987,11 +992,7 @@ private suspend fun loadSnapshot(dir: File, url: String) {
 /** Deletes the pictures of cameras that were removed or whose address changed */
 fun pruneCameraSnapshots(context: Context, urls: List<String>) {
     latestSnapshots.keys.retainAll(urls.toSet())
-    val keep = urls.map { snapshotFile(context.filesDir, it).name }.toSet()
-    thread(name = "camera-snapshot") {
-        context.filesDir.listFiles { f -> f.name.startsWith("camera_") && f.name.endsWith(".jpg") && f.name !in keep }
-            ?.forEach { it.delete() }
-    }
+    snapshotPersistence.prune(context.filesDir, urls.map { snapshotFile(context.filesDir, it) }.toSet())
 }
 
 // A copy can take 300 ms on older TVs, and holds up the thread that asks for it
@@ -1003,7 +1004,6 @@ private class SnapshotStore(private val dir: File, private val url: String) {
 
     val snapshot get() = latestSnapshots[url]
 
-    private var saved: Snapshot? = null
 
     // Copies since the last logCopies()
     private var copied = 0
@@ -1068,11 +1068,10 @@ private class SnapshotStore(private val dir: File, private val url: String) {
     /** Writes the latest copy to disk, if not done yet */
     fun save() {
         val current = snapshot ?: return
-        if (current === saved) return
-        saved = current
-        thread(name = "camera-snapshot") {
-            file.outputStream().use { current.bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
-            file.setLastModified(current.takenAt)
+        snapshotPersistence.save(file, current.takenAt) { temporary ->
+            temporary.outputStream().use {
+                if (!current.bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it)) throw java.io.IOException("Snapshot compression failed")
+            }
         }
     }
 }

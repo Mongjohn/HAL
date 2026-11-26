@@ -1,10 +1,8 @@
 package com.evofactory.hal
 
 import android.os.Build
-import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import java.io.IOException
 import java.net.SocketException
 import java.net.SocketTimeoutException
@@ -148,7 +146,7 @@ private class PinningTrustManager(private val pin: String) : X509TrustManager {
 /** Talks to one Frigate: logs in when it's asked to, including for the video player, which shares [http]. */
 class FrigateClient(private val server: FrigateServer) {
     private val trust = PinningTrustManager(server.certPin)
-    private val thumbnails = LruCache<String, ImageBitmap>(THUMBNAILS_KEPT)
+    private val thumbnails = SharedRequestCache<String, ImageBitmap>(12L * 1024 * 1024) { it.width.toLong() * it.height * 4 }
     private val videoFound = LruCache<String, Boolean>(THUMBNAILS_KEPT)
     private val loginLock = Any()
 
@@ -278,11 +276,11 @@ class FrigateClient(private val server: FrigateServer) {
     /** Kept in memory while the list refreshes; null if there's none to show */
     suspend fun thumbnail(alert: FrigateAlert): ImageBitmap? {
         val path = alert.thumbnailPath ?: return null
-        thumbnails.get(path)?.let { return it }
-        return try {
-            get(path) { body -> BitmapFactory.decodeStream(body.byteStream())?.asImageBitmap() }?.also { thumbnails.put(path, it) }
-        } catch (_: FrigateException) {
-            null
+        return thumbnails.get(path) {
+            try {
+                val bytes = get(path) { body -> body.byteStream().use { readLimited(it, 4 * 1024 * 1024) } } ?: return@get null
+                withContext(Dispatchers.Default) { decodeBoundedImage(bytes, 512) }
+            } catch (_: FrigateException) { null }
         }
     }
 

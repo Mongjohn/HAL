@@ -271,6 +271,7 @@
     form.onsubmit = event => { event.preventDefault(); submit(form, "homeassistant", { topBar: actions }); };
   }
   function renderCameras(form, fields, data) {
+    if (data.damaged) fields.append(node("p", "Saved camera settings could not be read. HAL kept the original data on the TV. Add your cameras and save to repair this section; other settings are unchanged.", "hint"));
     const cameras = clone(data.items); const hidden = new Set(data.hidden);
     const selected = inputField(fields, ["selected", "Home camera", [["", "First available camera"], ...cameras.map(c => [c.id, c.name])]], data.selected);
     const seconds = inputField(fields, ["seconds", "Camera screensaver seconds per camera", state.choices.cameraSeconds.map(n => [String(n), n + " seconds"])] , String(data.seconds));

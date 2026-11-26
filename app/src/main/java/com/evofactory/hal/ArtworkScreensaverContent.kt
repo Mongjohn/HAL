@@ -74,7 +74,7 @@ internal fun ArtworkScreensaverContent(
 private fun DriftingClock(weather: HaEntity?, players: List<ScreensaverMediaPlayer>, connection: HaConnection,
     motion: ScreensaverBubbleMotion) {
     val context = LocalContext.current
-    val locale = context.resources.configuration.locales[0]
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     val timeFormat = DateFormat.getTimeFormat(context)
     val dateFormat = remember(locale) { SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "yMMMMEEEEd"), locale) }
     val now by produceState(Date()) {

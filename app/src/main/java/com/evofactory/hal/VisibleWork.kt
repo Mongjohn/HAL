@@ -22,6 +22,7 @@ internal fun VisibleEffect(vararg keys: Any?, minimumState: Lifecycle.State = Li
 }
 
 @Composable
+@android.annotation.SuppressLint("ProduceStateDoesNotAssignValue") // The delegated producer receives this ProduceStateScope and assigns its value.
 internal fun <T> produceVisibleState(
     initialValue: T, vararg keys: Any?, once: Boolean = false,
     producer: suspend ProduceStateScope<T>.() -> Unit,

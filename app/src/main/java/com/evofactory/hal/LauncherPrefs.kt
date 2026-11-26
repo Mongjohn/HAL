@@ -27,10 +27,25 @@ internal fun dockTileKeys(appKeys: List<String>, order: List<String>, showAllApp
 class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
     constructor(context: Context) : this(context.getSharedPreferences("launcher", Context.MODE_PRIVATE))
 
+    private val decoded = PreferenceDecoders.forStorage(prefs)
+    private val cameraValue get() = decoded.cameras
+
+    internal val cameraSettingsDamaged get() = cameraValue.read(prefs.getString("cameras", null)).damaged
+
+    internal fun saveHaLogin(server: HaServer, username: String = haUsername) = prefs.edit {
+        putString("ha_url", server.url); putString("ha_token", server.token)
+        putString("ha_refresh_token", server.refreshToken); putString("ha_username", username)
+    }
+
+    internal fun saveAppearance(theme: LauncherTheme, collapse: AppsCardCollapse, base: Int?, cycle: Boolean, video: VideoBackgroundSettings) = prefs.edit {
+        putString("appearance_theme", theme.name); putString("apps_card_collapse", collapse.name)
+        if (base == null) remove("dashboard_card_opacity") else putInt("dashboard_card_opacity", base)
+        putBoolean("cycle_ui_colors", cycle)
+        putString("video_backgrounds", video.toJson().toString())
+    }
+
     internal var videoBackgrounds: VideoBackgroundSettings
-        get() = runCatching {
-            prefs.getString("video_backgrounds", null)?.let { videoBackgroundSettingsFromJson(org.json.JSONObject(it)) }
-        }.getOrNull() ?: VideoBackgroundSettings()
+        get() = decoded.video.read(prefs.getString("video_backgrounds", null))
         set(value) = prefs.edit { putString("video_backgrounds", value.toJson().toString()) }
 
     internal var screensaverHomeView: Int
@@ -127,13 +142,14 @@ class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
 
     /** Cameras, in the order chosen; their addresses may include the camera's login */
     var cameras: List<Camera>
-        get() = prefs.getString("cameras", null)?.let(::camerasFromJson)
+        get() = if (prefs.contains("cameras")) cameraValue.read(prefs.getString("cameras", null)).cameras else
             // Earlier versions had a single camera
-            ?: prefs.getString("camera_url", null)?.takeIf { it.isNotEmpty() }?.let { url ->
+            prefs.getString("camera_url", null)?.takeIf { it.isNotEmpty() }?.let { url ->
                 listOf(Camera(id = "camera1", name = "Camera", url = url, useTcp = prefs.getBoolean("camera_tcp", true)))
             }
             ?: emptyList()
         set(value) = prefs.edit {
+            if (cameraSettingsDamaged) putString("cameras_invalid_previous", prefs.getString("cameras", null))
             putString("cameras", camerasToJson(value))
             remove("camera_url")
             remove("camera_tcp")
@@ -188,13 +204,12 @@ class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
     }
 
     private fun readDashboardLayouts(key: String): DashboardLayouts? =
-        prefs.getString(key, null)?.let { raw ->
-            runCatching { DashboardLayouts.fromJson(org.json.JSONObject(raw)) }.getOrNull()
-        }
+        synchronized(decoded.layouts) { decoded.layouts.getOrPut(key) { PreferenceValue { raw ->
+            raw?.let { runCatching { DashboardLayouts.fromJson(org.json.JSONObject(it)) }.getOrNull() }
+        } } }.read(prefs.getString(key, null))
 
-    fun saveDashboardLayouts(value: DashboardLayouts, previous: DashboardLayouts, surface: String? = null, restoring: Boolean = false) {
-        val edit = prefs.edit()
-            .putString("dashboard_layouts", value.toJson().toString())
+    internal fun snapshotDashboardSave(value: DashboardLayouts, previous: DashboardLayouts, surface: String? = null, restoring: Boolean = false): DashboardSave {
+        val checkpoints = mutableMapOf<String, DashboardLayouts>()
         for (name in listOf("home", "assistant")) {
             val key = "dashboard_previous_$name"
             val changed = if (surface != null) surface == name else value.surface(name) != previous.surface(name)
@@ -206,9 +221,17 @@ class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
                     else -> previous.surface(name)
                 }
                 val snapshot = if (name == "home") DashboardLayouts(home = old) else DashboardLayouts(assistant = old)
-                edit.putString(key, snapshot.toJson().toString())
+                checkpoints[key] = snapshot
             }
         }
+        return DashboardSave(value, checkpoints)
+    }
+
+    fun saveDashboardLayouts(value: DashboardLayouts, previous: DashboardLayouts, surface: String? = null, restoring: Boolean = false,
+        encoded: Map<String, String>? = null) {
+        val values = encoded ?: snapshotDashboardSave(value, previous, surface, restoring).encode()
+        val edit = prefs.edit()
+        values.forEach { (key, json) -> edit.putString(key, json) }
         edit.remove("dashboard_layouts_previous").apply()
     }
 
@@ -233,9 +256,11 @@ class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
 
     // Together: before the top bar was a choice of its own, the actions were in another list
     fun saveHaChoice(entities: List<String>, topBar: List<String>) {
-        writeList("ha_entities", entities)
-        writeList("ha_top_bar", topBar)
-        prefs.edit { remove("ha_actions") }
+        prefs.edit {
+            putString("ha_entities", entities.joinToString("\n"))
+            putString("ha_top_bar", topBar.joinToString("\n"))
+            remove("ha_actions")
+        }
     }
 
     // Earlier versions kept the top bar's actions in "ha_actions", and before that with the sensors
@@ -351,7 +376,7 @@ class LauncherPrefs internal constructor(private val prefs: SharedPreferences) {
 
     /** The apps found last time */
     var installedApps: List<InstalledApp>
-        get() = runCatching { installedAppsFromJson(prefs.getString("installed_apps", null).orEmpty()) }.getOrDefault(emptyList())
+        get() = decoded.apps.read(prefs.getString("installed_apps", null))
         set(value) = prefs.edit { putString("installed_apps", installedAppsToJson(value)) }
 
     private fun readList(key: String): List<String> =

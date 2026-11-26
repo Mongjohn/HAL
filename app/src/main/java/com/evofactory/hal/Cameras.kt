@@ -494,7 +494,7 @@ fun <T> TwoRowGrid(
                         modifier = Modifier
                             .width(cellWidth)
                             .height(cellHeight)
-                            .focusRequester(requesters.getOrPut(key(item)) { FocusRequester() })
+                            .focusRequester(remember(key(item)) { requesters.getOrPut(key(item)) { FocusRequester() } })
                             .onFocusChanged { if (it.hasFocus) onFocus(item) },
                         shape = CardDefaults.shape(CameraShape),
                         // A border shows the selection instead of growing into the neighbours

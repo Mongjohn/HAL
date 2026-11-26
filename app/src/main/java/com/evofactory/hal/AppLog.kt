@@ -26,8 +26,6 @@ private const val CRASH_FLUSH_WAIT_S = 1L
 private val LOG_FILE_NAME = Regex("""\d{4}-\d{2}-\d{2}_\d{2}\.log""")
 
 // Camera addresses can hold a login, e.g. rtsp://user:password@camera/
-private val URL_LOGIN = Regex("://[^/\\s:@]+:[^/\\s@]+@")
-private val SECRET_PARAMETER = Regex("(token|password|api_key)=[^&\\s]+", RegexOption.IGNORE_CASE)
 
 /**
  * The app's log, on top of logcat, which is small and can be wiped at any time: one file per hour,
@@ -63,23 +61,27 @@ object AppLog {
     }
 
     fun d(tag: String, message: String) {
-        Log.d(tag, message)
-        write("D", tag, message)
+        val safe = sanitizeLog(message)
+        Log.d(tag, safe)
+        write("D", tag, safe)
     }
 
     fun i(tag: String, message: String) {
-        Log.i(tag, message)
-        write("I", tag, message)
+        val safe = sanitizeLog(message)
+        Log.i(tag, safe)
+        write("I", tag, safe)
     }
 
     fun w(tag: String, message: String, error: Throwable? = null) {
-        Log.w(tag, message, error)
-        write("W", tag, if (error != null) "$message: $error" else message)
+        val safe = logMessage(message, error)
+        Log.w(tag, safe)
+        write("W", tag, safe)
     }
 
     fun e(tag: String, message: String, error: Throwable? = null) {
-        Log.e(tag, message, error)
-        write("E", tag, if (error != null) "$message\n${error.stackTraceToString()}" else message)
+        val safe = logMessage(message, error)
+        Log.e(tag, safe)
+        write("E", tag, safe)
     }
 
     /** Fewer hours than before deletes what's now too old at once */
@@ -135,12 +137,9 @@ object AppLog {
 
     private fun write(level: String, tag: String, message: String) {
         val now = LocalDateTime.now()
-        val line = "${lineTime.format(now)} $level/$tag: ${scrub(message)}\n"
+        val line = "${lineTime.format(now)} $level/$tag: ${sanitizeLog(message)}\n"
         writer.execute { append(chunkName.format(now), line) }
     }
-
-    private fun scrub(message: String) =
-        message.replace(URL_LOGIN, "://***@").replace(SECRET_PARAMETER, "$1=***")
 
     private fun append(name: String, line: String) {
         val dir = folder ?: return
@@ -159,7 +158,7 @@ object AppLog {
                 file.appendText("Over ${LOG_CHUNK_MAX_BYTES / 1024 / 1024} MB: the rest of this hour isn't logged\n")
             }
         } catch (e: Exception) {
-            Log.w("AppLog", "Can't write the log", e)
+            Log.w("AppLog", logMessage("Can't write the log", e))
         }
     }
 
