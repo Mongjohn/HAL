@@ -1,5 +1,7 @@
 # Optimized validation and dependency hardening — 2026-11-26
 
+**Audit closure:** the user closed the audit on 2026-11-26. This report's measurements and limits remain unchanged; its remaining acceptance items are now separately deferred under [audit closure](AUDIT_CLOSURE.md). No overall performance gain or release certification is inferred from closing the audit.
+
 ## Outcome
 
 Optimized baseline/candidate APKs were built and exercised on the office SHIELD with equal compilation controls. The result is mixed: handled-Home first-app-focus p50 was essentially unchanged, ordinary Activity cold-start p50/tail was slower in the candidate, retained-intent returns were close, and the candidate's visible-memory snapshots were lower. This does **not** establish an overall speed improvement or close the startup-tail investigation.

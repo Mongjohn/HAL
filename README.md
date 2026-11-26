@@ -202,6 +202,8 @@ For contributor setup, the existing Windows toolchain, test commands, source map
 
 Runtime dependencies include a targeted Guava security constraint; keep its advisory rationale when updating Media3. The [dependency follow-up](docs/review/10_VALIDATION_FOLLOWUP.md) and [device validation](docs/review/11_DEVICE_VALIDATION.md) record its source checks, patched installation and remaining device/distribution checks.
 
+The architecture/code audit is **complete**, closed on 2026-11-26. [Audit closure](docs/review/AUDIT_CLOSURE.md) records the delivered work and separately deferred risks; it is not full release certification. Existing backup policy is unchanged, and further validation needs a separately requested follow-up.
+
 The [optimized validation](docs/review/12_OPTIMIZED_VALIDATION.md) records the newer installed build, mixed startup/focus/memory measurements and targeted build-tool dependency fixes. Reusable inventory and device-test commands are in the development handoff. After force-stop or benchmark/package-replacement tests, verify HAL Helper in Android Accessibility: Android can turn it off, and restoring the APK alone may not restore Home handling. Restore only its previous choice through Android settings.
 
 Start each new HAL chat by reading the project instructions and handoff. Before committing or merging changes into `main`, review the affected documentation and include any needed updates with the changes. Follow the [development handoff](docs/DEVELOPMENT.md#keeping-work-understandable-across-chats) for the full workflow.

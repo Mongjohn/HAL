@@ -16,6 +16,12 @@ Old version 1 settings files remain supported. An Assistant-only layout becomes 
 
 Sources: `MainActivity.kt`, `LauncherPrefs.kt`, `DashboardEditor.kt`, `DashboardLayout.kt`, `WebConfiguration.kt`, web `config.js`.
 
+## Architecture audit closure (2026-11-26)
+
+The user directed that the audit be marked complete after delivery of the written assessment, scoped implementation, documentation reconciliation and recorded source/device measurements. Source and evidence are committed in `e016621`. [Audit closure](review/AUDIT_CLOSURE.md) carries residual performance, integration/device, distribution and backup work into separate F1–F4 follow-ups so the audit does not expand indefinitely. These are documented risks and unknowns, not inferred passes or authorization to continue testing automatically.
+
+Preserve the existing Android backup eligibility and browser import/export behavior; no backup-policy change was approved. A later policy change needs its own product decision and implementation. Mixed performance results remain recorded as measured: closure does not establish a speedup or full release certification. This closure changes documentation/status only, with no new APK, device action or product behavior change.
+
 ## Runtime ownership and failure containment (2026-11-25)
 
 On 2026-11-26, dependency validation identified transitive Guava 33.3.1-android through Media3 as affected by GHSA-xxph-c9ww-hj94. A targeted minimum constraint selects patched 33.7.2-android rather than upgrading unrelated libraries. Main HAL source has no Java object-deserialization calls; exploitability is not established. Tests/lint/source compilation and a repeat advisory scan passed. The user subsequently approved installing the corrected debug APK and scoped live checks on the office SHIELD; see [device validation](review/11_DEVICE_VALIDATION.md). The [dependency follow-up](review/10_VALIDATION_FOLLOWUP.md) records advisory evidence and inventory limits. Backup policy remains unchanged.

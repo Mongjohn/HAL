@@ -1,5 +1,7 @@
 # HAL architecture and performance review
 
+**Final status: audit complete, closed 2026-11-26.** See [audit closure](AUDIT_CLOSURE.md) for delivered implementation, measured outcomes and separately deferred risks. The assessment below preserves the original audit baseline; its proposals and initial verification limits are not the current implementation status.
+
 Review date: 2026-11-25. Original audit baseline: `a006420c4fc92c575d8844ae1253f9e2fb4d8912`, reviewed on `codex/architecture-performance-audit`. The original audit changed documentation only; findings below describe that baseline rather than the subsequent implementation.
 
 Subsequent direction: the user approved implementing the roadmap on `codex/architecture-consolidation`. This report preserves the original audit baseline; [implementation status](IMPLEMENTATION_STATUS.md) records what is now implemented and which device/release gates remain open.

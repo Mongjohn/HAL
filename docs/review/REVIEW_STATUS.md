@@ -1,5 +1,7 @@
 # Persistent review checklist and evidence ledger
 
+**Audit status: COMPLETE — closed 2026-11-26 at the user's direction.** [Audit closure](AUDIT_CLOSURE.md) is the final scope/status record. Source implementation and evidence are committed in `e016621`. Unchecked validation items below are preserved as deferred follow-ups; they do not block this closed audit or authorize more work.
+
 Date: 2026-11-25. Baseline `a006420c4fc92c575d8844ae1253f9e2fb4d8912`. Branch `codex/architecture-performance-audit`.
 
 The user subsequently approved implementation on a new `codex/architecture-consolidation` branch. This ledger remains the original review evidence. Consult [implementation status](IMPLEMENTATION_STATUS.md) for current source changes and verification; statements below about no implementation describe the review checkpoint.
@@ -26,7 +28,7 @@ This is a broad architecture/source assessment with identified runtime-validatio
 - [x] Reviewed network/diagnostics, icon font, theme/color-cycle and logging ownership.
 - [x] Investigated semantic overlap and justified separation; documented current/target diagrams and a capability matrix.
 - [x] Created canonical findings, dependency-aware roadmap, regression procedures and proposed guardrails without overwriting existing instructions.
-- [x] Cross-checked current HAL documentation/rules against the review; recorded three stale DECISIONS statements and clarified lease/retained-state constraints in [09](09_DOCUMENTATION_ALIGNMENT.md). Existing instructions and handoff files remain unchanged.
+- [x] Cross-checked HAL documentation/rules against the review, reconciled stale decisions and adopted scoped guardrails; [09](09_DOCUMENTATION_ALIGNMENT.md) and the portable handoff record the alignment. The original audit's unchanged-instructions checkpoint was superseded by the approved implementation.
 
 ## Verification actually run
 
@@ -43,7 +45,9 @@ This is a broad architecture/source assessment with identified runtime-validatio
 
 Gradle/browser initially failed in the restricted sandbox; successful retries used the same local project tooling outside it. Local raw build logs are ignored under `build/audit-gradle.txt` and `build/audit-lint.txt`; do not promote them to portable evidence artifacts. ADB raw dumps were not committed. Automatic review did not reject an action.
 
-## Remaining work before calling runtime validation complete
+## Deferred validation follow-ups outside the closed audit
+
+Grouped as F1–F4 in [audit closure](AUDIT_CLOSURE.md). Preserve these unchecked items as limitations; do not treat them as instructions to continue the audit. Some broad items below include narrower checks already completed in the later reports.
 
 - [x] Initial optimized full-AOT comparison: 20 process-cold and 20 retained-intent samples per build, ten handled-Home first-app-focus samples per build; exact APK identities and mixed results recorded.
 - [ ] Deterministic startup-tail isolation, consumer compilation/profile modes, reboot/first-install/cache-miss/offline/pressure and physical input-to-presentation acceptance.
@@ -62,6 +66,6 @@ Gradle/browser initially failed in the restricted sandbox; successful retries us
 - [ ] Backup eligibility/actual OEM backup behavior and product decision for secrets/reproducible files.
 - [ ] API 28 and newer TV platforms, actual output resolutions/rates, panel-specific verification if requested.
 
-## Continuation instructions
+## Instructions after closure
 
-Keep findings stable by ID and update their evidence class only with recorded new evidence. Preserve audit-baseline line references as historical evidence and use [implementation status](IMPLEMENTATION_STATUS.md) for the approved consolidation and debug installation. If new inspection contradicts a finding, correct the canonical entry and summaries. Source consolidation is implemented; measured performance improvement and the remaining runtime checks are not established.
+Do not automatically reopen the audit or expand its validation scope. If a follow-up is separately requested, keep findings stable by ID, update evidence only with recorded results and reconcile affected handoff documents. Preserve original baseline references as history. Source consolidation is implemented; overall performance improvement and unexercised runtime/release scenarios remain unestablished. Existing backup policy is retained.

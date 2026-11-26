@@ -1,5 +1,7 @@
 # Implementation roadmap
 
+**Closed audit:** the scoped consolidation and recorded validation were delivered in `e016621`. This original planning matrix is retained for rationale and traceability. Unexercised acceptance scenarios and conditional experiments are separate follow-ups under [audit closure](AUDIT_CLOSURE.md); they are not an instruction to keep this audit running.
+
 The user approved implementing this roadmap on 2026-11-25. The planning matrix below preserves the original scope; [implementation status](IMPLEMENTATION_STATUS.md) records completed source work, the requested debug installation and remaining gates. This roadmap preserves current user-facing behavior, visual quality and saved formats. Complexity is relative engineering effort, not a delivery-date promise. Keep changes reviewable and reversible with relevant handoff updates.
 
 ## Dependency order
