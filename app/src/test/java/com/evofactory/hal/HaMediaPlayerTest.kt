@@ -9,6 +9,21 @@ import org.junit.Test
 import org.json.JSONObject
 
 class HaMediaPlayerTest {
+    @Test fun screensaverArtworkMaximizesOriginalAspectWithinHeightAndMetadataBudget() {
+        val square = fittedMediaArtworkSize(380, 84, 108, 1f)
+        assertEquals(84, square.width)
+        assertEquals(84, square.height)
+        val landscape = fittedMediaArtworkSize(380, 84, 108, 16f / 9f)
+        assertEquals(149, landscape.width)
+        assertEquals(84, landscape.height)
+        val portrait = fittedMediaArtworkSize(380, 84, 108, 0.5f)
+        assertEquals(42, portrait.width)
+        assertEquals(84, portrait.height)
+        val narrow = fittedMediaArtworkSize(180, 84, 108, 2f)
+        assertEquals(72, narrow.width)
+        assertEquals(36, narrow.height)
+    }
+
     @Test
     fun artworkGrowsWithPanelHeightWhileLeavingRoomForMetadata() {
         assertEquals(64, mediaArtworkSide(360, 64, 48, 108))

@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -36,6 +37,8 @@ import kotlin.math.roundToInt
 
 private const val COMMAND_TIMEOUT_MS = 10_000L
 private const val NO_ANSWER = "No answer from Home Assistant"
+private const val HEARTBEAT_INTERVAL_MS = 30_000L
+private const val HEARTBEAT_TIMEOUT_MS = 30_000L
 
 // Longer than OkHttp's connect timeout, so an unreachable address reports why
 private const val LOGIN_TIMEOUT_MS = 15_000L
@@ -315,12 +318,10 @@ fun isHaSelect(entityId: String) = entityId.substringBefore('.') in SelectDomain
 /** The type an entity is listed under when it has no room: its domain, with helper buttons among the buttons */
 fun haEntityType(entityId: String) = entityId.substringBefore('.').let { if (it == "input_button") "button" else it }
 
-// The pings notice a server that vanished without closing the connection (e.g. Home Assistant
-// restarting, Wi-Fi gone)
+// HA sessions use the documented application ping/pong below, not a second transport heartbeat.
 private val httpClient by lazy {
     OkHttpClient.Builder()
         .connectTimeout(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        .pingInterval(30, TimeUnit.SECONDS)
         .build()
 }
 
@@ -407,7 +408,8 @@ suspend fun <T> haSession(server: HaServer, block: suspend HaSession.() -> T): T
                 consumed()
                 session.dispatch(message)
             } }
-            block(session).also { reader.cancel() }
+            val heartbeat = launch { session.keepAlive() }
+            try { block(session) } finally { heartbeat.cancel(); reader.cancel() }
         }
     } finally {
         // Callbacks may race teardown; cancel the queue before accounting abandoned messages.
@@ -463,8 +465,27 @@ class HaSession internal constructor(
         }
     }
     private var lastId = 0
-    private val results = mutableMapOf<Int, CompletableDeferred<Any>>()
+    private data class PendingReply(val type: String, val result: CompletableDeferred<Any>)
+    private val results = mutableMapOf<Int, PendingReply>()
     private val subscriptions = mutableMapOf<Int, (JSONObject) -> Unit>()
+
+    /** One cancellable heartbeat per authenticated session, including during initial subscriptions. */
+    internal suspend fun keepAlive(intervalMs: Long = HEARTBEAT_INTERVAL_MS, timeoutMs: Long = HEARTBEAT_TIMEOUT_MS) {
+        while (true) {
+            delay(intervalMs)
+            ping(timeoutMs)
+        }
+    }
+
+    internal suspend fun ping(timeoutMs: Long = HEARTBEAT_TIMEOUT_MS) {
+        try {
+            send(++lastId, "ping", {}, timeoutMs, "Home Assistant heartbeat timed out")
+        } catch (e: HaException) {
+            // End an unresponsive session so its owner takes the existing Offline/retry path.
+            socket.cancel()
+            throw e
+        }
+    }
 
     internal suspend fun mediaArtwork(reference: String): ByteArray? = withContext(Dispatchers.IO) {
         val request = mediaArtworkRequest(baseUrl, reference, token) ?: return@withContext null
@@ -676,15 +697,18 @@ class HaSession internal constructor(
         }
     }
 
-    private suspend fun send(id: Int, type: String, fields: JSONObject.() -> Unit): Any {
+    private suspend fun send(id: Int, type: String, fields: JSONObject.() -> Unit,
+        timeoutMs: Long = COMMAND_TIMEOUT_MS, timeoutMessage: String = NO_ANSWER): Any {
         val result = CompletableDeferred<Any>()
-        results[id] = result
+        results[id] = PendingReply(if (type == "ping") "pong" else "result", result)
         try {
-            socket.send(JSONObject().put("id", id).put("type", type).apply(fields).toString())
+            if (!socket.send(JSONObject().put("id", id).put("type", type).apply(fields).toString())) {
+                throw HaException("Home Assistant connection is closed")
+            }
             // A timeout is reported as an HaException: a TimeoutCancellationException would look
             // like the caller being cancelled
-            return withTimeoutOrNull(COMMAND_TIMEOUT_MS) { result.await() }
-                ?: throw HaException(NO_ANSWER)
+            return withTimeoutOrNull(timeoutMs) { result.await() }
+                ?: throw HaException(timeoutMessage)
         } finally {
             results.remove(id)
         }
@@ -694,7 +718,8 @@ class HaSession internal constructor(
         val id = message.optInt("id")
         when (message.optString("type")) {
             "result" -> {
-                val result = results[id] ?: return
+                val pending = results[id]?.takeIf { it.type == "result" } ?: return
+                val result = pending.result
                 if (message.optBoolean("success")) {
                     result.complete(message.opt("result") ?: JSONObject.NULL)
                 } else {
@@ -702,6 +727,7 @@ class HaSession internal constructor(
                     result.completeExceptionally(HaException(error ?: "Home Assistant reported an error"))
                 }
             }
+            "pong" -> results[id]?.takeIf { it.type == "pong" }?.result?.complete(JSONObject.NULL)
             "event" -> subscriptions[id]?.invoke(message.getJSONObject("event"))
         }
     }

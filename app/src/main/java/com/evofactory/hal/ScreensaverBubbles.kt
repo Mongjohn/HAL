@@ -9,14 +9,14 @@ internal data class BubbleBody(val size: BubbleSize, var x: Float, var y: Float,
 
 internal data class ScreensaverBubbleFit(val clockScale: Float, val mediaWidth: Int, val mediaHeight: Int)
 
-/** Wide media bubbles cannot pass horizontally, so their vertical dashboard order is physical. */
+/** Maximum content budgets, not minimum visible bubble sizes. */
 internal fun screensaverBubbleFit(width: Int, height: Int, clock: BubbleSize, players: Int, density: Float): ScreensaverBubbleFit {
     val gap = min(12f * density, min(width, height) / 16f)
     val clockBudget = if (players > 0) (width - 3 * gap) / 2f else width.toFloat()
     val scale = minOf(1f, clockBudget.coerceAtLeast(1f) / clock.width.coerceAtLeast(1f),
         (height - min(48f * density, height / 4f)).coerceAtLeast(1f) / clock.height.coerceAtLeast(1f))
     if (players == 0) return ScreensaverBubbleFit(scale, 0, 0)
-    val mediaWidth = min(width - clock.width * scale - gap, max(416f * density, width / 2f + 1f))
+    val mediaWidth = min(width - clock.width * scale - gap, 416f * density)
     val rowGap = min(12f * density, height / (players * 4f))
     val available = height - min(48f * density, height / 4f) - rowGap * (players - 1)
     return ScreensaverBubbleFit(scale, mediaWidth.toInt().coerceAtLeast(1),
@@ -30,9 +30,13 @@ internal class ScreensaverBubbleMotion {
     private var viewport = BubbleSize(0f, 0f)
     private var sizes = emptyList<BubbleSize>()
     private var identities = emptyList<String>()
+    private var activeBodies = emptyMap<String, BubbleBody>()
     private val rememberedBodies = linkedMapOf<String, BubbleBody>()
     private var density = 1f
     private val interval = DoubleArray(2)
+
+    /** Drawing callbacks may outlive the layout that created them. Never resolve by list index. */
+    fun bodyFor(id: String): BubbleBody? = activeBodies[id]
 
     fun configure(width: Float, height: Float, next: List<BubbleSize>, pixelDensity: Float,
         ids: List<String> = next.indices.map(Int::toString)) {
@@ -44,13 +48,14 @@ internal class ScreensaverBubbleMotion {
         sizes = next
         identities = ids
         density = pixelDensity
-        if (next.isEmpty()) { bodies = emptyList(); return }
+        if (next.isEmpty()) { bodies = emptyList(); activeBodies = emptyMap(); return }
         val clock = next.first()
         val media = next.drop(1)
+        val mediaWidth = media.maxOfOrNull { it.width } ?: 0f
         val gap = minOf(12f * density, min(width, height) / 16f, height / (media.size.coerceAtLeast(1) * 4f))
         val columnHeight = media.sumOf { it.height.toDouble() }.toFloat() + gap * (media.size - 1).coerceAtLeast(0)
         val sideRoom = if (media.isEmpty()) (width - clock.width).coerceAtLeast(0f)
-            else (width - media.first().width - clock.width - gap).coerceAtLeast(0f)
+            else (width - mediaWidth - clock.width - gap).coerceAtLeast(0f)
         var y = (height - columnHeight) / 2f
         val initial = listOf(BubbleBody(clock, sideRoom * 0.17f, (height - clock.height).coerceAtLeast(0f) * 0.29f,
             5.2f * density, 3.3f * density)) + media.mapIndexed { index, size ->
@@ -85,12 +90,13 @@ internal class ScreensaverBubbleMotion {
                 left >= 0f -> clockBody.x = min(clockBody.x, left)
                 right + clock.width <= width -> clockBody.x = max(clockBody.x, right)
                 else -> {
-                    clockBody.x = min(clockBody.x, width - clock.width - media.first().width - gap).coerceAtLeast(0f)
+                    clockBody.x = min(clockBody.x, width - clock.width - mediaWidth - gap).coerceAtLeast(0f)
                     mediaBodies.forEach { it.x = max(it.x, clockBody.x + clock.width + gap).coerceAtMost(width - it.size.width) }
                 }
             }
         }
-        ids.zip(bodies).forEach { (id, body) -> rememberedBodies[id] = body }
+        activeBodies = ids.zip(bodies).toMap()
+        activeBodies.forEach { (id, body) -> rememberedBodies[id] = body }
         // Keep short visibility interruptions warm, without growing for every view ever configured.
         rememberedBodies.keys.filter { it !in ids }.dropLast(32).forEach(rememberedBodies::remove)
     }
@@ -118,6 +124,14 @@ internal class ScreensaverBubbleMotion {
             }
             for (a in bodies.indices) for (b in a + 1 until bodies.size) {
                 val left = bodies[a]; val right = bodies[b]
+                // Media have an always-overlapping horizontal ordering envelope (> half
+                // the display), independent of their content-fitting visible rectangles.
+                // Only media/media contacts use it; clock contacts use real bubble edges.
+                if (a > 0 && b > 0) {
+                    val closing = left.vy - right.vy
+                    if (closing > 0f) offer(((right.y - left.y - left.size.height) / closing).toDouble(), a, b, false)
+                    continue
+                }
                 if (!collisionInterval(left.x, left.size.width, right.x, right.size.width, left.vx - right.vx)) continue
                 val xEntry = interval[0]; val xExit = interval[1]
                 if (!collisionInterval(left.y, left.size.height, right.y, right.size.height, left.vy - right.vy)) continue

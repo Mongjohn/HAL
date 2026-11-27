@@ -5,10 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
@@ -35,7 +37,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import java.time.OffsetDateTime
@@ -58,6 +62,8 @@ internal fun MediaPlayerReading(
     modifier: Modifier = Modifier,
     showPrimaryActionIcon: Boolean = true,
     showProgress: Boolean = !compact,
+    fitContent: Boolean = false,
+    artworkSide: Dp? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val accent = cycleUiColor(colors.primary)
@@ -90,12 +96,14 @@ internal fun MediaPlayerReading(
     val details = source.takeUnless { it == primary || it.isEmpty() }
 
     Row(
-        modifier.fillMaxWidth(),
+        if (fitContent) modifier else modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MediaArtwork(session, artwork, listOf(attribute("media_content_id"), title, series, artist, album), entity?.icon ?: "mdi:cast", compact)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        MediaArtwork(session, artwork, listOf(attribute("media_content_id"), title, series, artist, album),
+            entity?.icon ?: "mdi:cast", compact, artworkSide, fitContent)
+        Column(Modifier.weight(1f, fill = !fitContent).then(if (fitContent) Modifier.width(IntrinsicSize.Max) else Modifier),
+            verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
                 primary,
                 style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
@@ -127,7 +135,8 @@ internal fun MediaPlayerReading(
 }
 
 @Composable
-private fun MediaArtwork(session: HaSession?, artwork: String?, content: List<String?>, fallbackIcon: String, compact: Boolean) {
+private fun MediaArtwork(session: HaSession?, artwork: String?, content: List<String?>, fallbackIcon: String,
+    compact: Boolean, naturalSide: Dp? = null, fit: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val accent = cycleUiColor(colors.primary)
     val surface = cycleUiColor(darkenCycleSurface(colors.surface))
@@ -143,22 +152,32 @@ private fun MediaArtwork(session: HaSession?, artwork: String?, content: List<St
     }
     Box(
         Modifier.layout { measurable, constraints ->
-            val side = mediaArtworkSide(
-                constraints.maxWidth, constraints.maxHeight, (if (compact) 48.dp else MediaArtworkNaturalSide).roundToPx(), 108.dp.roundToPx(),
-            )
-            val square = measurable.measure(Constraints.fixed(side, side))
-            layout(side, side) { square.placeRelative(0, 0) }
+            val natural = (naturalSide ?: if (compact) 48.dp else MediaArtworkNaturalSide).roundToPx()
+            val bounds = if (fit) fittedMediaArtworkSize(constraints.maxWidth,
+                if (constraints.maxHeight == Constraints.Infinity) natural else constraints.maxHeight,
+                108.dp.roundToPx(), image?.let { it.width.toFloat() / it.height } ?: 1f)
+            else mediaArtworkSide(constraints.maxWidth, constraints.maxHeight, natural, 108.dp.roundToPx()).let { IntSize(it, it) }
+            val artworkBox = measurable.measure(Constraints.fixed(bounds.width, bounds.height))
+            layout(bounds.width, bounds.height) { artworkBox.placeRelative(0, 0) }
         }.onSizeChanged {
-            decodeSize = mediaArtworkDecodeSize(it.width)
+            decodeSize = mediaArtworkDecodeSize(maxOf(it.width, it.height))
         }.clip(RoundedCornerShape(8.dp)).background(backing),
         contentAlignment = Alignment.Center,
     ) {
         if (image != null) {
-            Image(image, contentDescription = null, modifier = Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+            Image(image, contentDescription = null, modifier = Modifier.matchParentSize(),
+                contentScale = if (fit) ContentScale.Fit else ContentScale.Crop)
         } else {
             MdiIcon(fallbackIcon, size = if (compact) 22.dp else 32.dp, color = accent, fallback = "cast")
         }
     }
+}
+
+/** Largest original-aspect rectangle within the height and width left beside metadata. */
+internal fun fittedMediaArtworkSize(width: Int, height: Int, metadataWidth: Int, aspect: Float): IntSize {
+    val maxWidth = minOf((width * 0.66f).toInt(), (width - metadataWidth).coerceAtLeast(width / 3)).coerceAtLeast(0)
+    val fittedWidth = minOf(maxWidth.toFloat(), height * aspect)
+    return IntSize(fittedWidth.toInt(), minOf(height.toFloat(), fittedWidth / aspect).toInt())
 }
 
 internal fun mediaArtworkSide(width: Int, height: Int, naturalSide: Int, metadataWidth: Int): Int {
