@@ -58,6 +58,8 @@ Saved passwords, tokens and camera stream addresses are not returned in the ordi
 
 If HAL cannot read damaged saved camera settings, the launcher remains available and the web **Cameras** section explains how to repair them. The original data stays on the TV; saving repaired cameras preserves a private recovery copy and leaves other settings unchanged.
 
+Screensaver player bubbles use compact dashboard-style metadata and uncropped artwork. Each bubble fits its content. Players retain their saved top-to-bottom order by bouncing vertically even when horizontally apart; the clock/weather bubble collides only when visible bubble edges touch.
+
 ## Video backgrounds
 
 Enable the web editor, open its URL, and open **Backgrounds**. In **Video library**, add a name and direct HTTP(S) file URL (MP4 or WebM), then open the video to choose **Dashboard background**, **Screensaver background**, and **Start at a random timestamp**. New flags start off. Create a named playlist under **Active playlists**, open it to select videos, and enable it. HAL uses the union of enabled playlists without duplicates, then applies each video’s screen flags. Playlist membership does not set playback order. With no enabled playlists or eligible members, HAL falls back to image artwork or black. Existing video libraries migrate into an enabled **Existing videos** playlist so their playback choices are preserved. New videos must be added to a playlist explicitly.
@@ -87,6 +89,8 @@ Android dismisses the system screensaver on input and decides which app to resto
 An already enabled HAL web editor remains reachable during HAL Artwork, including when it starts over another app, as long as its launcher session is still alive. It is not an always-on server: cold-starting the screensaver does not enable the editor. Dismissing the screensaver back to another app suspends the listener again.
 
 ## When HAL is hidden
+
+HAL checks its live Home Assistant session with the HA API's ping/pong heartbeat. If HA stops answering for 30 seconds, HAL reports the connection loss and retries after five seconds. A lost TV connection does not necessarily mean the Home Assistant server is offline.
 
 When another app covers HAL, HAL suspends recurring UI work and network subscriptions, releases its live camera players and releases background video after a bounded 750 ms paused handoff, pauses Frigate playback and cancels artwork jobs. The shared Home Assistant connection also disconnects after a 750 ms handoff when neither the launcher nor artwork screensaver is visible. The enabled web editor becomes temporarily unavailable and resumes when HAL returns; HAL Artwork is the exception described above. Artwork refresh and live weather/media also run while that system screensaver is visible. HAL keeps the dashboard, focus and cached artwork ready for a Home press; optional app/artwork/editor refresh follows the first dashboard frame. The Home helper remains available. To prioritize a quick return, a paused Frigate clip retains its prepared player and may finish bounded buffering. This reduces background work rather than guaranteeing zero RAM use; Android controls process retention.
 

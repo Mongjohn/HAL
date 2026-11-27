@@ -4,6 +4,61 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ScreensaverBubblesTest {
+    @Test fun retainedDrawingCallbacksDoNotIndexRemovedOrReorderedPlayers() {
+        val scene = ScreensaverBubbleMotion()
+        val clock = BubbleSize(100f, 100f)
+        val player = BubbleSize(180f, 80f)
+        scene.configure(1000f, 600f, listOf(clock, player, player), 1f, listOf("clock", "a", "b"))
+        val drawA = { scene.bodyFor("a") }
+        val drawB = { scene.bodyFor("b") }
+        assertSame(scene.bodies[1], drawA())
+        scene.configure(1000f, 600f, listOf(clock, player, player), 1f, listOf("clock", "b", "a"))
+        assertSame(scene.bodies[2], drawA())
+        assertSame(scene.bodies[1], drawB())
+        scene.configure(1000f, 600f, listOf(clock), 1f, listOf("clock"))
+        assertNull(drawA())
+        assertNull(drawB())
+        assertSame(scene.bodies[0], scene.bodyFor("clock"))
+        scene.configure(1000f, 600f, emptyList(), 1f, emptyList())
+        assertNull(scene.bodyFor("clock"))
+    }
+
+    @Test fun narrowPlayersBounceVerticallyEvenWhenVisuallyFarApart() {
+        val scene = ScreensaverBubbleMotion()
+        scene.configure(1000f, 600f, listOf(BubbleSize(100f, 100f), BubbleSize(180f, 80f), BubbleSize(220f, 80f)), 1f)
+        scene.bodies[0].apply { x = 450f; y = 450f; vx = 0f; vy = 0f }
+        scene.bodies[1].apply { x = 0f; y = 100f; vx = 0f; vy = 20f }
+        scene.bodies[2].apply { x = 780f; y = 190f; vx = 0f; vy = -20f }
+        scene.step(0.25)
+        assertEquals(-20f, scene.bodies[1].vy, 0f)
+        assertEquals(20f, scene.bodies[2].vy, 0f)
+        assertGeometry(scene, 1000f, 600f)
+    }
+
+    @Test fun clockPassesThroughPlayerOrderingEnvelopeUntilVisibleEdgesTouch() {
+        val scene = ScreensaverBubbleMotion()
+        scene.configure(1000f, 600f, listOf(BubbleSize(100f, 100f), BubbleSize(180f, 80f)), 1f)
+        scene.bodies[0].apply { x = 100f; y = 100f; vx = 20f; vy = 0f }
+        scene.bodies[1].apply { x = 300f; y = 100f; vx = -20f; vy = 0f }
+        repeat(9) { scene.step(0.25) }
+        assertEquals(20f, scene.bodies[0].vx, 0f)
+        scene.step(0.25)
+        assertEquals(-20f, scene.bodies[0].vx, 0f)
+        assertEquals(20f, scene.bodies[1].vx, 0f)
+        assertGeometry(scene, 1000f, 600f)
+    }
+
+    @Test fun mixedContentWidthsStayOrderedAndBoundedOverLongRuns() {
+        val scene = ScreensaverBubbleMotion()
+        val sizes = listOf(BubbleSize(260f, 240f), BubbleSize(180f, 90f), BubbleSize(420f, 108f), BubbleSize(240f, 80f))
+        scene.configure(960f, 540f, sizes, 1f)
+        repeat(7200) { scene.step(1.0 / 30); assertGeometry(scene, 960f, 540f) }
+        val velocity = scene.bodies.map { it.vx to it.vy }
+        scene.configure(960f, 540f, sizes.mapIndexed { index, size -> if (index == 1) size.copy(width = 320f) else size }, 1f)
+        assertEquals(velocity, scene.bodies.map { it.vx to it.vy })
+        repeat(1200) { scene.step(1.0 / 30); assertGeometry(scene, 960f, 540f) }
+    }
+
     private fun scene(width: Int, height: Int, count: Int, density: Float = 1f): ScreensaverBubbleMotion {
         val clock = BubbleSize(260f * density, 240f * density)
         val fit = screensaverBubbleFit(width, height, clock, count, density)
@@ -30,14 +85,15 @@ class ScreensaverBubblesTest {
         }
     }
 
-    @Test fun mediaSizingPreventsPassingAndFitsDenseAndSmallDisplays() {
+    @Test fun mediaContentBudgetFitsDenseAndSmallDisplaysWithoutHalfScreenMinimum() {
         for ((width, height) in listOf(960 to 540, 3840 to 2160, 320 to 180)) for (count in 1..12) {
             val fit = screensaverBubbleFit(width, height, BubbleSize(260f, 240f), count, 1f)
-            assertTrue(fit.mediaWidth > width / 2f)
+            assertTrue(fit.mediaWidth in 1..minOf(width, 416))
             assertTrue(fit.mediaHeight > 0)
             assertTrue(fit.mediaHeight * count <= height)
             assertGeometry(scene(width, height, count), width.toFloat(), height.toFloat())
         }
+        assertTrue(screensaverBubbleFit(960, 540, BubbleSize(260f, 240f), 2, 1f).mediaWidth < 480)
     }
 
     @Test fun collidingBubblesExchangeDirectionWithoutOverlap() {

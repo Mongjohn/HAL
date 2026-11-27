@@ -130,24 +130,25 @@ private fun ScreensaverBubble(modifier: Modifier = Modifier, content: @Composabl
         .border(1.dp, cycleUiColor(colors.onSurface.copy(alpha = 0.07f)), shape)) { content() }
 }
 
-/** Fit the entire reading uniformly inside a wide bubble, including tall/long metadata. */
+/** Measure compact content first; the visible bubble never includes the player ordering envelope. */
 @Composable
 private fun ScreensaverPlayerBubble(player: ScreensaverMediaPlayer, connection: HaConnection) {
-    ScreensaverBubble(Modifier.fillMaxSize()) {
+    ScreensaverBubble {
         androidx.compose.ui.layout.Layout(content = {
             Box(Modifier.padding(horizontal = 18.dp, vertical = 12.dp).graphicsLayer { alpha = 0.82f }) {
                 MediaPlayerReading(player.id, connection.entities[player.id], player.name, connection.session,
-                    compact = false, modifier = Modifier.fillMaxWidth(), showPrimaryActionIcon = false, showProgress = true)
+                    compact = true, showPrimaryActionIcon = false, showProgress = true,
+                    fitContent = true, artworkSide = 84.dp)
             }
         }) { children, constraints ->
             val width = constraints.maxWidth
             val height = constraints.maxHeight
             val nominal = minOf(1f, height.toFloat() / 108.dp.toPx()).coerceAtLeast(0.001f)
-            val content = children.single().measure(Constraints.fixedWidth((width / nominal).roundToInt().coerceAtLeast(1)))
+            val content = children.single().measure(Constraints(maxWidth = (width / nominal).roundToInt().coerceAtLeast(1)))
             val scale = minOf(1f, width.toFloat() / content.width.coerceAtLeast(1), height.toFloat() / content.height.coerceAtLeast(1))
-            layout(width, height) {
-                content.placeWithLayer(((width - content.width * scale) / 2).roundToInt(),
-                    ((height - content.height * scale) / 2).roundToInt()) {
+            layout(kotlin.math.ceil(content.width * scale).toInt().coerceIn(1, width),
+                kotlin.math.ceil(content.height * scale).toInt().coerceIn(1, height)) {
+                content.placeWithLayer(0, 0) {
                     transformOrigin = TransformOrigin(0f, 0f)
                     scaleX = scale; scaleY = scale
                 }
@@ -178,21 +179,24 @@ private fun MovingScreensaverBubbles(
             BubbleSize(clockBubble.width.toFloat(), clockBubble.height.toFloat()), players.size, density)
         val media = players.map { player ->
             subcompose(player.id) { ScreensaverPlayerBubble(player, connection) }.single()
-                .measure(Constraints.fixed(fit.mediaWidth, fit.mediaHeight))
+                .measure(Constraints(maxWidth = fit.mediaWidth, maxHeight = fit.mediaHeight))
         }
         val sizes = listOf(BubbleSize(clockBubble.width * fit.clockScale, clockBubble.height * fit.clockScale)) +
             media.map { BubbleSize(it.width.toFloat(), it.height.toFloat()) }
-        motion.configure(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat(), sizes, density,
-            listOf("clock") + players.map { it.id })
+        val ids = listOf("clock") + players.map { it.id }
+        motion.configure(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat(), sizes, density, ids)
         layout(constraints.maxWidth, constraints.maxHeight) {
             (listOf(clockBubble) + media).forEachIndexed { index, bubble ->
+                val id = ids[index]
                 bubble.placeWithLayer(0, 0) {
                     frame.longValue // Subscribe this drawing layer, not composition or measurement.
-                    val body = motion.bodies[index]
+                    // A removed layer can still draw after the next measurement updates motion.
+                    val body = motion.bodyFor(id)
+                    alpha = if (body == null) 0f else 1f
                     transformOrigin = TransformOrigin(0f, 0f)
                     scaleX = if (index == 0) fit.clockScale else 1f
                     scaleY = scaleX
-                    translationX = body.x; translationY = body.y
+                    if (body != null) { translationX = body.x; translationY = body.y }
                 }
             }
         }
